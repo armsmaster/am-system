@@ -1,0 +1,14 @@
+{
+  "name": "@am/platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Общий контракт shell и микрофронтендов: сессия, роли, API-клиент",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run --coverage"
+  }
+}

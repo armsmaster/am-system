@@ -1,0 +1,21 @@
+# Статическая конфигурация шлюза.
+# Маршруты — в dynamic/routes.yml: один файл, где видно, что куда идёт.
+entryPoints:
+  web:
+    address: ":80"
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+api:
+  dashboard: true
+  insecure: true  # панель только на 127.0.0.1:8081, см. compose.yaml
+
+ping: {}
+
+log:
+  level: INFO
+
+accessLog: {}

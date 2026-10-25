@@ -1,0 +1,126 @@
+# Локальное окружение разработки: docker compose up -d --build
+# Приложение: http://localhost:8080 (порт меняется через GATEWAY_PORT в .env).
+name: am-system
+
+x-service-env: &service-env
+  # Issuer — адрес realm, каким его видит браузер; ключи — по внутренней сети.
+  AM_AUTH_ISSUER: http://localhost:${GATEWAY_PORT:-8080}/auth/realms/am
+  AM_AUTH_JWKS_URL: http://keycloak:8080/auth/realms/am/protocol/openid-connect/certs
+  AM_LOG_LEVEL: INFO
+
+services:
+  postgres:
+    image: postgres:17.11-alpine
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres-dev}
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak-dev}
+      SERVICES_DB_PASSWORD: ${SERVICES_DB_PASSWORD:-services-dev}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      # По TCP: во время первичной инициализации Postgres слушает только
+      # unix-сокет, и проверка через сокет сказала бы «готов» слишком рано.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d am"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    restart: unless-stopped
+    image: redis:7.4.11-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  keycloak:
+    restart: unless-stopped
+    image: quay.io/keycloak/keycloak:26.7.5
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak-dev}
+      KC_HOSTNAME: http://localhost:${GATEWAY_PORT:-8080}/auth
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HTTP_ENABLED: "true"
+      KC_HTTP_RELATIVE_PATH: /auth
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: "true"
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:-kcadmin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-kcadmin-dev}
+    volumes:
+      - ./infra/keycloak/realms:/opt/keycloak/data/import:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /auth/health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          grep -q '"UP"' <&3
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  gateway:
+    restart: unless-stopped
+    image: traefik:v3.7.16
+    command: ["--configFile=/etc/traefik/traefik.yml"]
+    volumes:
+      - ./infra/traefik:/etc/traefik:ro
+    ports:
+      - "${GATEWAY_PORT:-8080}:80"
+      - "127.0.0.1:8081:8080"  # панель Traefik
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  portfolio:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: services/portfolio/Dockerfile
+    environment:
+      <<: *service-env
+      AM_DATABASE_URL: postgresql+asyncpg://svc_portfolio:${SERVICES_DB_PASSWORD:-services-dev}@postgres:5432/am
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready')"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  shell:
+    restart: unless-stopped
+    build:
+      context: frontend
+      dockerfile: packages/shell/Dockerfile
+
+  mfe-admin:
+    restart: unless-stopped
+    build:
+      context: frontend
+      dockerfile: packages/mfe-admin/Dockerfile
+
+volumes:
+  postgres-data:
+  redis-data:

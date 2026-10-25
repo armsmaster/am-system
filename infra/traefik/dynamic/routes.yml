@@ -1,0 +1,56 @@
+# Всё приложение живёт на одном адресе (origin): фронтенд, API и Keycloak.
+# Поэтому браузеру не нужен CORS, а токен не уходит на сторонние адреса.
+#
+#   /auth/...        → Keycloak
+#   /api/<сервис>/.. → сервис (префикс срезается)
+#   /mfe/<имя>/...   → статика микрофронтенда (префикс срезается)
+#   /...             → shell
+http:
+  routers:
+    keycloak:
+      rule: PathPrefix(`/auth`)
+      service: keycloak
+      entryPoints: [web]
+
+    portfolio-api:
+      rule: PathPrefix(`/api/portfolio`)
+      middlewares: [strip-portfolio]
+      service: portfolio
+      entryPoints: [web]
+
+    mfe-admin:
+      rule: PathPrefix(`/mfe/admin`)
+      middlewares: [strip-mfe-admin]
+      service: mfe-admin
+      entryPoints: [web]
+
+    shell:
+      rule: PathPrefix(`/`)
+      priority: 1
+      service: shell
+      entryPoints: [web]
+
+  middlewares:
+    strip-portfolio:
+      stripPrefix:
+        prefixes: ["/api/portfolio"]
+    strip-mfe-admin:
+      stripPrefix:
+        prefixes: ["/mfe/admin"]
+
+  services:
+    keycloak:
+      loadBalancer:
+        servers: [{ url: "http://keycloak:8080" }]
+    portfolio:
+      loadBalancer:
+        servers: [{ url: "http://portfolio:8000" }]
+        healthCheck:
+          path: /health
+          interval: 10s
+    mfe-admin:
+      loadBalancer:
+        servers: [{ url: "http://mfe-admin:80" }]
+    shell:
+      loadBalancer:
+        servers: [{ url: "http://shell:80" }]

@@ -1,0 +1,21 @@
+{
+  "name": "@am/shell",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Оболочка: вход через Keycloak, навигация, загрузка микрофронтендов",
+  "type": "module",
+  "scripts": {
+    "dev": "rsbuild dev",
+    "build": "rsbuild build",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@am/platform": "*",
+    "@module-federation/enhanced": "^2.9.2",
+    "keycloak-js": "^26.2.4",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-router": "^7.18.4"
+  }
+}
