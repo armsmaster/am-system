@@ -32,7 +32,6 @@ export function params(fields: Partial<Params> = {}): Params {
     board: 'TQOB',
     currency: 'RUB',
     issuer: 'Министерство финансов Российской Федерации',
-    face_value: '1000',
     initial_face_value: '1000',
     issue_date: '2021-06-16',
     maturity_date: '2041-05-15',

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
+from decimal import Decimal
+from typing import TYPE_CHECKING, Any
 
 import httpx2
 import pytest
@@ -46,7 +47,7 @@ async def load(resources: Resources, *codes: str) -> None:
     iss = IssClient(resources.http, "http://iss.test/iss")
     for code in codes:
         async with resources.require_database().session() as session:
-            await Commands(session, OPS).load(code, iss)
+            await Commands(session, OPS, clock=lambda: MORNING).load(code, iss)
 
 
 async def runs(resources: Resources) -> list[tuple[int, int, int]]:
@@ -109,6 +110,45 @@ async def test_retries_a_run_with_failures_an_hour_later(
     assert await runs(resources) == [(1, 1, 0)]
     # Всё прошло — больше в этот день не повторяем.
     assert await run_daily_sync_if_due(resources, settings, MORNING + timedelta(hours=4)) is False
+
+
+def reprice(face: str, coupon: str) -> Callable[[dict[str, Any]], None]:
+    """Ответ ISS по линкеру в другой день: номинал вырос, суммы пересчитаны на него."""
+
+    def patch(payload: dict[str, Any]) -> None:
+        for block, values in (
+            ("coupons", {"facevalue": face, "value": coupon}),
+            ("amortizations", {"facevalue": face, "value": face}),
+        ):
+            columns = payload[block]["columns"]
+            for row in payload[block]["data"]:
+                for name, value in values.items():
+                    row[columns.index(name)] = float(value)
+
+    return patch
+
+
+async def test_linker_gets_a_version_on_payment_day_not_every_day(
+    resources: Resources, settings: RefdataSettings, iss: FakeIss
+) -> None:
+    # Загружен 26.10, номинал 1065,10. Первый купон — 19.11.
+    await load(resources, "RU000A10F504")
+
+    iss.patches[("bond", "RU000A10F504")] = reprice("1065.5", coupon="10.2")
+    assert await run_daily_sync_if_due(resources, settings, MORNING + timedelta(days=1)) is True
+    assert await runs(resources) == [(1, 0, 0)]
+
+    pay_day = datetime(2026, 11, 19, 7, 0, tzinfo=MOSCOW)
+    iss.patches[("bond", "RU000A10F504")] = reprice("1074.3", coupon="10.31")
+    assert await run_daily_sync_if_due(resources, settings, pay_day) is True
+    async with resources.require_database().session() as session:
+        record = await Repository(session).find_by_code("RU000A10F504")
+        assert record is not None
+        latest = await Repository(session).latest_version(record.id)
+    # Выплаченный купон стал фактом; следующие суммы по-прежнему неизвестны.
+    assert (latest.number, latest.valid_from) == (2, pay_day.date())
+    assert [c.amount for c in latest.params.coupons[:2]] == [Decimal("10.31"), None]
+    assert latest.params.amortizations[0].amount is None
 
 
 async def test_worker_keeps_running_after_errors(

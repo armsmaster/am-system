@@ -51,7 +51,7 @@ def test_fixed_coupon_ofz() -> None:
     assert params.board == "TQOB"
     assert params.currency == "RUB"
     assert params.issuer == "Министерство финансов Российской Федерации"
-    assert params.face_value == Decimal(1000)
+    assert params.initial_face_value == Decimal(1000)
     assert params.maturity_date == date(2041, 5, 15)
     assert params.coupon_kind is CouponKind.FIXED
     assert params.coupon_frequency == 2
@@ -98,7 +98,10 @@ def test_corporate_bond_with_offers_and_amortization() -> None:
     bond = security("RU000A0JTZF1").params
 
     assert bond.board == "TQCB"
-    assert (bond.face_value, bond.initial_face_value) == (Decimal(600), Decimal(1000))
+    # Номинал на дату следует из начального номинала и графика: 1000 − 400 = 600.
+    assert bond.initial_face_value == Decimal(1000)
+    repaid = sum(a.amount or 0 for a in bond.amortizations if a.date <= date(2026, 10, 26))
+    assert bond.initial_face_value - repaid == Decimal(600)
     upcoming = [o for o in bond.offers if o.date == date(2026, 11, 3)]
     assert [(o.kind, o.window_start, o.window_end, o.price) for o in upcoming] == [
         (OfferKind.PUT, date(2026, 10, 26), date(2026, 10, 30), Decimal(100))
@@ -107,6 +110,21 @@ def test_corporate_bond_with_offers_and_amortization() -> None:
     # Купоны после оферты ещё не объявлены.
     assert bond.coupons[-1].rate is None
     assert bond.coupons == tuple(sorted(bond.coupons, key=lambda c: c.date))
+
+
+def test_linker_with_indexed_nominal() -> None:
+    linker = security("RU000A10F504")
+
+    params = linker.params
+    assert params.name == "ВЭБ.РФ ПБО-002Р-58"
+    assert params.coupon_kind is CouponKind.FIXED
+    # ISS пишет «Индексированный», но не говорит на какой индекс — уточняет сопровождение.
+    assert params.nominal_indexation is NominalIndexation.UNKNOWN
+    assert params.initial_face_value == Decimal(1000)
+    assert [(c.date, c.rate) for c in params.coupons[:2]] == [
+        (date(2026, 11, 19), Decimal("1.85")),
+        (date(2027, 5, 26), Decimal("1.85")),
+    ]
 
 
 def test_fund_share() -> None:

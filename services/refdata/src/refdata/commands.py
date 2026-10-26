@@ -27,6 +27,7 @@ from refdata.domain import (
     apply_edit,
     changed_fields,
     check_new_version_date,
+    issue_terms,
     journal_view,
     merge_from_iss,
 )
@@ -68,16 +69,17 @@ class Commands:
 
         security = await iss.find(code)
         now = self._clock()
+        params = issue_terms(security.params, now.date())
         record = InstrumentRecord(
             id=uuid4(),
             secid=security.secid,
             isin=security.isin,
             kind=security.kind,
-            name=security.params.name,
-            short_name=security.params.short_name,
+            name=params.name,
+            short_name=params.short_name,
             added_by=self._actor.username,
             added_at=now,
-            iss_snapshot=security.params,
+            iss_snapshot=params,
             last_synced_at=now,
             last_sync_error=None,
         )
@@ -95,13 +97,13 @@ class Commands:
                     author=self._actor.username,
                     comment="Загружена из MOEX ISS",
                     created_at=now,
-                    params=security.params,
+                    params=params,
                 ),
             )
             await self._emit(
                 "instrument.loaded",
                 record,
-                {"after": journal_view(security.params)},
+                {"after": journal_view(params)},
             )
         return Loaded(record.id, created=True)
 
@@ -149,10 +151,11 @@ class Commands:
             raise
 
         now = self._clock()
+        from_iss = issue_terms(security.params, now.date())
         async with self._session.begin():
             record = await self._repo.get(instrument_id, lock=True)
             latest = await self._repo.latest_version(instrument_id)
-            merged = merge_from_iss(latest, security.params)
+            merged = merge_from_iss(latest, from_iss)
             changed = changed_fields(latest.params, merged)
             if changed:
                 labels = ", ".join(FIELD_LABELS[name].lower() for name in changed)
@@ -172,7 +175,7 @@ class Commands:
                 )
                 await self._save_version(record, latest, version)
             await self._repo.set_sync_state(
-                instrument_id, synced_at=now, snapshot=security.params, error=None
+                instrument_id, synced_at=now, snapshot=from_iss, error=None
             )
         return bool(changed)
 

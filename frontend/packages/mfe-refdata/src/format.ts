@@ -51,7 +51,6 @@ export const FIELD_LABELS: Readonly<Record<Field, string>> = {
   board: 'Режим торгов',
   currency: 'Валюта',
   issuer: 'Эмитент',
-  face_value: 'Номинал',
   initial_face_value: 'Начальный номинал',
   issue_date: 'Дата выпуска',
   maturity_date: 'Дата погашения',

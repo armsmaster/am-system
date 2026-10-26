@@ -98,9 +98,9 @@ def iss(tokens: TokenFactory) -> FakeIss:
 
 
 @pytest.fixture
-async def settings(postgres_url: str, redis_url: str, schema: str) -> RefdataSettings:
-    """Настройки сервиса с отдельной, уже мигрированной схемой."""
-    settings = RefdataSettings(
+def bare_settings(postgres_url: str, redis_url: str, schema: str) -> RefdataSettings:
+    """Настройки сервиса с отдельной пустой схемой — для проверки миграций."""
+    return RefdataSettings(
         auth_issuer=TEST_ISSUER,
         auth_jwks_url=TEST_JWKS_URL,
         auth_audience=TEST_AUDIENCE,
@@ -111,8 +111,13 @@ async def settings(postgres_url: str, redis_url: str, schema: str) -> RefdataSet
         # Ежедневная синхронизация в тестах API не мешает: проверка раз в час.
         sync_check_seconds=3600,
     )
-    await asyncio.to_thread(upgrade, settings, "refdata:migrations")
-    return settings
+
+
+@pytest.fixture
+async def settings(bare_settings: RefdataSettings) -> RefdataSettings:
+    """Настройки сервиса с отдельной, уже мигрированной схемой."""
+    await asyncio.to_thread(upgrade, bare_settings, "refdata:migrations")
+    return bare_settings
 
 
 @pytest.fixture

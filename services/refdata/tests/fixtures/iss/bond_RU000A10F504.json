@@ -1,0 +1,199 @@
+{
+ "amortizations": {
+  "columns": [
+   "isin",
+   "name",
+   "issuevalue",
+   "amortdate",
+   "facevalue",
+   "initialfacevalue",
+   "faceunit",
+   "valueprc",
+   "value",
+   "value_rub",
+   "data_source",
+   "secid",
+   "primary_boardid"
+  ],
+  "data": [
+   [
+    "RU000A10F504",
+    "ВЭБ.РФ ПБО-002Р-58",
+    150000000000,
+    "2029-06-16",
+    1065.1,
+    1000,
+    "RUB",
+    106.51,
+    1065.1,
+    1065.1,
+    "maturity",
+    "RU000A10F504",
+    "TQCB"
+   ]
+  ]
+ },
+ "amortizations.cursor": {
+  "columns": [
+   "INDEX",
+   "TOTAL",
+   "PAGESIZE"
+  ],
+  "data": [
+   [
+    0,
+    1,
+    1
+   ]
+  ]
+ },
+ "coupons": {
+  "columns": [
+   "isin",
+   "name",
+   "issuevalue",
+   "coupondate",
+   "recorddate",
+   "startdate",
+   "initialfacevalue",
+   "facevalue",
+   "faceunit",
+   "value",
+   "valueprc",
+   "value_rub",
+   "secid",
+   "primary_boardid"
+  ],
+  "data": [
+   [
+    "RU000A10F504",
+    "ВЭБ.РФ ПБО-002Р-58",
+    150000000000,
+    "2026-11-19",
+    "2026-11-18",
+    "2026-05-15",
+    1000,
+    1065.1,
+    "RUB",
+    10.18,
+    1.85,
+    10.18,
+    "RU000A10F504",
+    "TQCB"
+   ],
+   [
+    "RU000A10F504",
+    "ВЭБ.РФ ПБО-002Р-58",
+    150000000000,
+    "2027-05-26",
+    "2027-05-25",
+    "2026-11-19",
+    1000,
+    1065.1,
+    "RUB",
+    10.18,
+    1.85,
+    10.18,
+    "RU000A10F504",
+    "TQCB"
+   ],
+   [
+    "RU000A10F504",
+    "ВЭБ.РФ ПБО-002Р-58",
+    150000000000,
+    "2027-11-30",
+    "2027-11-29",
+    "2027-05-26",
+    1000,
+    1065.1,
+    "RUB",
+    10.18,
+    1.85,
+    10.18,
+    "RU000A10F504",
+    "TQCB"
+   ],
+   [
+    "RU000A10F504",
+    "ВЭБ.РФ ПБО-002Р-58",
+    150000000000,
+    "2028-06-05",
+    "2028-06-02",
+    "2027-11-30",
+    1000,
+    1065.1,
+    "RUB",
+    10.18,
+    1.85,
+    10.18,
+    "RU000A10F504",
+    "TQCB"
+   ],
+   [
+    "RU000A10F504",
+    "ВЭБ.РФ ПБО-002Р-58",
+    150000000000,
+    "2028-12-10",
+    "2028-12-08",
+    "2028-06-05",
+    1000,
+    1065.1,
+    "RUB",
+    10.18,
+    1.85,
+    10.18,
+    "RU000A10F504",
+    "TQCB"
+   ],
+   [
+    "RU000A10F504",
+    "ВЭБ.РФ ПБО-002Р-58",
+    150000000000,
+    "2029-06-16",
+    "2029-06-15",
+    "2028-12-10",
+    1000,
+    1065.1,
+    "RUB",
+    10.18,
+    1.85,
+    10.18,
+    "RU000A10F504",
+    "TQCB"
+   ]
+  ]
+ },
+ "coupons.cursor": {
+  "columns": [
+   "INDEX",
+   "TOTAL",
+   "PAGESIZE"
+  ],
+  "data": [
+   [
+    0,
+    6,
+    6
+   ]
+  ]
+ },
+ "offers": {
+  "columns": [
+   "isin",
+   "name",
+   "issuevalue",
+   "offerdate",
+   "offerdatestart",
+   "offerdateend",
+   "facevalue",
+   "faceunit",
+   "price",
+   "value",
+   "agent",
+   "offertype",
+   "secid",
+   "primary_boardid"
+  ],
+  "data": []
+ }
+}

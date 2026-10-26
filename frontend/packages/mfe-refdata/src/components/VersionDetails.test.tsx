@@ -43,7 +43,6 @@ describe('VersionDetails', () => {
       Эмитент: 'Министерство финансов Российской Федерации',
       'Режим торгов': 'TQOB',
       Валюта: 'RUB',
-      Номинал: nbsp('1 000'),
       'Начальный номинал': nbsp('1 000'),
       'Дата выпуска': '16.06.2021',
       'Дата погашения': '15.05.2041 закреплено',
@@ -87,6 +86,19 @@ describe('VersionDetails', () => {
     ]);
   });
 
+  it('explains why a linker has no future payment amounts', () => {
+    const linker = params({
+      nominal_indexation: 'ruonia',
+      coupons: [
+        { date: '2026-11-19', start_date: '2026-05-15', record_date: null, rate: '1.85', amount: null },
+      ],
+    });
+    render(<VersionDetails version={version(1, { params: linker })} kind="bond" />);
+
+    expect(screen.getByText(/сумма купона и погашения зависит от номинала в день выплаты/)).toBeInTheDocument();
+    expect(rows('Купоны')).toEqual([['19.11.2026', '15.05.2026', '—', '1,85', '—']]);
+  });
+
   it('says when a schedule is empty', () => {
     render(
       <VersionDetails
@@ -128,15 +140,16 @@ describe('VersionDetails', () => {
       <VersionDetails
         version={version(1, {
           comment: null,
-          params: params({ issuer: null, face_value: null, coupon_kind: null }),
+          params: params({ issuer: null, coupon_kind: null }),
         })}
         kind="fund_share"
       />,
     );
 
     expect(screen.getByText('MOEX ISS, trader')).toBeInTheDocument();
-    expect(facts()).toMatchObject({ Эмитент: '—', Номинал: '—' });
+    expect(facts()).toMatchObject({ Эмитент: '—' });
     expect(screen.queryByText('Тип купона')).not.toBeInTheDocument();
+    expect(screen.queryByText('Начальный номинал')).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Купоны' })).not.toBeInTheDocument();
   });
 

@@ -47,7 +47,6 @@ export interface Params {
   readonly board: string;
   readonly currency: string;
   readonly issuer: string | null;
-  readonly face_value: Decimal | null;
   readonly initial_face_value: Decimal | null;
   readonly issue_date: IsoDate | null;
   readonly maturity_date: IsoDate | null;

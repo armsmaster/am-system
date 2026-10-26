@@ -14,6 +14,7 @@ from am_common.app import AppResources, DbSession
 from am_common.auth import CurrentPrincipal, Principal, Role, require_any_role
 from am_common.events import Actor
 from refdata.calendar import add_trading_days
+from refdata.clock import moscow_now
 from refdata.commands import Commands
 from refdata.domain import (
     Alert,
@@ -22,6 +23,7 @@ from refdata.domain import (
     RuleViolationError,
     Version,
     alerts,
+    issue_terms,
     version_on,
 )
 from refdata.iss import IssClient, IssError, NotFoundInIssError, UnsupportedSecurityError
@@ -134,7 +136,7 @@ async def lookup(
         secid=security.secid,
         isin=security.isin,
         kind=security.kind,
-        params=security.params,
+        params=issue_terms(security.params, moscow_now().date()),
         instrument_id=existing.id if existing else None,
     )
 

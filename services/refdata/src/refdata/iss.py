@@ -139,7 +139,6 @@ def parse_security(
         board=board,
         currency=_CURRENCIES.get(currency_code, currency_code),
         issuer=candidate.issuer,
-        face_value=_decimal(desc.get("FACEVALUE")),
         initial_face_value=_decimal(desc.get("INITIALFACEVALUE")),
         issue_date=_date(desc.get("ISSUEDATE")),
         maturity_date=_date(desc.get("MATDATE")),

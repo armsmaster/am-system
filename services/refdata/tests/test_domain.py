@@ -8,6 +8,7 @@ from decimal import Decimal
 import pytest
 
 from refdata.domain import (
+    Amortization,
     Coupon,
     CouponKind,
     FloaterTerms,
@@ -20,6 +21,7 @@ from refdata.domain import (
     apply_edit,
     changed_fields,
     check_new_version_date,
+    issue_terms,
     journal_view,
     merge_from_iss,
     version_on,
@@ -30,7 +32,7 @@ BASE = Params(
     short_name="ОФЗ 29014",
     board="TQOB",
     currency="RUB",
-    face_value=Decimal(1000),
+    initial_face_value=Decimal(1000),
     maturity_date=date(2026, 3, 25),
     coupon_kind=CouponKind.FLOATER,
     coupons=(Coupon(date=date(2025, 12, 24), rate=Decimal("16.45"), amount=Decimal(41)),),
@@ -145,7 +147,7 @@ def test_unpin_takes_value_from_iss() -> None:
         ({"nonsense": 1}, [], BASE, "unknown_field"),
         ({"short_name": "x"}, ["short_name"], BASE, "edit_and_unpin"),
         ({}, ["short_name"], None, "no_iss_snapshot"),
-        ({"face_value": "много"}, [], BASE, "invalid_params"),
+        ({"initial_face_value": "много"}, [], BASE, "invalid_params"),
     ],
 )
 def test_bad_edits_are_refused(
@@ -195,8 +197,54 @@ def test_journal_view_is_short_and_readable() -> None:
     view = journal_view(BASE.model_copy(update={"floater": TERMS}))
 
     assert view["coupons"] == "1 зап."
-    assert view["face_value"] == "1000"
+    assert view["initial_face_value"] == "1000"
     assert view["maturity_date"] == "2026-03-25"
     assert view["coupon_kind"] == "floater"
     assert view["issuer"] is None
     assert view["floater"] == {"rate": "ruonia", "margin_bp": "0", "capitalized": True}
+
+
+# --- условия выпуска ----------------------------------------------------------
+
+LINKER = Params(
+    name="ВЭБ.РФ ПБО-002Р-58",
+    short_name="ВЭБ2Р-58",
+    board="TQCB",
+    currency="RUB",
+    initial_face_value=Decimal(1000),
+    coupon_kind=CouponKind.FIXED,
+    nominal_indexation=NominalIndexation.RUONIA,
+    coupons=(
+        Coupon(date=date(2026, 11, 19), rate=Decimal("1.85"), amount=Decimal("10.18")),
+        Coupon(date=date(2027, 5, 26), rate=Decimal("1.85"), amount=Decimal("10.18")),
+    ),
+    amortizations=(
+        Amortization(
+            date=date(2029, 6, 16),
+            percent=Decimal("106.51"),
+            amount=Decimal("1065.1"),
+            is_maturity=True,
+        ),
+    ),
+)
+
+
+def test_linker_keeps_only_amounts_already_paid() -> None:
+    terms = issue_terms(LINKER, date(2026, 11, 19))
+
+    # Купон 19.11 выплачен — его сумма стала фактом. Будущие суммы ISS считает
+    # по сегодняшнему номиналу: это прогноз, а не условие выпуска.
+    assert [c.amount for c in terms.coupons] == [Decimal("10.18"), None]
+    assert [c.rate for c in terms.coupons] == [Decimal("1.85"), Decimal("1.85")]
+    [maturity] = terms.amortizations
+    assert (maturity.percent, maturity.amount, maturity.is_maturity) == (None, None, True)
+
+
+def test_unknown_index_is_still_an_indexed_nominal() -> None:
+    linker = LINKER.model_copy(update={"nominal_indexation": NominalIndexation.UNKNOWN})
+
+    assert issue_terms(linker, date(2026, 10, 26)).coupons[0].amount is None
+
+
+def test_bond_with_fixed_nominal_keeps_every_amount() -> None:
+    assert issue_terms(BASE, date(2020, 1, 1)) is BASE

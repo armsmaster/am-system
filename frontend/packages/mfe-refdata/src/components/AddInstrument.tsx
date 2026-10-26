@@ -146,8 +146,8 @@ function LookupPreview({
         <dd>{KIND_LABELS[preview.kind]}</dd>
         <dt>Эмитент</dt>
         <dd>{p.issuer ?? '—'}</dd>
-        <dt>Номинал</dt>
-        <dd>{formatDecimal(p.face_value, p.currency)}</dd>
+        <dt>Начальный номинал</dt>
+        <dd>{formatDecimal(p.initial_face_value, p.currency)}</dd>
         {preview.kind === 'bond' && (
           <>
             <dt>Дата погашения</dt>

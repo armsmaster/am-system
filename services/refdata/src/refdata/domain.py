@@ -65,7 +65,8 @@ class Coupon(_Frozen):
     start_date: dt.date | None = None
     record_date: dt.date | None = None
     rate: Decimal | None = None  # % годовых; None — ещё неизвестна
-    amount: Decimal | None = None  # на одну бумагу в валюте номинала
+    # На одну бумагу в валюте номинала. У линкера — только для наступивших выплат.
+    amount: Decimal | None = None
 
 
 class Amortization(_Frozen):
@@ -93,14 +94,19 @@ class FloaterTerms(_Frozen):
 
 
 class Params(_Frozen):
-    """Все параметры бумаги в одной версии."""
+    """Условия выпуска бумаги в одной версии.
+
+    Значения на дату — номинал, НКД, цены — сюда не входят: они меняются
+    каждый день, их ведут рыночные данные рядами по датам (решение 63).
+    Номинал обычной облигации на дату следует из начального номинала
+    и графика амортизаций.
+    """
 
     name: str
     short_name: str
     board: str  # основной режим торгов
     currency: str
     issuer: str | None = None
-    face_value: Decimal | None = None
     initial_face_value: Decimal | None = None
     issue_date: date | None = None
     maturity_date: date | None = None
@@ -143,6 +149,31 @@ def version_on(versions: Iterable[Version], day: date) -> Version | None:
     if not eligible:
         return None
     return max(eligible, key=lambda v: (v.valid_from or date.min, v.number))
+
+
+def issue_terms(params: Params, today: date) -> Params:
+    """Только условия выпуска: без сумм, которые ISS прогнозирует по текущему номиналу.
+
+    У облигации с индексируемым номиналом сумма купона и погашения зависит
+    от номинала в день выплаты. ISS каждый день пересчитывает будущие суммы
+    на сегодняшний номинал — это прогноз, а не условие выпуска. Справочник
+    хранит сумму платежа, только когда день выплаты наступил.
+    """
+    if params.nominal_indexation is NominalIndexation.NONE:
+        return params
+    return params.model_copy(
+        update={
+            "coupons": tuple(
+                c if c.date <= today else c.model_copy(update={"amount": None})
+                for c in params.coupons
+            ),
+            # Доля погашения у ISS — от начального номинала, поэтому тоже растёт с индексом.
+            "amortizations": tuple(
+                a if a.date <= today else a.model_copy(update={"amount": None, "percent": None})
+                for a in params.amortizations
+            ),
+        }
+    )
 
 
 def changed_fields(before: Params, after: Params) -> list[str]:
@@ -250,7 +281,6 @@ FIELD_LABELS: Mapping[str, str] = {
     "board": "Режим торгов",
     "currency": "Валюта",
     "issuer": "Эмитент",
-    "face_value": "Номинал",
     "initial_face_value": "Начальный номинал",
     "issue_date": "Дата выпуска",
     "maturity_date": "Дата погашения",

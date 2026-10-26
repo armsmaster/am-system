@@ -54,7 +54,6 @@ export function VersionDetails({
         {row('issuer', 'Эмитент', p.issuer ?? '—')}
         {row('board', 'Режим торгов', p.board)}
         {row('currency', 'Валюта', p.currency)}
-        {row('face_value', 'Номинал', formatDecimal(p.face_value))}
         {kind === 'bond' && (
           <>
             {row('initial_face_value', 'Начальный номинал', formatDecimal(p.initial_face_value))}
@@ -85,6 +84,12 @@ function floaterText({ floater }: Params): string {
 function Schedules({ params: p }: { readonly params: Params }) {
   return (
     <>
+      {p.nominal_indexation !== 'none' && (
+        <p className="muted">
+          Номинал индексируется, поэтому сумма купона и погашения зависит от номинала в день
+          выплаты. Справочник покажет сумму, когда выплата состоится.
+        </p>
+      )}
       <h4>Купоны</h4>
       {p.coupons.length === 0 ? (
         <p className="muted">Купонов нет.</p>
