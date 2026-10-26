@@ -1,8 +1,7 @@
 import { useState, type FormEvent } from 'react';
+import { ErrorNote, useAction } from '@am/ui';
 
 import type { Account, Kind, Portfolio, PortfolioApi } from '../api';
-import { useAction } from '../hooks';
-import { ErrorNote } from './common';
 import { kindLabel } from './PortfolioTree';
 
 interface DetailsProps {

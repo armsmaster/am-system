@@ -1,10 +1,9 @@
 import { useCallback, useState, type FormEvent } from 'react';
+import { ErrorNote, LoadedView, useAction, useLoad } from '@am/ui';
 
 import type { PortfolioApi } from '../api';
-import { ErrorNote, LoadedView } from '../components/common';
 import { PortfolioDetails } from '../components/PortfolioDetails';
 import { PortfolioTree } from '../components/PortfolioTree';
-import { useAction, useLoad } from '../hooks';
 
 export function PortfoliosPage({ api }: { readonly api: PortfolioApi }) {
   const load = useCallback(() => Promise.all([api.portfolios(), api.accounts()]), [api]);

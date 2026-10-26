@@ -21,7 +21,11 @@ const remote = (name: string) => () =>
     ),
   });
 
-const loaders: Loaders = { admin: remote('admin'), audit: remote('audit') };
+const loaders: Loaders = {
+  admin: remote('admin'),
+  audit: remote('audit'),
+  refdata: remote('refdata'),
+};
 
 function renderAt(path: string, session = fakeSession('admin')) {
   return render(
@@ -64,6 +68,17 @@ describe('App', () => {
 
     expect(await screen.findByText(`${path.slice(1)} remote at ${path}`)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: link })).toBeInTheDocument();
+  });
+
+  it.each([
+    ['trading'],
+    ['operations'],
+    [],
+  ] as const)('opens the reference data for every role: %s', async (...roles) => {
+    renderAt('/refdata/calendar', fakeSession(...roles));
+
+    expect(await screen.findByText('refdata remote at /refdata')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Справочник' })).toBeInTheDocument();
   });
 
   it.each(['/admin', '/audit'])('hides %s from everyone else', (path) => {

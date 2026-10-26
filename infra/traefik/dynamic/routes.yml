@@ -18,6 +18,12 @@ http:
       service: portfolio
       entryPoints: [web]
 
+    refdata-api:
+      rule: PathPrefix(`/api/refdata`)
+      middlewares: [strip-refdata]
+      service: refdata
+      entryPoints: [web]
+
     audit-api:
       rule: PathPrefix(`/api/audit`)
       middlewares: [strip-audit]
@@ -28,6 +34,12 @@ http:
       rule: PathPrefix(`/mfe/admin`)
       middlewares: [strip-mfe-admin]
       service: mfe-admin
+      entryPoints: [web]
+
+    mfe-refdata:
+      rule: PathPrefix(`/mfe/refdata`)
+      middlewares: [strip-mfe-refdata]
+      service: mfe-refdata
       entryPoints: [web]
 
     mfe-audit:
@@ -46,6 +58,9 @@ http:
     strip-portfolio:
       stripPrefix:
         prefixes: ["/api/portfolio"]
+    strip-refdata:
+      stripPrefix:
+        prefixes: ["/api/refdata"]
     strip-audit:
       stripPrefix:
         prefixes: ["/api/audit"]
@@ -55,6 +70,9 @@ http:
     strip-mfe-audit:
       stripPrefix:
         prefixes: ["/mfe/audit"]
+    strip-mfe-refdata:
+      stripPrefix:
+        prefixes: ["/mfe/refdata"]
 
   services:
     keycloak:
@@ -63,6 +81,12 @@ http:
     portfolio:
       loadBalancer:
         servers: [{ url: "http://portfolio:8000" }]
+        healthCheck:
+          path: /health
+          interval: 10s
+    refdata:
+      loadBalancer:
+        servers: [{ url: "http://refdata:8000" }]
         healthCheck:
           path: /health
           interval: 10s
@@ -78,6 +102,9 @@ http:
     mfe-audit:
       loadBalancer:
         servers: [{ url: "http://mfe-audit:80" }]
+    mfe-refdata:
+      loadBalancer:
+        servers: [{ url: "http://mfe-refdata:80" }]
     shell:
       loadBalancer:
         servers: [{ url: "http://shell:80" }]

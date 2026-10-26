@@ -1,9 +1,8 @@
 import { ROLE_LABELS } from '@am/platform';
 import { useCallback, useState, type FormEvent } from 'react';
+import { ErrorNote, LoadedView, useAction, useLoad } from '@am/ui';
 
 import type { Portfolio, PortfolioApi, User } from '../api';
-import { ErrorNote, LoadedView } from '../components/common';
-import { useAction, useLoad } from '../hooks';
 
 /**
  * Доступы: кто какие портфели видит. Доступ выдаётся на compound

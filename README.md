@@ -37,6 +37,10 @@ make up
 Если realm Keycloak менялся, пересоздайте данные: `make reset && make up`.
 Keycloak импортирует realm только в пустую базу.
 
+Шлюз следит за файлами маршрутов в `infra/traefik/dynamic/`, но на Docker
+Desktop под Windows события изменения файлов до контейнера не доходят.
+После правки маршрутов перезапустите шлюз: `docker compose restart gateway`.
+
 Консоль Keycloak: <http://localhost:8080/auth/admin>
 (`kcadmin` / `kcadmin-dev`). Панель шлюза: <http://localhost:8081>.
 
@@ -48,6 +52,7 @@ Keycloak импортирует realm только в пустую базу.
 cd frontend
 npm run dev:admin   # администрирование на :3001
 npm run dev:audit   # журнал на :3002
+npm run dev:refdata # справочник на :3003
 npm run dev:shell   # shell на :3000
 ```
 
@@ -73,10 +78,13 @@ libs/am-common/     общая библиотека: настройки, ток�
 services/Dockerfile общий образ Python-сервисов
 services/portfolio/ портфели, фонды, счета, доступы
 services/audit/     журнал действий пользователей
+services/refdata/   справочник: бумаги из MOEX ISS, версии, торговый календарь
 frontend/
   packages/platform/  контракт shell ↔ микрофронтенды, API-клиент
+  packages/ui/        общие помощники интерфейса: загрузка данных, действия, ошибки
   packages/shell/     оболочка: вход, навигация, общие стили
   packages/mfe-admin/ администрирование: портфели, счета, доступы
   packages/mfe-audit/ журнал действий
+  packages/mfe-refdata/ справочник: поиск и загрузка бумаг, карточка, календарь
 docs/               архитектура, решения, вопросы, дизайн шагов, блог
 ```

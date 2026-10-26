@@ -1,0 +1,202 @@
+"""Правила версий бумаги: версия на дату, слияние с ISS, ручная правка, предупреждения."""
+
+from __future__ import annotations
+
+from datetime import UTC, date, datetime
+from decimal import Decimal
+
+import pytest
+
+from refdata.domain import (
+    Coupon,
+    CouponKind,
+    FloaterTerms,
+    NominalIndexation,
+    Params,
+    RateKind,
+    RuleViolationError,
+    Version,
+    alerts,
+    apply_edit,
+    changed_fields,
+    check_new_version_date,
+    journal_view,
+    merge_from_iss,
+    version_on,
+)
+
+BASE = Params(
+    name="ОФЗ-ПК 29014",
+    short_name="ОФЗ 29014",
+    board="TQOB",
+    currency="RUB",
+    face_value=Decimal(1000),
+    maturity_date=date(2026, 3, 25),
+    coupon_kind=CouponKind.FLOATER,
+    coupons=(Coupon(date=date(2025, 12, 24), rate=Decimal("16.45"), amount=Decimal(41)),),
+)
+TERMS = FloaterTerms(rate=RateKind.RUONIA, margin_bp=Decimal(0), capitalized=True)
+
+
+def version(
+    number: int, valid_from: date | None, params: Params = BASE, **fields: object
+) -> Version:
+    return Version(
+        number=number,
+        valid_from=valid_from,
+        source="iss",
+        author="moex-iss",
+        comment=None,
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        params=params,
+        **fields,
+    )
+
+
+# --- версия на дату -----------------------------------------------------------
+
+
+def test_version_on_date() -> None:
+    first = version(1, None)
+    second = version(2, date(2026, 2, 1))
+    same_day_fix = version(3, date(2026, 2, 1))
+    versions = [first, second, same_day_fix]
+
+    assert version_on(versions, date(2025, 1, 1)) is first
+    assert version_on(versions, date(2026, 1, 31)) is first
+    # В один день — побеждает более поздняя версия.
+    assert version_on(versions, date(2026, 2, 1)) is same_day_fix
+    assert version_on([version(1, date(2026, 5, 1))], date(2026, 1, 1)) is None
+
+
+def test_new_version_cannot_start_before_the_current_one() -> None:
+    latest = version(2, date(2026, 2, 1))
+
+    check_new_version_date(latest, date(2026, 2, 1))
+    check_new_version_date(version(1, None), date(2020, 1, 1))
+    with pytest.raises(RuleViolationError) as too_early:
+        check_new_version_date(latest, date(2026, 1, 31))
+    with pytest.raises(RuleViolationError) as missing:
+        check_new_version_date(latest, None)
+
+    assert too_early.value.code == "valid_from_too_early"
+    assert "01.02.2026" in too_early.value.message
+    assert missing.value.code == "valid_from_required"
+
+
+# --- синхронизация с ISS ------------------------------------------------------
+
+
+def test_iss_changes_are_taken_except_pinned_and_manual_fields() -> None:
+    current = version(
+        2,
+        date(2026, 1, 1),
+        params=BASE.model_copy(update={"floater": TERMS, "short_name": "Флоатер 29014"}),
+        pinned=frozenset({"short_name"}),
+    )
+    from_iss = BASE.model_copy(
+        update={"maturity_date": date(2026, 4, 1), "short_name": "ОФЗ 29014"}
+    )
+
+    merged = merge_from_iss(current, from_iss)
+
+    assert merged.maturity_date == date(2026, 4, 1)  # из ISS
+    assert merged.short_name == "Флоатер 29014"  # закреплено вручную
+    assert merged.floater == TERMS  # ISS не знает параметров флоатера
+    assert changed_fields(current.params, merged) == ["maturity_date"]
+
+
+# --- ручная правка ------------------------------------------------------------
+
+
+def test_manual_edit_pins_changed_fields() -> None:
+    current = version(1, None)
+
+    params, pinned = apply_edit(
+        current,
+        {"floater": TERMS.model_dump(), "coupon_kind": "floater", "short_name": "Новое"},
+        unpin=[],
+        iss_snapshot=BASE,
+    )
+
+    assert params.floater == TERMS
+    assert params.short_name == "Новое"
+    # floater — только ручное поле, его не закрепляем; coupon_kind не изменился.
+    assert pinned == {"short_name"}
+
+
+def test_unpin_takes_value_from_iss() -> None:
+    current = version(
+        2,
+        date(2026, 1, 1),
+        params=BASE.model_copy(update={"short_name": "Ручное"}),
+        pinned=frozenset({"short_name"}),
+    )
+
+    params, pinned = apply_edit(current, {}, unpin=["short_name"], iss_snapshot=BASE)
+
+    assert params.short_name == "ОФЗ 29014"
+    assert pinned == frozenset()
+
+
+@pytest.mark.parametrize(
+    ("changes", "unpin", "snapshot", "code"),
+    [
+        ({"nonsense": 1}, [], BASE, "unknown_field"),
+        ({"short_name": "x"}, ["short_name"], BASE, "edit_and_unpin"),
+        ({}, ["short_name"], None, "no_iss_snapshot"),
+        ({"face_value": "много"}, [], BASE, "invalid_params"),
+    ],
+)
+def test_bad_edits_are_refused(
+    changes: dict[str, object], unpin: list[str], snapshot: Params | None, code: str
+) -> None:
+    with pytest.raises(RuleViolationError) as caught:
+        apply_edit(version(1, None), changes, unpin, snapshot)
+
+    assert caught.value.code == code
+
+
+# --- предупреждения -----------------------------------------------------------
+
+
+def test_alerts_tell_what_blocks_calculations() -> None:
+    floater_without_terms = alerts(BASE, [], None)
+    unknown = alerts(
+        BASE.model_copy(
+            update={
+                "coupon_kind": CouponKind.UNKNOWN,
+                "nominal_indexation": NominalIndexation.UNKNOWN,
+            }
+        ),
+        [],
+        None,
+    )
+    complete = alerts(BASE.model_copy(update={"floater": TERMS}), [], BASE)
+
+    assert [a.code for a in floater_without_terms] == ["floater_terms_missing"]
+    assert [a.code for a in unknown] == ["coupon_kind_unknown", "indexation_unknown"]
+    assert complete == []
+
+
+def test_pinned_field_that_differs_from_iss_is_flagged() -> None:
+    edited = BASE.model_copy(update={"floater": TERMS, "short_name": "Ручное"})
+
+    flagged = alerts(edited, ["short_name"], BASE)
+    agreed = alerts(BASE.model_copy(update={"floater": TERMS}), ["short_name"], BASE)
+
+    assert [a.message for a in flagged] == [
+        "Поле «Краткое название» закреплено вручную и расходится с ISS."
+    ]
+    assert agreed == []
+
+
+def test_journal_view_is_short_and_readable() -> None:
+    view = journal_view(BASE.model_copy(update={"floater": TERMS}))
+
+    assert view["coupons"] == "1 зап."
+    assert view["face_value"] == "1000"
+    assert view["maturity_date"] == "2026-03-25"
+    assert view["coupon_kind"] == "floater"
+    assert view["issuer"] is None
+    assert view["floater"] == {"rate": "ruonia", "margin_bp": "0", "capitalized": True}

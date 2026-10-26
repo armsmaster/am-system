@@ -1,4 +1,4 @@
-import type { Loaded } from '../hooks';
+import type { Loaded } from './hooks';
 import type { ReactNode } from 'react';
 
 export function ErrorNote({ message }: { readonly message: string | null }) {

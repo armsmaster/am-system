@@ -1,0 +1,38 @@
+{
+ "securities": {
+  "columns": [
+   "secid",
+   "shortname",
+   "regnumber",
+   "name",
+   "isin",
+   "is_traded",
+   "emitent_id",
+   "emitent_title",
+   "emitent_inn",
+   "emitent_okpo",
+   "type",
+   "group",
+   "primary_boardid",
+   "marketprice_boardid"
+  ],
+  "data": [
+   [
+    "RU000A0JTZF1",
+    "ДОМ.РФ26об",
+    "4-26-00739-A",
+    "ДОМ.РФ (ПАО) обл. сер.А26",
+    "RU000A0JTZF1",
+    1,
+    656,
+    "Публичное акционерное общество \"ДОМ.РФ\"",
+    "7729355614",
+    "47247771",
+    "corporate_bond",
+    "stock_bonds",
+    "TQCB",
+    "TQCB"
+   ]
+  ]
+ }
+}

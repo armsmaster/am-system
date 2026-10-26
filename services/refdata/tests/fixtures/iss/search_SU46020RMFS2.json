@@ -1,0 +1,38 @@
+{
+ "securities": {
+  "columns": [
+   "secid",
+   "shortname",
+   "regnumber",
+   "name",
+   "isin",
+   "is_traded",
+   "emitent_id",
+   "emitent_title",
+   "emitent_inn",
+   "emitent_okpo",
+   "type",
+   "group",
+   "primary_boardid",
+   "marketprice_boardid"
+  ],
+  "data": [
+   [
+    "SU46020RMFS2",
+    "ОФЗ 46020",
+    "46020RMFS",
+    "ОФЗ-АД 46020 06/02/36",
+    "RU000A0GN9A7",
+    1,
+    1228,
+    "Министерство финансов Российской Федерации",
+    "7710168360",
+    null,
+    "ofz_bond",
+    "stock_bonds",
+    "TQOB",
+    "TQOB"
+   ]
+  ]
+ }
+}

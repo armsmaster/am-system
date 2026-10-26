@@ -1,0 +1,54 @@
+{
+ "securities": {
+  "columns": [
+   "secid",
+   "shortname",
+   "regnumber",
+   "name",
+   "isin",
+   "is_traded",
+   "emitent_id",
+   "emitent_title",
+   "emitent_inn",
+   "emitent_okpo",
+   "type",
+   "group",
+   "primary_boardid",
+   "marketprice_boardid"
+  ],
+  "data": [
+   [
+    "LQDTM",
+    "iNAV LQDT ETF",
+    null,
+    "Расчетная цена одного пая биржевого ПИФа «Ликвидность» УК ВИМ",
+    null,
+    1,
+    null,
+    null,
+    null,
+    null,
+    "stock_index_if",
+    "stock_index",
+    "INAV",
+    null
+   ],
+   [
+    "LQDT",
+    "LQDT ETF",
+    "3915",
+    "БПИФ Ликвидность УК ВИМ",
+    "RU000A1014L8",
+    1,
+    4456,
+    "Акционерное общество ВИМ Инвестиции",
+    "7701140866",
+    "45062866",
+    "exchange_ppif",
+    "stock_ppif",
+    "TQBR",
+    "TQBR"
+   ]
+  ]
+ }
+}

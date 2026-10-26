@@ -3,12 +3,13 @@ import type { ReactNode } from 'react';
 import { BrowserRouter, NavLink, Route, Routes } from 'react-router';
 
 import { Microfrontend } from './components/Microfrontend';
-import { loadAdmin, loadAudit, type MicrofrontendLoader } from './microfrontends';
+import { loadAdmin, loadAudit, loadRefdata, type MicrofrontendLoader } from './microfrontends';
 import { Home } from './pages/Home';
 
 export interface Loaders {
   readonly admin: MicrofrontendLoader;
   readonly audit: MicrofrontendLoader;
+  readonly refdata: MicrofrontendLoader;
 }
 
 interface AppProps {
@@ -16,7 +17,9 @@ interface AppProps {
   readonly loaders?: Loaders;
 }
 
-export function App({ session, loaders = { admin: loadAdmin, audit: loadAudit } }: AppProps) {
+const LOADERS: Loaders = { admin: loadAdmin, audit: loadAudit, refdata: loadRefdata };
+
+export function App({ session, loaders = LOADERS }: AppProps) {
   return (
     <BrowserRouter>
       <AppRoutes session={session} loaders={loaders} />
@@ -33,6 +36,10 @@ export function AppRoutes({ session, loaders }: Required<AppProps>) {
     <Layout session={session} isAdmin={isAdmin}>
       <Routes>
         <Route path="/" element={<Home session={session} />} />
+        <Route
+          path="/refdata/*"
+          element={<Microfrontend load={loaders.refdata} session={session} basePath="/refdata" />}
+        />
         <Route
           path="/admin/*"
           element={adminOnly(
@@ -70,6 +77,7 @@ function Layout({
           <NavLink to="/" end>
             Главная
           </NavLink>
+          <NavLink to="/refdata">Справочник</NavLink>
           {isAdmin && <NavLink to="/admin">Администрирование</NavLink>}
           {isAdmin && <NavLink to="/audit">Журнал</NavLink>}
         </nav>

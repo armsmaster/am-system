@@ -1,8 +1,7 @@
 import { useCallback, useState, type FormEvent } from 'react';
+import { ErrorNote, LoadedView, useAction, useLoad } from '@am/ui';
 
 import type { Account, AccountFields, CashKind, Portfolio, PortfolioApi } from '../api';
-import { ErrorNote, LoadedView } from '../components/common';
-import { useAction, useLoad } from '../hooks';
 
 const CASH_KIND_LABELS: Readonly<Record<CashKind, string>> = {
   broker: 'брокерский',
