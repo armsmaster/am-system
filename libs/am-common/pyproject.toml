@@ -4,11 +4,13 @@ version = "0.1.0"
 description = "Общая инфраструктура сервисов am-system: настройки, аутентификация, БД, фабрика приложения"
 requires-python = ">=3.13,<3.14"
 dependencies = [
+    "alembic>=1.20",
     "fastapi>=0.162",
     "httpx2>=2.16",
     "pydantic>=2.14",
     "pydantic-settings>=2.16",
     "pyjwt[crypto]>=2.15",
+    "redis>=8.1",
     "sqlalchemy[asyncio]>=2.1",
     "asyncpg>=0.32",
 ]

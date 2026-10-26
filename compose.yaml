@@ -7,6 +7,20 @@ x-service-env: &service-env
   AM_AUTH_ISSUER: http://localhost:${GATEWAY_PORT:-8080}/auth/realms/am
   AM_AUTH_JWKS_URL: http://keycloak:8080/auth/realms/am/protocol/openid-connect/certs
   AM_LOG_LEVEL: INFO
+  AM_REDIS_URL: redis://redis:6379/0
+
+x-service-depends: &service-depends
+  postgres:
+    condition: service_healthy
+  redis:
+    condition: service_healthy
+
+x-service-healthcheck: &service-healthcheck
+  test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready')"]
+  interval: 10s
+  timeout: 3s
+  retries: 10
+  start_period: 20s
 
 services:
   postgres:
@@ -96,18 +110,29 @@ services:
     restart: unless-stopped
     build:
       context: .
-      dockerfile: services/portfolio/Dockerfile
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE: portfolio
     environment:
       <<: *service-env
       AM_DATABASE_URL: postgresql+asyncpg://svc_portfolio:${SERVICES_DB_PASSWORD:-services-dev}@postgres:5432/am
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready')"]
-      interval: 10s
-      timeout: 3s
-      retries: 10
+      AM_KEYCLOAK_URL: http://keycloak:8080/auth
+      AM_KEYCLOAK_CLIENT_SECRET: ${PORTFOLIO_KEYCLOAK_SECRET:-portfolio-dev-secret}
+    depends_on: *service-depends
+    healthcheck: *service-healthcheck
+
+  audit:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE: audit
+    environment:
+      <<: *service-env
+      AM_DATABASE_URL: postgresql+asyncpg://svc_audit:${SERVICES_DB_PASSWORD:-services-dev}@postgres:5432/am
+    depends_on: *service-depends
+    healthcheck: *service-healthcheck
 
   shell:
     restart: unless-stopped
@@ -120,6 +145,12 @@ services:
     build:
       context: frontend
       dockerfile: packages/mfe-admin/Dockerfile
+
+  mfe-audit:
+    restart: unless-stopped
+    build:
+      context: frontend
+      dockerfile: packages/mfe-audit/Dockerfile
 
 volumes:
   postgres-data:

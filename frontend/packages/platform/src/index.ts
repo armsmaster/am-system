@@ -1,4 +1,4 @@
-export { ApiError, createApiClient, type ApiClient } from './api';
+export { ApiError, createApiClient, errorMessage, type ApiClient } from './api';
 export {
   hasRole,
   parseRoles,

@@ -3,11 +3,12 @@ import type { ReactNode } from 'react';
 import { BrowserRouter, NavLink, Route, Routes } from 'react-router';
 
 import { Microfrontend } from './components/Microfrontend';
-import { loadAdmin, type MicrofrontendLoader } from './microfrontends';
+import { loadAdmin, loadAudit, type MicrofrontendLoader } from './microfrontends';
 import { Home } from './pages/Home';
 
 export interface Loaders {
   readonly admin: MicrofrontendLoader;
+  readonly audit: MicrofrontendLoader;
 }
 
 interface AppProps {
@@ -15,7 +16,7 @@ interface AppProps {
   readonly loaders?: Loaders;
 }
 
-export function App({ session, loaders = { admin: loadAdmin } }: AppProps) {
+export function App({ session, loaders = { admin: loadAdmin, audit: loadAudit } }: AppProps) {
   return (
     <BrowserRouter>
       <AppRoutes session={session} loaders={loaders} />
@@ -25,6 +26,8 @@ export function App({ session, loaders = { admin: loadAdmin } }: AppProps) {
 
 export function AppRoutes({ session, loaders }: Required<AppProps>) {
   const isAdmin = hasRole(session, 'admin');
+  const adminOnly = (page: ReactNode) =>
+    isAdmin ? page : <p role="alert">Раздел доступен только администратору.</p>;
 
   return (
     <Layout session={session} isAdmin={isAdmin}>
@@ -32,13 +35,15 @@ export function AppRoutes({ session, loaders }: Required<AppProps>) {
         <Route path="/" element={<Home session={session} />} />
         <Route
           path="/admin/*"
-          element={
-            isAdmin ? (
-              <Microfrontend load={loaders.admin} session={session} basePath="/admin" />
-            ) : (
-              <p role="alert">Раздел доступен только администратору.</p>
-            )
-          }
+          element={adminOnly(
+            <Microfrontend load={loaders.admin} session={session} basePath="/admin" />,
+          )}
+        />
+        <Route
+          path="/audit/*"
+          element={adminOnly(
+            <Microfrontend load={loaders.audit} session={session} basePath="/audit" />,
+          )}
         />
         <Route path="*" element={<p>Страница не найдена.</p>} />
       </Routes>
@@ -66,6 +71,7 @@ function Layout({
             Главная
           </NavLink>
           {isAdmin && <NavLink to="/admin">Администрирование</NavLink>}
+          {isAdmin && <NavLink to="/audit">Журнал</NavLink>}
         </nav>
         <div className="user">
           <span>{session.displayName}</span>

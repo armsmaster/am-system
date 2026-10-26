@@ -1,0 +1,19 @@
+{
+  "name": "@am/mfe-audit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Микрофронтенд журнала действий пользователей",
+  "type": "module",
+  "scripts": {
+    "dev": "rsbuild dev",
+    "build": "rsbuild build",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@am/platform": "*",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-router": "^7.18.4"
+  }
+}

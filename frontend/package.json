@@ -10,7 +10,8 @@
     "dev:admin": "npm run dev -w @am/mfe-admin",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
-    "build": "npm run build --workspaces --if-present"
+    "build": "npm run build --workspaces --if-present",
+    "dev:audit": "npm run dev -w @am/mfe-audit"
   },
   "devDependencies": {
     "@module-federation/rsbuild-plugin": "^2.9.2",

@@ -12,12 +12,16 @@ vi.mock('@module-federation/enhanced/runtime', () => ({
   registerRemotes: vi.fn(),
 }));
 
-const loaders: Loaders = {
-  admin: () =>
-    Promise.resolve({
-      default: ({ basePath }: MicrofrontendProps) => <p>admin remote at {basePath}</p>,
-    }),
-};
+const remote = (name: string) => () =>
+  Promise.resolve({
+    default: ({ basePath }: MicrofrontendProps) => (
+      <p>
+        {name} remote at {basePath}
+      </p>
+    ),
+  });
+
+const loaders: Loaders = { admin: remote('admin'), audit: remote('audit') };
 
 function renderAt(path: string, session = fakeSession('admin')) {
   return render(
@@ -52,17 +56,21 @@ describe('App', () => {
     expect(session.logout).toHaveBeenCalledOnce();
   });
 
-  it('mounts the admin microfrontend for an admin', async () => {
-    renderAt('/admin');
+  it.each([
+    ['/admin', 'Администрирование'],
+    ['/audit', 'Журнал'],
+  ])('mounts the %s microfrontend for an admin', async (path, link) => {
+    renderAt(path);
 
-    expect(await screen.findByText('admin remote at /admin')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Администрирование' })).toBeInTheDocument();
+    expect(await screen.findByText(`${path.slice(1)} remote at ${path}`)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: link })).toBeInTheDocument();
   });
 
-  it('hides administration from everyone else', () => {
-    renderAt('/admin', fakeSession('trading'));
+  it.each(['/admin', '/audit'])('hides %s from everyone else', (path) => {
+    renderAt(path, fakeSession('trading'));
 
     expect(screen.queryByRole('link', { name: 'Администрирование' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Журнал' })).not.toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent('только администратору');
   });
 

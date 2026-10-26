@@ -14,13 +14,25 @@
   "ssoSessionIdleTimeout": 1800,
   "ssoSessionMaxLifespan": 36000,
   "internationalizationEnabled": true,
-  "supportedLocales": ["ru", "en"],
+  "supportedLocales": [
+    "ru",
+    "en"
+  ],
   "defaultLocale": "ru",
   "roles": {
     "realm": [
-      { "name": "trading", "description": "Трейдинг" },
-      { "name": "operations", "description": "Сопровождение" },
-      { "name": "admin", "description": "Администратор: видит всё и может всё" }
+      {
+        "name": "trading",
+        "description": "Трейдинг"
+      },
+      {
+        "name": "operations",
+        "description": "Сопровождение"
+      },
+      {
+        "name": "admin",
+        "description": "Администратор: видит всё и может всё"
+      }
     ]
   },
   "clients": [
@@ -35,8 +47,13 @@
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
       "frontchannelLogout": true,
-      "redirectUris": ["http://localhost:8080/*", "http://localhost:3000/*"],
-      "webOrigins": ["+"],
+      "redirectUris": [
+        "http://localhost:8080/*",
+        "http://localhost:3000/*"
+      ],
+      "webOrigins": [
+        "+"
+      ],
       "attributes": {
         "pkce.code.challenge.method": "S256",
         "post.logout.redirect.uris": "http://localhost:8080/*##http://localhost:3000/*"
@@ -66,6 +83,20 @@
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false
+    },
+    {
+      "clientId": "am-portfolio",
+      "name": "Сервис portfolio: чтение пользователей",
+      "description": "Служебная учётная запись: справочник пользователей для выдачи доступов. Только чтение.",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "portfolio-dev-secret",
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true
     }
   ],
   "users": [
@@ -76,8 +107,16 @@
       "emailVerified": true,
       "firstName": "Админ",
       "lastName": "Разработки",
-      "credentials": [{ "type": "password", "value": "admin-dev", "temporary": false }],
-      "realmRoles": ["admin"]
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin-dev",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "admin"
+      ]
     },
     {
       "username": "trader",
@@ -86,8 +125,16 @@
       "emailVerified": true,
       "firstName": "Трейдер",
       "lastName": "Разработки",
-      "credentials": [{ "type": "password", "value": "trader-dev", "temporary": false }],
-      "realmRoles": ["trading"]
+      "credentials": [
+        {
+          "type": "password",
+          "value": "trader-dev",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "trading"
+      ]
     },
     {
       "username": "ops",
@@ -96,8 +143,27 @@
       "emailVerified": true,
       "firstName": "Сопровождение",
       "lastName": "Разработки",
-      "credentials": [{ "type": "password", "value": "ops-dev", "temporary": false }],
-      "realmRoles": ["operations"]
+      "credentials": [
+        {
+          "type": "password",
+          "value": "ops-dev",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "operations"
+      ]
+    },
+    {
+      "username": "service-account-am-portfolio",
+      "enabled": true,
+      "serviceAccountClientId": "am-portfolio",
+      "clientRoles": {
+        "realm-management": [
+          "view-users",
+          "query-users"
+        ]
+      }
     }
   ]
 }

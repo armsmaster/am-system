@@ -16,15 +16,14 @@ export type MicrofrontendLoader = () => Promise<MicrofrontendModule>;
  * разработки адрес remote задаётся переменной PUBLIC_MFE_<ИМЯ>_URL.
  */
 export function microfrontendRemotes(
-  env: Pick<ImportMetaEnv, 'PUBLIC_MFE_ADMIN_URL'> = import.meta.env,
+  env: Pick<ImportMetaEnv, 'PUBLIC_MFE_ADMIN_URL' | 'PUBLIC_MFE_AUDIT_URL'> = import.meta.env,
   origin: string = window.location.origin,
 ) {
+  const manifest = (devUrl: string | undefined, path: string) =>
+    new URL('mf-manifest.json', devUrl || `${origin}${path}`).href;
   return [
-    {
-      name: 'mfe_admin',
-      entry: new URL('mf-manifest.json', env.PUBLIC_MFE_ADMIN_URL || `${origin}/mfe/admin/`)
-        .href,
-    },
+    { name: 'mfe_admin', entry: manifest(env.PUBLIC_MFE_ADMIN_URL, '/mfe/admin/') },
+    { name: 'mfe_audit', entry: manifest(env.PUBLIC_MFE_AUDIT_URL, '/mfe/audit/') },
   ];
 }
 
@@ -33,6 +32,7 @@ export function registerMicrofrontends(): void {
 }
 
 export const loadAdmin: MicrofrontendLoader = () => load('mfe_admin/App');
+export const loadAudit: MicrofrontendLoader = () => load('mfe_audit/App');
 
 async function load(id: string): Promise<MicrofrontendModule> {
   const module = await loadRemote<MicrofrontendModule>(id);

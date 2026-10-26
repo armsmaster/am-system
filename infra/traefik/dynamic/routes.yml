@@ -18,10 +18,22 @@ http:
       service: portfolio
       entryPoints: [web]
 
+    audit-api:
+      rule: PathPrefix(`/api/audit`)
+      middlewares: [strip-audit]
+      service: audit
+      entryPoints: [web]
+
     mfe-admin:
       rule: PathPrefix(`/mfe/admin`)
       middlewares: [strip-mfe-admin]
       service: mfe-admin
+      entryPoints: [web]
+
+    mfe-audit:
+      rule: PathPrefix(`/mfe/audit`)
+      middlewares: [strip-mfe-audit]
+      service: mfe-audit
       entryPoints: [web]
 
     shell:
@@ -34,9 +46,15 @@ http:
     strip-portfolio:
       stripPrefix:
         prefixes: ["/api/portfolio"]
+    strip-audit:
+      stripPrefix:
+        prefixes: ["/api/audit"]
     strip-mfe-admin:
       stripPrefix:
         prefixes: ["/mfe/admin"]
+    strip-mfe-audit:
+      stripPrefix:
+        prefixes: ["/mfe/audit"]
 
   services:
     keycloak:
@@ -48,9 +66,18 @@ http:
         healthCheck:
           path: /health
           interval: 10s
+    audit:
+      loadBalancer:
+        servers: [{ url: "http://audit:8000" }]
+        healthCheck:
+          path: /health
+          interval: 10s
     mfe-admin:
       loadBalancer:
         servers: [{ url: "http://mfe-admin:80" }]
+    mfe-audit:
+      loadBalancer:
+        servers: [{ url: "http://mfe-audit:80" }]
     shell:
       loadBalancer:
         servers: [{ url: "http://shell:80" }]

@@ -5,7 +5,9 @@ from fastapi import FastAPI
 
 from am_common.app import create_app
 from am_common.logs import configure_logging
-from portfolio.api import router
+from am_common.outbox import relay_worker
+from portfolio.api import install_error_handlers, router
+from portfolio.db import outbox
 from portfolio.settings import PortfolioSettings
 
 
@@ -14,12 +16,15 @@ def build_app(
     *,
     http_transport: httpx2.AsyncBaseTransport | None = None,
 ) -> FastAPI:
-    return create_app(
+    app = create_app(
         settings or PortfolioSettings(),
         routers=[router],
+        workers=[relay_worker(outbox)],
         title="Portfolio service",
         http_transport=http_transport,
     )
+    install_error_handlers(app)
+    return app
 
 
 def serve() -> FastAPI:

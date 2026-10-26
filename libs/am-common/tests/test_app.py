@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Iterator
 from typing import Annotated
 
@@ -9,7 +10,7 @@ from fastapi import APIRouter, Depends
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
-from am_common.app import create_app
+from am_common.app import DbSession, Resources, create_app
 from am_common.auth import CurrentPrincipal, Principal, Role, require_any_role
 from am_common.settings import ServiceSettings
 from am_common.testing import TokenFactory
@@ -66,7 +67,73 @@ def test_ready_reports_unreachable_database(
         response = client.get("/ready")
 
     assert response.status_code == 503
-    assert response.json() == {"status": "unavailable"}
+    assert response.json() == {"status": "unavailable", "failed": ["database"]}
+
+
+def test_ready_reports_unreachable_redis(
+    tokens: TokenFactory, make_settings: SettingsFactory
+) -> None:
+    settings = make_settings(redis_url=SecretStr("redis://127.0.0.1:1/0"))
+    app = create_app(settings, http_transport=tokens.transport())
+
+    with TestClient(app) as client:
+        response = client.get("/ready")
+
+    assert response.json() == {"status": "unavailable", "failed": ["redis"]}
+
+
+def test_background_workers_run_and_stop_with_the_app(
+    tokens: TokenFactory, make_settings: SettingsFactory
+) -> None:
+    cancelled: list[str] = []
+
+    async def relay(resources: Resources) -> None:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.append(resources.settings.service_name)
+            raise
+
+    app = create_app(make_settings(), workers=[relay], http_transport=tokens.transport())
+
+    with TestClient(app) as client:
+        assert client.get("/ready").json() == {"status": "ok"}
+
+    assert cancelled == ["test"]
+
+
+def test_stopped_worker_makes_service_unready(
+    tokens: TokenFactory, make_settings: SettingsFactory, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def broken_consumer(_resources: Resources) -> None:
+        raise RuntimeError("bug")
+
+    app = create_app(make_settings(), workers=[broken_consumer], http_transport=tokens.transport())
+
+    with TestClient(app) as client:
+        response = client.get("/ready")
+
+    assert response.json() == {"status": "unavailable", "failed": ["broken_consumer"]}
+    assert "background worker broken_consumer stopped" in caplog.text
+
+
+def test_resources_say_what_is_not_configured(
+    tokens: TokenFactory, make_settings: SettingsFactory
+) -> None:
+    router = APIRouter()
+
+    @router.get("/session")
+    async def session(_session: DbSession) -> None:
+        pass
+
+    app = create_app(make_settings(), routers=[router], http_transport=tokens.transport())
+
+    with TestClient(app) as client:
+        resources: Resources = app.state.resources
+        with pytest.raises(RuntimeError, match="redis is not configured"):
+            resources.require_redis()
+        with pytest.raises(RuntimeError, match="database is not configured"):
+            client.get("/session")
 
 
 def test_missing_token_is_challenged(client: TestClient) -> None:

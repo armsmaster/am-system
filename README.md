@@ -5,6 +5,8 @@
 - Архитектура: [docs/architecture.md](docs/architecture.md)
 - Решения по предметной области: [docs/decisions.md](docs/decisions.md)
 - Открытые вопросы: [docs/open-questions.md](docs/open-questions.md)
+- Дизайн шагов: [docs/design/](docs/design/)
+- Блог о системе для инженеров и финансистов: [docs/blog/](docs/blog/README.md)
 
 ## Что нужно установить
 
@@ -32,6 +34,9 @@ make up
 | `trader` | `trader-dev` | трейдинг |
 | `ops` | `ops-dev` | сопровождение |
 
+Если realm Keycloak менялся, пересоздайте данные: `make reset && make up`.
+Keycloak импортирует realm только в пустую базу.
+
 Консоль Keycloak: <http://localhost:8080/auth/admin>
 (`kcadmin` / `kcadmin-dev`). Панель шлюза: <http://localhost:8081>.
 
@@ -41,7 +46,8 @@ make up
 
 ```bash
 cd frontend
-npm run dev:admin   # микрофронтенд на :3001
+npm run dev:admin   # администрирование на :3001
+npm run dev:audit   # журнал на :3002
 npm run dev:shell   # shell на :3000
 ```
 
@@ -63,11 +69,14 @@ make test-unit   # быстрые тесты бэкенда без контей�
 ```
 compose.yaml        локальное окружение
 infra/              Postgres (init), Keycloak (realm), Traefik (маршруты)
-libs/am-common/     общая библиотека сервисов: настройки, токены, БД
-services/portfolio/ сервис портфелей (пока заготовка: /me, пробы)
+libs/am-common/     общая библиотека: настройки, токены, БД, outbox, события, миграции
+services/Dockerfile общий образ Python-сервисов
+services/portfolio/ портфели, фонды, счета, доступы
+services/audit/     журнал действий пользователей
 frontend/
-  packages/platform/  контракт shell ↔ микрофронтенды
-  packages/shell/     оболочка: вход, навигация
-  packages/mfe-admin/ микрофронтенд администрирования
-docs/               архитектура, решения, вопросы
+  packages/platform/  контракт shell ↔ микрофронтенды, API-клиент
+  packages/shell/     оболочка: вход, навигация, общие стили
+  packages/mfe-admin/ администрирование: портфели, счета, доступы
+  packages/mfe-audit/ журнал действий
+docs/               архитектура, решения, вопросы, дизайн шагов, блог
 ```

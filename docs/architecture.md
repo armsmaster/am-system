@@ -180,7 +180,8 @@ audience (`am-api`) и срок; роли берёт из `realm_access.roles`. 
 
 0. **Каркас** — репозиторий, compose, Keycloak, шлюз, `am-common`, заготовка
    `portfolio`, shell и первый микрофронтенд, CI. *(сделано)*
-1. `portfolio` + `audit` + outbox + админка: граф, фонды, счета, права.
+1. `portfolio` + `audit` + outbox + админка и журнал: граф, фонды, счета,
+   права. *(сделано, см. [design/01-portfolio-audit.md](design/01-portfolio-audit.md))*
 2. `refdata`: инструменты, версии, календари, адаптер MOEX ISS.
 3. `marketdata`: приём по API, ручной ввод, DEMA, правила выбора цены.
 4. `am-quant` для облигаций с фиксированным купоном и офертами — с эталонными

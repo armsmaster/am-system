@@ -28,6 +28,8 @@ class ServiceSettings(BaseSettings):
     database_url: SecretStr | None = None
     database_schema: str | None = None
 
+    redis_url: SecretStr | None = None
+
     @model_validator(mode="after")
     def _schema_required_with_database(self) -> ServiceSettings:
         if self.database_url is not None and not self.database_schema:
