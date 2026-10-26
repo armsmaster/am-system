@@ -15,6 +15,7 @@ jobs:
           version: "0.11.20"
       - run: uv sync --frozen
       - run: make py-lint
+      - run: make blog-check
       # Интеграционные тесты поднимают PostgreSQL через testcontainers.
       - run: uv run pytest --cov
 
