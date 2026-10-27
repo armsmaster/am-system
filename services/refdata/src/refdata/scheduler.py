@@ -19,8 +19,8 @@ from datetime import datetime, timedelta
 from sqlalchemy.exc import SQLAlchemyError
 
 from am_common.app import Resources, Worker
+from am_common.clock import moscow_now
 from am_common.events import SYSTEM_ACTOR
-from refdata.clock import moscow_now
 from refdata.commands import sync_all
 from refdata.iss import IssClient
 from refdata.repository import Repository

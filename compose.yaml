@@ -134,6 +134,22 @@ services:
     depends_on: *service-depends
     healthcheck: *service-healthcheck
 
+  marketdata:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE: marketdata
+    environment:
+      <<: *service-env
+      AM_DATABASE_URL: postgresql+asyncpg://svc_marketdata:${SERVICES_DB_PASSWORD:-services-dev}@postgres:5432/am
+      # Справочник читаем под служебной учётной записью am-marketdata.
+      AM_KEYCLOAK_URL: http://keycloak:8080/auth
+      AM_KEYCLOAK_CLIENT_SECRET: ${MARKETDATA_KEYCLOAK_SECRET:-marketdata-dev-secret}
+    depends_on: *service-depends
+    healthcheck: *service-healthcheck
+
   audit:
     restart: unless-stopped
     build:
@@ -170,6 +186,12 @@ services:
     build:
       context: frontend
       dockerfile: packages/mfe-refdata/Dockerfile
+
+  mfe-marketdata:
+    restart: unless-stopped
+    build:
+      context: frontend
+      dockerfile: packages/mfe-marketdata/Dockerfile
 
 volumes:
   postgres-data:

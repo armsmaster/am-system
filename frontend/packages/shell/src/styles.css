@@ -261,11 +261,17 @@ h2.year {
 
 form.inline {
   display: flex;
+  align-items: flex-end;
   gap: 8px;
   padding: 0;
   border: none;
   margin: 6px 0 0;
   background: none;
+}
+
+/* Поле с подписью в строке: кнопка рядом — по нижнему краю поля. */
+form.inline label {
+  margin-bottom: 0;
 }
 
 button.link {
@@ -371,4 +377,44 @@ table.data tr.selected {
 table.data .num {
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+/* Широкий разброс цен и отклонённые пакеты скрипта. */
+table.data tr.wide td {
+  background: var(--warning-bg);
+}
+
+div.inline {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.price {
+  font-size: 28px;
+  font-weight: 600;
+  margin: 4px 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart {
+  height: 360px;
+  margin-bottom: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.rule-types {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+
+.rule-types li {
+  margin-bottom: 4px;
+}
+
+.rule-types button {
+  padding: 0 8px;
 }

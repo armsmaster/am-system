@@ -5,10 +5,11 @@
 name = "am-system"
 version = "0.0.0"
 requires-python = ">=3.13,<3.14"
-dependencies = ["am-common", "audit", "portfolio", "refdata"]
+dependencies = ["am-common", "audit", "marketdata", "portfolio", "refdata"]
 
 [dependency-groups]
 dev = [
+    "jsonschema>=4.25",
     "markdown>=3.7",
     "mypy>=2.4",
     "pytest>=9.1",
@@ -27,6 +28,7 @@ members = ["libs/*", "services/*"]
 [tool.uv.sources]
 am-common = { workspace = true }
 audit = { workspace = true }
+marketdata = { workspace = true }
 portfolio = { workspace = true }
 refdata = { workspace = true }
 
@@ -53,7 +55,7 @@ plugins = ["pydantic.mypy"]
 exclude = ["/migrations/", "/sample_migrations/"]
 
 [[tool.mypy.overrides]]
-module = ["testcontainers.*", "markdown.*"]
+module = ["testcontainers.*", "markdown.*", "jsonschema.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
@@ -68,7 +70,7 @@ branch = true
 # Асинхронный SQLAlchemy переключает контексты через greenlet — без этого
 # coverage теряет строки после await.
 concurrency = ["greenlet", "thread"]
-source = ["am_common", "audit", "portfolio", "refdata"]
+source = ["am_common", "audit", "marketdata", "portfolio", "refdata"]
 
 [tool.coverage.report]
 fail_under = 100

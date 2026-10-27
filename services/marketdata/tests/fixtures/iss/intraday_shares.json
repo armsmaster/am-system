@@ -1,0 +1,13 @@
+{
+"securities": {
+	"columns": ["SECID", "BOARDID"], 
+	"data": [
+		["LQDT", "TQBR"]
+	]
+},
+"marketdata": {
+	"columns": ["SECID", "BOARDID", "BID", "OFFER", "LAST", "WAPRICE", "NUMTRADES", "TRADINGSTATUS", "UPDATETIME", "SYSTIME"], 
+	"data": [
+		["LQDT", "TQBR", 2.1188, 2.1189, 2.1189, 2.1188, 1331, "T", "09:25:03", "2026-10-27 09:40:03"]
+	]
+}}

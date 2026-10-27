@@ -13,9 +13,9 @@ import pytest
 from sqlalchemy import select
 
 from am_common.app import Resources
+from am_common.clock import MOSCOW
 from am_common.db import Database
 from am_common.events import Actor
-from refdata.clock import MOSCOW
 from refdata.commands import Commands
 from refdata.db import sync_run
 from refdata.iss import IssClient

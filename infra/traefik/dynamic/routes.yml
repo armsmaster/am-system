@@ -24,6 +24,12 @@ http:
       service: refdata
       entryPoints: [web]
 
+    marketdata-api:
+      rule: PathPrefix(`/api/marketdata`)
+      middlewares: [strip-marketdata]
+      service: marketdata
+      entryPoints: [web]
+
     audit-api:
       rule: PathPrefix(`/api/audit`)
       middlewares: [strip-audit]
@@ -40,6 +46,12 @@ http:
       rule: PathPrefix(`/mfe/refdata`)
       middlewares: [strip-mfe-refdata]
       service: mfe-refdata
+      entryPoints: [web]
+
+    mfe-marketdata:
+      rule: PathPrefix(`/mfe/marketdata`)
+      middlewares: [strip-mfe-marketdata]
+      service: mfe-marketdata
       entryPoints: [web]
 
     mfe-audit:
@@ -61,6 +73,9 @@ http:
     strip-refdata:
       stripPrefix:
         prefixes: ["/api/refdata"]
+    strip-marketdata:
+      stripPrefix:
+        prefixes: ["/api/marketdata"]
     strip-audit:
       stripPrefix:
         prefixes: ["/api/audit"]
@@ -73,6 +88,9 @@ http:
     strip-mfe-refdata:
       stripPrefix:
         prefixes: ["/mfe/refdata"]
+    strip-mfe-marketdata:
+      stripPrefix:
+        prefixes: ["/mfe/marketdata"]
 
   services:
     keycloak:
@@ -87,6 +105,12 @@ http:
     refdata:
       loadBalancer:
         servers: [{ url: "http://refdata:8000" }]
+        healthCheck:
+          path: /health
+          interval: 10s
+    marketdata:
+      loadBalancer:
+        servers: [{ url: "http://marketdata:8000" }]
         healthCheck:
           path: /health
           interval: 10s
@@ -105,6 +129,9 @@ http:
     mfe-refdata:
       loadBalancer:
         servers: [{ url: "http://mfe-refdata:80" }]
+    mfe-marketdata:
+      loadBalancer:
+        servers: [{ url: "http://mfe-marketdata:80" }]
     shell:
       loadBalancer:
         servers: [{ url: "http://shell:80" }]

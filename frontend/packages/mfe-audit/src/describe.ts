@@ -20,6 +20,8 @@ const ACTIONS: Readonly<Record<string, string>> = {
   'instrument.version_added': 'Новая версия бумаги',
   'calendar.day_set': 'Изменён торговый календарь',
   'calendar.day_cleared': 'Удалено исключение календаря',
+  'manual_price.set': 'Введена ручная цена',
+  'price_rule.changed': 'Изменено правило оценки',
 };
 
 const FIELDS: Readonly<Record<string, string>> = {
@@ -56,6 +58,12 @@ const FIELDS: Readonly<Record<string, string>> = {
   capitalized: 'капитализация',
   is_trading: 'Торговый день',
   comment: 'Комментарий',
+  value: 'Цена',
+  valid_through: 'Действует по',
+  price_types: 'Типы цен',
+  dema_timeframe: 'Таймфрейм DEMA, мин',
+  dema_half_life: 'Период полураспада DEMA, мин',
+  spread_threshold_bp: 'Порог разброса, бп',
 };
 
 /** Значения перечислений — словами. */

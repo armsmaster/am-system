@@ -10,7 +10,11 @@ from audit.settings import AuditSettings
 def test_reads_streams_of_audited_services() -> None:
     settings = AuditSettings(auth_issuer=TEST_ISSUER, auth_jwks_url=TEST_JWKS_URL)
 
-    assert settings.streams == ["am.events.portfolio", "am.events.refdata"]
+    assert settings.streams == [
+        "am.events.portfolio",
+        "am.events.refdata",
+        "am.events.marketdata",
+    ]
     assert settings.database_schema == "audit"
     assert settings.consumer_name
 

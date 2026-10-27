@@ -1,0 +1,17 @@
+{
+"history": {
+	"columns": ["TRADEDATE", "BOARDID", "CLOSE", "WAPRICE", "MARKETPRICE3", "ADMITTEDQUOTE"], 
+	"data": [
+		["2026-10-20", "TQBR", 2.1133, 2.1133, 2.1133, null],
+		["2026-10-21", "TQBR", 2.1141, 2.1141, 2.1141, null],
+		["2026-10-22", "TQBR", 2.1149, 2.1149, 2.1149, null],
+		["2026-10-23", "TQBR", 2.1173, 2.1173, 2.1173, null],
+		["2026-10-26", "TQBR", 2.1181, 2.1181, 2.1181, null]
+	]
+},
+"history.cursor": {
+	"columns": ["INDEX", "TOTAL", "PAGESIZE"], 
+	"data": [
+		[0, 5, 100]
+	]
+}}

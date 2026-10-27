@@ -144,6 +144,30 @@ describe('changes', () => {
     ]);
   });
 
+  it('describes a manual price and a valuation rule change', () => {
+    const manual = event('manual_price.set', {
+      instrument: { secid: 'SU26238RMFS4' },
+      after: { value: '51.5', valid_through: '2026-10-27' },
+    });
+    const rule = event('price_rule.changed', {
+      instrument: { secid: 'RU000A10F504' },
+      before: { price_types: 'VWAP', dema_timeframe: null, dema_half_life: null, spread_threshold_bp: 50 },
+      after: { price_types: 'VWAP, DEMA', dema_timeframe: 10, dema_half_life: '60', spread_threshold_bp: 50 },
+    });
+
+    expect([actionLabel(manual.type), objectLabel(manual)]).toEqual(['Введена ручная цена', 'SU26238RMFS4']);
+    expect(changes(manual)).toEqual([
+      { field: 'Цена', before: '—', after: '51.5' },
+      { field: 'Действует по', before: '—', after: '27.10.2026' },
+    ]);
+    expect(actionLabel(rule.type)).toBe('Изменено правило оценки');
+    expect(changes(rule)).toEqual([
+      { field: 'Типы цен', before: 'VWAP', after: 'VWAP, DEMA' },
+      { field: 'Таймфрейм DEMA, мин', before: '—', after: '10' },
+      { field: 'Период полураспада DEMA, мин', before: '—', after: '60' },
+    ]);
+  });
+
   it('spells out floater terms', () => {
     const item = event('instrument.version_added', {
       before: { floater: null },

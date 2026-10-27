@@ -15,6 +15,7 @@ from typing import Any, Protocol
 import httpx2
 
 from am_common.auth import Role
+from am_common.service_token import ServiceToken, ServiceTokenError, realm_token_url
 
 
 class DirectoryUnavailableError(Exception):
@@ -37,9 +38,6 @@ class UserDirectory(Protocol):
 
 
 class KeycloakDirectory:
-    # Токен обновляем заранее, а не в последнюю секунду.
-    _TOKEN_MARGIN_SECONDS = 30.0
-
     def __init__(
         self,
         http: httpx2.AsyncClient,
@@ -53,11 +51,13 @@ class KeycloakDirectory:
         self._http = http
         self._base = base_url.rstrip("/")
         self._realm = realm
-        self._client_id = client_id
-        self._client_secret = client_secret
-        self._clock = clock
-        self._token: str | None = None
-        self._token_expires_at = 0.0
+        self._token = ServiceToken(
+            http,
+            token_url=realm_token_url(base_url, realm),
+            client_id=client_id,
+            client_secret=client_secret,
+            clock=clock,
+        )
 
     async def users(self) -> list[DirectoryUser]:
         raw = await self._get(f"/admin/realms/{self._realm}/users", params={"max": 1000})
@@ -84,7 +84,10 @@ class KeycloakDirectory:
         return frozenset(Role(m["name"]) for m in mappings if m.get("name") in known)
 
     async def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
-        token = await self._access_token()
+        try:
+            token = await self._token.get()
+        except ServiceTokenError as exc:
+            raise DirectoryUnavailableError(str(exc)) from exc
         try:
             response = await self._http.get(
                 f"{self._base}{path}",
@@ -98,27 +101,6 @@ class KeycloakDirectory:
         if response.is_error:
             raise DirectoryUnavailableError(f"Keycloak answered {response.status_code}")
         return response.json()
-
-    async def _access_token(self) -> str:
-        now = self._clock()
-        if self._token is not None and now < self._token_expires_at:
-            return self._token
-        try:
-            response = await self._http.post(
-                f"{self._base}/realms/{self._realm}/protocol/openid-connect/token",
-                data={
-                    "grant_type": "client_credentials",
-                    "client_id": self._client_id,
-                    "client_secret": self._client_secret,
-                },
-            )
-            response.raise_for_status()
-            payload = response.json()
-        except httpx2.HTTPError as exc:
-            raise DirectoryUnavailableError(f"cannot get service token: {exc}") from exc
-        self._token = str(payload["access_token"])
-        self._token_expires_at = now + float(payload["expires_in"]) - self._TOKEN_MARGIN_SECONDS
-        return self._token
 
 
 class _NotFoundError(Exception):

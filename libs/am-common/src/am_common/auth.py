@@ -33,6 +33,7 @@ class Role(StrEnum):
     TRADING = "trading"
     OPERATIONS = "operations"  # сопровождение
     ADMIN = "admin"
+    PRICE_FEED = "price_feed"  # скрипт цен — служебная учётная запись, не человек
 
 
 @dataclass(frozen=True, slots=True)

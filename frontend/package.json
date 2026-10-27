@@ -10,6 +10,7 @@
     "dev:admin": "npm run dev -w @am/mfe-admin",
     "dev:audit": "npm run dev -w @am/mfe-audit",
     "dev:refdata": "npm run dev -w @am/mfe-refdata",
+    "dev:marketdata": "npm run dev -w @am/mfe-marketdata",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "build": "npm run build --workspaces --if-present"

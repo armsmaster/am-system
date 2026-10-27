@@ -11,9 +11,9 @@ import redis
 from fastapi.testclient import TestClient
 from httpx2 import Response
 
+from am_common.clock import moscow_now
 from am_common.migrations import schema_diff
 from am_common.testing import TokenFactory
-from refdata.clock import moscow_now
 from refdata.db import metadata
 from refdata.settings import RefdataSettings
 

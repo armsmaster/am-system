@@ -21,6 +21,16 @@ def is_trading_day(day: date, exceptions: Mapping[date, bool]) -> bool:
     return day.weekday() < _SATURDAY
 
 
+def previous_trading_day(day: date, exceptions: Mapping[date, bool]) -> date:
+    """Последний торговый день не позже ``day``: в субботу — пятница."""
+    current = day
+    for _ in range(_MAX_DAYS_SCANNED):
+        if is_trading_day(current, exceptions):
+            return current
+        current -= timedelta(days=1)
+    raise ValueError("no trading days found — check the calendar exceptions")
+
+
 def add_trading_days(day: date, count: int, exceptions: Mapping[date, bool]) -> date:
     """Дата через ``count`` торговых дней (T+count).
 

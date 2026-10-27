@@ -3,13 +3,20 @@ import type { ReactNode } from 'react';
 import { BrowserRouter, NavLink, Route, Routes } from 'react-router';
 
 import { Microfrontend } from './components/Microfrontend';
-import { loadAdmin, loadAudit, loadRefdata, type MicrofrontendLoader } from './microfrontends';
+import {
+  loadAdmin,
+  loadAudit,
+  loadMarketdata,
+  loadRefdata,
+  type MicrofrontendLoader,
+} from './microfrontends';
 import { Home } from './pages/Home';
 
 export interface Loaders {
   readonly admin: MicrofrontendLoader;
   readonly audit: MicrofrontendLoader;
   readonly refdata: MicrofrontendLoader;
+  readonly marketdata: MicrofrontendLoader;
 }
 
 interface AppProps {
@@ -17,7 +24,12 @@ interface AppProps {
   readonly loaders?: Loaders;
 }
 
-const LOADERS: Loaders = { admin: loadAdmin, audit: loadAudit, refdata: loadRefdata };
+const LOADERS: Loaders = {
+  admin: loadAdmin,
+  audit: loadAudit,
+  refdata: loadRefdata,
+  marketdata: loadMarketdata,
+};
 
 export function App({ session, loaders = LOADERS }: AppProps) {
   return (
@@ -39,6 +51,12 @@ export function AppRoutes({ session, loaders }: Required<AppProps>) {
         <Route
           path="/refdata/*"
           element={<Microfrontend load={loaders.refdata} session={session} basePath="/refdata" />}
+        />
+        <Route
+          path="/marketdata/*"
+          element={
+            <Microfrontend load={loaders.marketdata} session={session} basePath="/marketdata" />
+          }
         />
         <Route
           path="/admin/*"
@@ -78,6 +96,7 @@ function Layout({
             Главная
           </NavLink>
           <NavLink to="/refdata">Справочник</NavLink>
+          <NavLink to="/marketdata">Цены</NavLink>
           {isAdmin && <NavLink to="/admin">Администрирование</NavLink>}
           {isAdmin && <NavLink to="/audit">Журнал</NavLink>}
         </nav>

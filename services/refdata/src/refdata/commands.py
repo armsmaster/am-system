@@ -15,10 +15,10 @@ from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from am_common.clock import moscow_now
 from am_common.db import Database
 from am_common.events import Actor, Event
 from am_common.outbox import Outbox
-from refdata.clock import moscow_now
 from refdata.db import outbox
 from refdata.domain import (
     FIELD_LABELS,

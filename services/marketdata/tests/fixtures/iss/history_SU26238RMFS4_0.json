@@ -1,0 +1,17 @@
+{
+"history": {
+	"columns": ["TRADEDATE", "BOARDID", "CLOSE", "WAPRICE", "MARKETPRICE3", "ADMITTEDQUOTE", "ACCINT", "FACEVALUE"], 
+	"data": [
+		["2026-10-20", "TQOB", 51.524, 51.461, 51.463, null, 27.04, 1000],
+		["2026-10-21", "TQOB", 51.965, 51.679, 51.642, null, 27.23, 1000],
+		["2026-10-22", "TQOB", 51.76, 51.886, 51.88, null, 27.43, 1000],
+		["2026-10-23", "TQOB", 51.732, 51.65, 51.648, null, 27.62, 1000],
+		["2026-10-26", "TQOB", 51.856, 51.782, 51.781, null, 28.2, 1000]
+	]
+},
+"history.cursor": {
+	"columns": ["INDEX", "TOTAL", "PAGESIZE"], 
+	"data": [
+		[0, 5, 100]
+	]
+}}

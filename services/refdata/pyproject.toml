@@ -5,7 +5,6 @@ description = "Справочник инструментов: бумаги и и
 requires-python = ">=3.13,<3.14"
 dependencies = [
     "am-common",
-    "tzdata>=2025.2",
     "uvicorn[standard]>=0.54",
 ]
 

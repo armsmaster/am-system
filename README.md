@@ -53,6 +53,7 @@ cd frontend
 npm run dev:admin   # администрирование на :3001
 npm run dev:audit   # журнал на :3002
 npm run dev:refdata # справочник на :3003
+npm run dev:marketdata # цены на :3004
 npm run dev:shell   # shell на :3000
 ```
 
@@ -79,6 +80,7 @@ services/Dockerfile общий образ Python-сервисов
 services/portfolio/ портфели, фонды, счета, доступы
 services/audit/     журнал действий пользователей
 services/refdata/   справочник: бумаги из MOEX ISS, версии, торговый календарь
+services/marketdata/ цены от скрипта и из ISS, OHLC и DEMA, ручные цены, НКД и номинал на дату
 frontend/
   packages/platform/  контракт shell ↔ микрофронтенды, API-клиент
   packages/ui/        общие помощники интерфейса: загрузка данных, действия, ошибки
@@ -86,5 +88,6 @@ frontend/
   packages/mfe-admin/ администрирование: портфели, счета, доступы
   packages/mfe-audit/ журнал действий
   packages/mfe-refdata/ справочник: поиск и загрузка бумаг, карточка, календарь
+  packages/mfe-marketdata/ цены: обзор с разбросом, карточка с графиком, правило, лента скрипта
 docs/               архитектура, решения, вопросы, дизайн шагов, блог
 ```

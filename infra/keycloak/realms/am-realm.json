@@ -32,6 +32,10 @@
       {
         "name": "admin",
         "description": "Администратор: видит всё и может всё"
+      },
+      {
+        "name": "price_feed",
+        "description": "Скрипт цен: присылает цены и OHLC-бары в marketdata"
       }
     ]
   },
@@ -97,6 +101,62 @@
       "implicitFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": true
+    },
+    {
+      "clientId": "am-price-feed",
+      "name": "Скрипт цен пользователя",
+      "description": "Служебная учётная запись скрипта: присылает цены и бары в marketdata (роль price_feed).",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "price-feed-dev",
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocolMappers": [
+        {
+          "name": "audience am-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "am-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "am-marketdata",
+      "name": "Сервис marketdata: чтение справочника",
+      "description": "Служебная учётная запись: marketdata читает из refdata список бумаг, купоны и календарь.",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "marketdata-dev-secret",
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocolMappers": [
+        {
+          "name": "audience am-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "am-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
     }
   ],
   "users": [
@@ -164,6 +224,19 @@
           "query-users"
         ]
       }
+    },
+    {
+      "username": "service-account-am-price-feed",
+      "enabled": true,
+      "serviceAccountClientId": "am-price-feed",
+      "realmRoles": [
+        "price_feed"
+      ]
+    },
+    {
+      "username": "service-account-am-marketdata",
+      "enabled": true,
+      "serviceAccountClientId": "am-marketdata"
     }
   ]
 }
