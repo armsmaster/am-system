@@ -1,0 +1,39 @@
+{
+  "source": "broker-x",
+  "trades": [
+    {
+      "external_id": "BX-2026-11-27-0042",
+      "portfolio": "OPIF1-BONDS",
+      "code": "SU26238RMFS4",
+      "side": "buy",
+      "quantity": 50000,
+      "price": 52.5,
+      "trade_at": "2026-11-27T11:42:00+03:00",
+      "settle_date": "2026-11-30",
+      "accrued": 35.01
+    },
+    {
+      "external_id": "BX-2026-11-30-0017",
+      "portfolio": "OPIF1-BONDS",
+      "code": "SU26238RMFS4",
+      "side": "sell",
+      "quantity": 20000,
+      "price": 52.6,
+      "trade_at": "2026-11-30T12:10:00+03:00",
+      "settle_date": "2026-12-01",
+      "fee": 1400.5
+    },
+    {
+      "external_id": "BX-2026-11-27-0051",
+      "portfolio": "OPIF1-TREASURY",
+      "code": "LQDT",
+      "side": "buy",
+      "quantity": 1000,
+      "price": 1.234567,
+      "trade_at": "2026-11-27T12:00:00+03:00",
+      "settle_date": "2026-11-27",
+      "venue": "exchange",
+      "comment": "Свободные деньги — в фонд ликвидности"
+    }
+  ]
+}

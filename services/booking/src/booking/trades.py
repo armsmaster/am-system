@@ -33,9 +33,28 @@ from booking.clients import (
 from booking.db import outbox
 from booking.repository import CANCELLED, Repository
 from booking.roll import HUNDRED, ZERO, InstrumentKind, Side, trade_amount
+from booking.terms import InstrumentHistory
 
 SERVICE = "booking"
 ENTERED, CONFIRMED = "entered", "confirmed"
+
+# Поля сделки, которые вводит человек или присылает источник: по ним версии
+# сравнивают между собой, а импорт решает, изменилась ли сделка.
+TRACKED: Sequence[str] = (
+    "portfolio_id",
+    "instrument_id",
+    "side",
+    "quantity",
+    "price",
+    "face_value",
+    "accrued",
+    "fee",
+    "trade_at",
+    "settle_date",
+    "venue",
+    "counterparty",
+    "external_id",
+)
 
 
 class RuleViolationError(Exception):
@@ -112,11 +131,26 @@ class TradeDesk:
         self._clock = clock
         self._repo = Repository(session)
         self._outbox = Outbox(outbox)
+        # Стол живёт один запрос: портфели и бумаги за это время не меняются,
+        # а импорт пакета спрашивает о них на каждую сделку.
+        self._visible: dict[UUID, PortfolioRef] | None = None
+        self._histories: dict[UUID, InstrumentHistory | None] = {}
+
+    async def visible(self) -> dict[UUID, PortfolioRef]:
+        """Портфели, которые видит пользователь."""
+        if self._visible is None:
+            self._visible = await self._portfolios.visible(self._authorization)
+        return self._visible
+
+    async def _history(self, instrument_id: UUID) -> InstrumentHistory | None:
+        if instrument_id not in self._histories:
+            self._histories[instrument_id] = await self._refdata.history(instrument_id)
+        return self._histories[instrument_id]
 
     # --- подсказка для формы --------------------------------------------------
 
     async def defaults(self, instrument_id: UUID, trade_date: date) -> Defaults:
-        history = await self._refdata.history(instrument_id)
+        history = await self._history(instrument_id)
         if history is None:
             raise RuleViolationError("unknown_instrument", "Бумаги нет в справочнике.")
         exceptions = await self._refdata.calendar_around(trade_date)
@@ -131,15 +165,28 @@ class TradeDesk:
 
     # --- изменения ------------------------------------------------------------
 
-    async def enter(self, entry: TradeInput) -> TradeView:
-        visible = await self._portfolios.visible(self._authorization)
+    async def enter(self, entry: TradeInput, *, key: tuple[str, str] | None = None) -> TradeView:
+        """``key`` — ключ импорта: источник и номер сделки в нём."""
+        visible = await self.visible()
         values, warnings = await self._prepare(entry, visible, None)
         trade_id = uuid4()
         now = self._clock()
+        source, source_key = key or (None, None)
         async with self._session.begin():
-            await self._repo.add_trade(
-                {"id": trade_id, "created_at": now, "created_by": self._actor.username}
+            added = await self._repo.add_trade(
+                {
+                    "id": trade_id,
+                    "created_at": now,
+                    "created_by": self._actor.username,
+                    "source": source,
+                    "source_key": source_key,
+                }
             )
+            if not added:
+                raise RuleViolationError(
+                    "concurrent_import",
+                    "Эту сделку только что загрузил другой пакет — повторите пакет.",
+                )
             version = self._version(
                 trade_id, 1, status=ENTERED, values=values, comment=entry.comment, now=now
             )
@@ -157,7 +204,7 @@ class TradeDesk:
         return TradeView(versions, visible.get(entry.portfolio_id), warnings)
 
     async def amend(self, trade_id: UUID, entry: TradeInput) -> TradeView:
-        visible = await self._portfolios.visible(self._authorization)
+        visible = await self.visible()
         async with self._session.begin():
             before = (await self._repo.versions(trade_id))[-1]
         self._check_change(before, visible)
@@ -197,7 +244,7 @@ class TradeDesk:
         return await self._restate(trade_id, CONFIRMED, "trade.confirmed", comment)
 
     async def view(self, trade_id: UUID) -> TradeView:
-        visible = await self._portfolios.visible(self._authorization)
+        visible = await self.visible()
         async with self._session.begin():
             versions = await self._repo.versions(trade_id)
         portfolio = visible.get(versions[-1].portfolio_id)
@@ -209,7 +256,7 @@ class TradeDesk:
         self, trade_id: UUID, status: str, event: str, comment: str | None
     ) -> TradeView:
         """Новая версия с теми же полями и другим статусом."""
-        visible = await self._portfolios.visible(self._authorization)
+        visible = await self.visible()
         now = self._clock()
         async with self._session.begin():
             before = await self._latest(trade_id, visible)
@@ -253,6 +300,12 @@ class TradeDesk:
 
     # --- проверка и расчёт полей ----------------------------------------------
 
+    async def prepare(
+        self, entry: TradeInput, trade_id: UUID | None
+    ) -> tuple[dict[str, Any], list[str]]:
+        """Поля версии, как их запишет ввод или правка, и предупреждения."""
+        return await self._prepare(entry, await self.visible(), trade_id)
+
     async def _prepare(
         self,
         entry: TradeInput,
@@ -274,7 +327,7 @@ class TradeDesk:
             raise RuleViolationError("future_trade", "Дата сделки позже сегодняшней.")
         if entry.settle_date < trade_date:
             raise RuleViolationError("settle_before_trade", "Дата расчётов раньше даты заключения.")
-        history = await self._refdata.history(entry.instrument_id)
+        history = await self._history(entry.instrument_id)
         if history is None:
             raise RuleViolationError("unknown_instrument", "Бумаги нет в справочнике.")
         exceptions = await self._refdata.calendar_around(entry.settle_date)

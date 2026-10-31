@@ -54,6 +54,7 @@ describe('bookingApi', () => {
       ['/api/booking/operations/o-1/cancel', { comment: 'ошибка' }],
     ],
     ['ladder', () => api.ladder('a-1'), 'get', ['/api/booking/ladder?account_id=a-1']],
+    ['importTrades', () => api.importTrades({ source: 'x' }), 'post', ['/api/booking/feed/v1/trades', { source: 'x' }]],
   ] as const)('%s', async (_name, call, method, args) => {
     await call();
     expect(client[method]).toHaveBeenLastCalledWith(...args);

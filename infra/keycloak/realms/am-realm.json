@@ -36,6 +36,10 @@
       {
         "name": "price_feed",
         "description": "Скрипт цен: присылает цены и OHLC-бары в marketdata"
+      },
+      {
+        "name": "trade_feed",
+        "description": "Скрипт сделок: присылает пакеты сделок в booking и видит все портфели (служебная учётная запись)."
       }
     ]
   },
@@ -110,6 +114,34 @@
       "publicClient": false,
       "clientAuthenticatorType": "client-secret",
       "secret": "price-feed-dev",
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocolMappers": [
+        {
+          "name": "audience am-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "am-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "am-trade-feed",
+      "name": "Скрипт сделок",
+      "description": "Служебная учётная запись внешней системы: присылает сделки в booking (роль trade_feed).",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "trade-feed-dev",
       "protocol": "openid-connect",
       "standardFlowEnabled": false,
       "implicitFlowEnabled": false,
@@ -259,6 +291,14 @@
       "serviceAccountClientId": "am-price-feed",
       "realmRoles": [
         "price_feed"
+      ]
+    },
+    {
+      "username": "service-account-am-trade-feed",
+      "enabled": true,
+      "serviceAccountClientId": "am-trade-feed",
+      "realmRoles": [
+        "trade_feed"
       ]
     },
     {

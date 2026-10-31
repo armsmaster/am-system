@@ -1,4 +1,4 @@
-"""HTTP API сделок, операций фонда, позиций и лестницы. Правила — в docs/design/05-booking.md."""
+"""HTTP API сделок, импорта, операций фонда, позиций и лестницы. Правила — в design/05."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request, Response
 from fastapi.responses import JSONResponse
-from pydantic import AwareDatetime, BaseModel, Field, StringConstraints
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints
 
 from am_common.app import AppResources, DbSession
 from am_common.auth import Principal, Role, require_any_role
@@ -24,22 +24,37 @@ from booking.clients import (
     physical_under,
     service_token,
 )
+from booking.imports import ImportItem, Result, TradeImport
 from booking.ladder import Ladder, ladder
 from booking.operations import OperationDesk, OperationInput, OperationView
 from booking.queries import PortfolioState, PositionLine, positions
 from booking.repository import NotFoundError, Repository
 from booking.roll import Movement, OperationKind, Side
 from booking.settings import BookingSettings
-from booking.trades import Defaults, RuleViolationError, TradeDesk, TradeInput, TradeView
+from booking.trades import (
+    TRACKED,
+    Defaults,
+    RuleViolationError,
+    TradeDesk,
+    TradeInput,
+    TradeView,
+)
 
 # Сделки вводят все авторизованные пользователи (решение 25); скрипт цен — нет.
 Staff = Annotated[Principal, Depends(require_any_role(Role.TRADING, Role.OPERATIONS))]
 Operations = Annotated[Principal, Depends(require_any_role(Role.OPERATIONS))]
+# Импорт — пользователям и скрипту сделок (спецификация docs/api/trade-import).
+Feeder = Annotated[
+    Principal, Depends(require_any_role(Role.TRADING, Role.OPERATIONS, Role.TRADE_FEED))
+]
 Authorization = Annotated[str, Header(alias="Authorization")]
 Comment = Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=500)]
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 OptionalComment = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] | None
 Money = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=2)]
+Price = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)]
+Kopecks = Annotated[Decimal, Field(ge=0, max_digits=18, decimal_places=2)]
+Quantity = Annotated[int, Field(gt=0, le=10**12)]
 
 router = APIRouter()
 
@@ -112,13 +127,13 @@ class TradeIn(BaseModel):
     portfolio_id: UUID
     instrument_id: UUID
     side: Side
-    quantity: Annotated[int, Field(gt=0, le=10**12)]
-    price: Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)]
+    quantity: Quantity
+    price: Price
     trade_at: AwareDatetime
     settle_date: date
-    face_value: Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)] | None = None
-    accrued: Annotated[Decimal, Field(ge=0, max_digits=18, decimal_places=2)] | None = None
-    fee: Annotated[Decimal, Field(ge=0, max_digits=18, decimal_places=2)] = Decimal(0)
+    face_value: Price | None = None
+    accrued: Kopecks | None = None
+    fee: Kopecks = Decimal(0)
     venue: Literal["exchange", "otc"] = "exchange"
     counterparty: Text | None = None
     external_id: Text | None = None
@@ -325,6 +340,61 @@ class OperationOut(BaseModel):
     warnings: list[str] = []
 
 
+class ImportTradeIn(BaseModel):
+    """Сделка пакета: поля — в docs/api/trade-import/README.md."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    external_id: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)
+    ]
+    portfolio: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]
+    code: Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=20)]
+    side: Side
+    quantity: Quantity
+    price: Price
+    trade_at: AwareDatetime
+    settle_date: date
+    accrued: Kopecks | None = None
+    face_value: Price | None = None
+    fee: Kopecks = Decimal(0)
+    venue: Literal["exchange", "otc"] = "exchange"
+    counterparty: Text | None = None
+    comment: OptionalComment = None
+    cancelled: bool = False
+
+
+class TradeBatchIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source: Annotated[str, StringConstraints(pattern=r"^[a-z0-9_-]{1,32}$")]
+    trades: Annotated[list[ImportTradeIn], Field(min_length=1, max_length=5000)]
+
+
+class ImportedOut(BaseModel):
+    index: int
+    external_id: str
+    result: Result
+    trade_id: UUID
+    warnings: list[str]
+
+
+class ImportRejectedOut(BaseModel):
+    index: int
+    external_id: str
+    error: str
+    message: str
+
+
+class TradeBatchOut(BaseModel):
+    created: int
+    amended: int
+    cancelled: int
+    unchanged: int
+    trades: list[ImportedOut]
+    rejected: list[ImportRejectedOut]
+
+
 class LadderMovementOut(MovementOut):
     portfolio_code: str
 
@@ -476,6 +546,36 @@ async def confirm_trade(
     """Сопровождение сверило сделку с подтверждением брокера."""
     view = await desk(session, user, authorization, services, now).confirm(trade_id, body.comment)
     return _trade_out(view)
+
+
+# --- импорт сделок --------------------------------------------------------------
+
+
+@router.post("/feed/v1/trades", tags=["import"])
+async def import_trades(
+    body: TradeBatchIn,
+    *,
+    user: Feeder,
+    session: DbSession,
+    authorization: Authorization,
+    services: Services,
+    now: Now,
+) -> TradeBatchOut:
+    """Пакет сделок от внешней системы или из файла: ключ — источник и номер сделки."""
+    trades = desk(session, user, authorization, services, now)
+    report = await TradeImport(session, trades, services.refdata).run(
+        body.source, [ImportItem(**item.model_dump()) for item in body.trades]
+    )
+    return TradeBatchOut(
+        created=report.count(Result.CREATED),
+        amended=report.count(Result.AMENDED),
+        cancelled=report.count(Result.CANCELLED),
+        unchanged=report.count(Result.UNCHANGED),
+        trades=[ImportedOut.model_validate(t, from_attributes=True) for t in report.trades],
+        rejected=[
+            ImportRejectedOut.model_validate(r, from_attributes=True) for r in report.rejected
+        ],
+    )
 
 
 # --- позиции --------------------------------------------------------------------
@@ -651,22 +751,6 @@ def install_error_handlers(app: FastAPI) -> None:
 
 
 # --- вспомогательное ------------------------------------------------------------
-
-TRACKED = (
-    "portfolio_id",
-    "instrument_id",
-    "side",
-    "quantity",
-    "price",
-    "face_value",
-    "accrued",
-    "fee",
-    "trade_at",
-    "settle_date",
-    "venue",
-    "counterparty",
-    "external_id",
-)
 
 
 def _version_out(row: Any, portfolio_code: str | None) -> TradeOut:

@@ -283,6 +283,29 @@ export interface Ladder {
   readonly days: readonly LadderDay[];
 }
 
+export type ImportResult = 'created' | 'amended' | 'cancelled' | 'unchanged';
+
+/** Ответ на пакет сделок (docs/api/trade-import). */
+export interface ImportReport {
+  readonly created: number;
+  readonly amended: number;
+  readonly cancelled: number;
+  readonly unchanged: number;
+  readonly trades: readonly {
+    readonly index: number;
+    readonly external_id: string;
+    readonly result: ImportResult;
+    readonly trade_id: string;
+    readonly warnings: readonly string[];
+  }[];
+  readonly rejected: readonly {
+    readonly index: number;
+    readonly external_id: string;
+    readonly error: string;
+    readonly message: string;
+  }[];
+}
+
 const BASE = '/api/booking';
 
 /** Вызовы API сделок; портфели — из сервиса портфелей, бумаги — из справочника. */
@@ -313,6 +336,8 @@ export function bookingApi(client: ApiClient) {
       client.post<Operation>(`${BASE}/operations/${id}/settle`, { settled_date: settledDate }),
     cancelOperation: (id: string, comment: string) =>
       client.post<Operation>(`${BASE}/operations/${id}/cancel`, { comment }),
+    /** Пакет — как в файле: форму проверяет сервис по спецификации. */
+    importTrades: (batch: unknown) => client.post<ImportReport>(`${BASE}/feed/v1/trades`, batch),
     ladder: (accountId: string) => client.get<Ladder>(`${BASE}/ladder${query({ account_id: accountId })}`),
   };
 }

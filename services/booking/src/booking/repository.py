@@ -53,8 +53,22 @@ class Repository:
 
     # --- сделки ---------------------------------------------------------------
 
-    async def add_trade(self, values: dict[str, Any]) -> None:
-        await self._session.execute(insert(trade).values(**values))
+    async def add_trade(self, values: dict[str, Any]) -> bool:
+        """False — сделку с тем же ключом импорта уже записал другой пакет."""
+        result = await self._session.execute(
+            insert(trade)
+            .values(**values)
+            .on_conflict_do_nothing(constraint="trade_source_key")
+            .returning(trade.c.id)
+        )
+        return result.scalar_one_or_none() is not None
+
+    async def trade_by_key(self, source: str, source_key: str) -> UUID | None:
+        """Сделка по ключу импорта: источник и номер сделки в нём."""
+        found: UUID | None = await self._session.scalar(
+            select(trade.c.id).where(trade.c.source == source, trade.c.source_key == source_key)
+        )
+        return found
 
     async def add_version(self, values: dict[str, Any]) -> None:
         await self._session.execute(insert(trade_version).values(**values))

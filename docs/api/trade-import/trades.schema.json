@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://am-system.local/trade-import/v1/trades.schema.json",
+  "title": "Пакет сделок",
+  "description": "POST /api/booking/feed/v1/trades. Описание полей — в README.md рядом.",
+  "type": "object",
+  "required": ["source", "trades"],
+  "additionalProperties": false,
+  "properties": {
+    "source": {
+      "description": "Откуда сделки: короткий код источника, латиница в нижнем регистре, цифры, «-» и «_». Вместе с external_id — ключ сделки.",
+      "type": "string",
+      "pattern": "^[a-z0-9_-]{1,32}$"
+    },
+    "trades": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5000,
+      "items": { "$ref": "#/$defs/trade" }
+    }
+  },
+  "$defs": {
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "money": {
+      "description": "Рубли, до 2 знаков после запятой.",
+      "type": "number",
+      "minimum": 0
+    },
+    "trade": {
+      "type": "object",
+      "required": ["external_id", "portfolio", "code", "side", "quantity", "price", "trade_at", "settle_date"],
+      "additionalProperties": false,
+      "properties": {
+        "external_id": {
+          "description": "Номер сделки в источнике. Вместе с source — ключ: по нему повтор и исправление находят свою сделку.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "portfolio": {
+          "description": "Код портфеля в системе — physical-портфель, в который сделка заключена.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 50
+        },
+        "code": {
+          "description": "Код бумаги на бирже (SECID) или ISIN. Бумага должна быть в справочнике.",
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 20
+        },
+        "side": {
+          "description": "buy — покупка, sell — продажа.",
+          "enum": ["buy", "sell"]
+        },
+        "quantity": {
+          "description": "Количество бумаг, штук.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000000000
+        },
+        "price": {
+          "description": "Облигация — чистая цена в % от номинала; пай — цена в рублях за пай. До 6 знаков после запятой.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "trade_at": {
+          "description": "Время заключения сделки. RFC 3339 со смещением: 2026-11-27T11:42:00+03:00.",
+          "type": "string",
+          "format": "date-time",
+          "pattern": "(Z|[+-]\\d{2}:\\d{2})$"
+        },
+        "settle_date": {
+          "description": "Дата расчётов: 2026-11-30.",
+          "type": "string",
+          "format": "date"
+        },
+        "accrued": {
+          "$ref": "#/$defs/money",
+          "description": "Облигация: НКД на одну бумагу на дату расчётов, рубли. Нет — система возьмёт из рыночных данных."
+        },
+        "face_value": {
+          "description": "Облигация: номинал одной бумаги на дату расчётов, рубли. Нет — из рыночных данных или графика погашений.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "fee": {
+          "$ref": "#/$defs/money",
+          "description": "Комиссия брокера и биржи по сделке, рубли. Нет — 0."
+        },
+        "venue": {
+          "description": "exchange — биржа (по умолчанию), otc — внебиржевая сделка.",
+          "enum": ["exchange", "otc"]
+        },
+        "counterparty": { "$ref": "#/$defs/text", "description": "Контрагент внебиржевой сделки." },
+        "comment": {
+          "description": "Комментарий: попадёт в версию сделки и в журнал.",
+          "type": "string",
+          "maxLength": 500
+        },
+        "cancelled": {
+          "description": "true — сделка отменена в источнике. Присылается целиком, как и раньше.",
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

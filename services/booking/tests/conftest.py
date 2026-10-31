@@ -95,7 +95,8 @@ class World:
         self.hidden = {"trader": {OTHER_FUND, OTHER_BONDS}}
         ofz = _ofz_terms()
         self.instruments: dict[UUID, dict[str, Any]] = {
-            OFZ: _instrument(OFZ, "SU26238RMFS4", "ОФЗ 26238", "bond", [(None, ofz)]),
+            OFZ: _instrument(OFZ, "SU26238RMFS4", "ОФЗ 26238", "bond", [(None, ofz)])
+            | {"isin": "RU000A1038V6"},
             LQDT: _instrument(
                 LQDT, "LQDT", "ВИМ Ликвидность", "fund_share", [(None, {"coupons": []})]
             ),
@@ -173,6 +174,12 @@ class World:
 
     def _refdata(self, request: httpx2.Request, path: str) -> httpx2.Response:
         assert request.headers["Authorization"] == "Bearer service-token"
+        if path == "/instruments":
+            summaries = [
+                {"id": i["id"], "secid": i["secid"], "isin": i.get("isin"), "kind": i["kind"]}
+                for i in self.instruments.values()
+            ]
+            return httpx2.Response(200, json=summaries)
         if match := re.fullmatch(r"/instruments/([^/]+)", path):
             found = self.instruments.get(UUID(match[1]))
             if found is None:

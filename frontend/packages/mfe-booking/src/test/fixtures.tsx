@@ -4,7 +4,17 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { vi } from 'vitest';
 
 import { Booking } from '../App';
-import type { Account, BookingApi, Instrument, Ladder, Operation, Portfolio, Positions, Trade } from '../api';
+import type {
+  Account,
+  BookingApi,
+  ImportReport,
+  Instrument,
+  Ladder,
+  Operation,
+  Portfolio,
+  Positions,
+  Trade,
+} from '../api';
 
 export function session(...roles: Role[]): Session {
   return {
@@ -278,6 +288,30 @@ export function fakeApi() {
     settleOperation: answer(operation({ settled_date: '2026-11-27' })),
     cancelOperation: answer(operation({ status: 'cancelled' })),
     ladder: answer(ladder()),
+    importTrades: answer<ImportReport>({
+      created: 1,
+      amended: 0,
+      cancelled: 0,
+      unchanged: 1,
+      trades: [
+        { index: 0, external_id: 'BX-0042', result: 'unchanged', trade_id: 't-1', warnings: [] },
+        {
+          index: 2,
+          external_id: 'BX-0017',
+          result: 'created',
+          trade_id: 't-2',
+          warnings: ['Продажа больше позиции: на 30.11.2026 в портфеле 0 шт., продаётся 20000.'],
+        },
+      ],
+      rejected: [
+        {
+          index: 1,
+          external_id: 'BX-0051',
+          error: 'unknown_instrument',
+          message: 'Бумаги LQDT нет в справочнике. Загрузите её в разделе «Справочник».',
+        },
+      ],
+    }),
   } satisfies Record<keyof BookingApi, unknown>;
 }
 

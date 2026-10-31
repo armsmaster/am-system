@@ -293,6 +293,17 @@ def test_user_sees_only_granted_subtree(
     assert [a["code"] for a in accounts] == ["A1"]
 
 
+def test_trade_feed_sees_every_portfolio(
+    admin: Api, ids: dict[str, str], client: TestClient, tokens: TokenFactory
+) -> None:
+    # Скрипт сделок присылает сделки всех фондов (вопрос 100); менять портфели не может.
+    feed = Api(client, tokens, "service-account-am-trade-feed", "trade_feed")
+
+    assert set(by_code(feed)) == set(by_code(admin))
+    assert feed.ok("GET", "/me")["sees_everything"] is True
+    assert feed.call("POST", "/accounts", {}).status_code == 403
+
+
 def test_access_to_view_spans_funds(
     admin: Api, ids: dict[str, str], client: TestClient, tokens: TokenFactory
 ) -> None:

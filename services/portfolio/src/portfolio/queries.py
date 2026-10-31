@@ -27,10 +27,11 @@ class Visibility:
 
 
 async def visibility(session: AsyncSession, principal: Principal) -> Visibility:
-    """Админ видит всё; остальные — выданные им compound и их потомков."""
+    """Админ видит всё; скрипт сделок — тоже: внешняя система присылает сделки
+    всех фондов (вопрос 100). Остальные — выданные им compound и их потомков."""
     repo = Repository(session)
     graph = await repo.load_graph()
-    if principal.has_role(Role.ADMIN):
+    if principal.has_role(Role.ADMIN) or principal.has_role(Role.TRADE_FEED):
         return Visibility(graph, set(graph.portfolios), sees_everything=True)
     granted = await repo.grants_of(principal.subject)
     return Visibility(graph, graph.visible(granted), sees_everything=False)

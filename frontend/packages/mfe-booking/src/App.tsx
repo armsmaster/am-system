@@ -4,6 +4,7 @@ import { useCallback, useMemo } from 'react';
 import { NavLink, Route, Routes, useParams } from 'react-router';
 
 import { bookingApi, type BookingApi, type Instrument, type Portfolio } from './api';
+import { ImportPage } from './pages/ImportPage';
 import { LadderPage } from './pages/LadderPage';
 import { OperationsPage } from './pages/OperationsPage';
 import { PositionsPage } from './pages/PositionsPage';
@@ -51,6 +52,7 @@ export function Booking({
         <NavLink to={`${basePath}/positions`}>Позиции</NavLink>
         <NavLink to={`${basePath}/ladder`}>Лестница</NavLink>
         <NavLink to={`${basePath}/operations`}>Операции фонда</NavLink>
+        <NavLink to={`${basePath}/import`}>Импорт</NavLink>
       </nav>
       <LoadedView state={state}>
         {([portfolios, instruments]) => {
@@ -62,6 +64,7 @@ export function Booking({
               <Route path="positions" element={<PositionsPage context={context} />} />
               <Route path="ladder" element={<LadderPage context={context} />} />
               <Route path="operations" element={<OperationsPage context={context} />} />
+              <Route path="import" element={<ImportPage context={context} />} />
             </Routes>
           );
         }}
