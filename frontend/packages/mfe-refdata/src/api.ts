@@ -41,6 +41,14 @@ export interface FloaterTerms {
   readonly capitalized: boolean;
 }
 
+/** Ставка и маржа флоатера, как их публикует ISS; капитализацию ISS не сообщает. */
+export interface IssFloater {
+  /** Код ставки в ISS: RREFKEYR, RUONIA… */
+  readonly benchmark: string;
+  readonly rate: RateKind;
+  readonly margin_bp: Decimal | null;
+}
+
 export interface Params {
   readonly name: string;
   readonly short_name: string;
@@ -57,6 +65,7 @@ export interface Params {
   readonly amortizations: readonly Amortization[];
   readonly offers: readonly Offer[];
   readonly floater: FloaterTerms | null;
+  readonly iss_floater: IssFloater | null;
 }
 
 export type Field = keyof Params;

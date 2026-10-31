@@ -158,7 +158,8 @@ class Commands:
             merged = merge_from_iss(latest, from_iss)
             changed = changed_fields(latest.params, merged)
             if changed:
-                labels = ", ".join(FIELD_LABELS[name].lower() for name in changed)
+                # Строчная — только первая буква: аббревиатуры вроде ISS остаются как есть.
+                labels = ", ".join(_lower_first(FIELD_LABELS[name]) for name in changed)
                 # ISS не сообщает дату публикации — новая версия действует с дня,
                 # когда изменение заметили (решение 13, опоздание не больше суток).
                 today = now.date()
@@ -288,3 +289,7 @@ async def sync_all(
             except IssError:
                 failed += 1
     return SyncStats(checked=len(ids), changed=changed, failed=failed)
+
+
+def _lower_first(label: str) -> str:
+    return label[:1].lower() + label[1:]

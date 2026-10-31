@@ -1,0 +1,38 @@
+{
+ "securities": {
+  "columns": [
+   "secid",
+   "shortname",
+   "regnumber",
+   "name",
+   "isin",
+   "is_traded",
+   "emitent_id",
+   "emitent_title",
+   "emitent_inn",
+   "emitent_okpo",
+   "type",
+   "group",
+   "primary_boardid",
+   "marketprice_boardid"
+  ],
+  "data": [
+   [
+    "RU000A107HG1",
+    "Газпнф3P8R",
+    "4B02-08-00146-A-003P",
+    "Газпром нефть БО 003P-08R",
+    "RU000A107HG1",
+    1,
+    1039,
+    "Публичное акционерное общество \"Газпром нефть\"",
+    "5504036333",
+    "42045241",
+    "exchange_bond",
+    "stock_bonds",
+    "TQCB",
+    "TQCB"
+   ]
+  ]
+ }
+}

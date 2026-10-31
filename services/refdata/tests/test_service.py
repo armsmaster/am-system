@@ -167,6 +167,28 @@ def test_operations_complete_a_floater(trader: Api, ops: Api) -> None:
     )
 
 
+def test_floater_terms_are_checked_against_iss(trader: Api, ops: Api, iss: FakeIss) -> None:
+    bond = trader.ok("POST", "/instruments", {"code": "RU000A107HG1"})
+    [missing] = bond["alerts"]
+    assert missing["message"].endswith("По ISS: ключевая ставка + 130 бп.")
+
+    path = f"/instruments/{bond['id']}/versions"
+    terms = {"rate": "key_rate", "margin_bp": "130", "capitalized": False}
+    agreed = ops.ok(
+        "POST",
+        path,
+        {"valid_from": "2023-12-28", "comment": "По проспекту", "changes": {"floater": terms}},
+    )
+    assert agreed["alerts"] == []
+
+    # Эмитент пересмотрел маржу: ISS публикует новую, сверка заводит версию и предупреждает.
+    iss.describe("RU000A107HG1", "COUPON_BENCHMARK_SPREAD", "1.10")
+    synced = ops.ok("POST", f"/instruments/{bond['id']}/sync")
+    assert "ставка и маржа флоатера по ISS" in synced["versions"][-1]["comment"]
+    assert synced["current"]["params"]["floater"] == terms  # ручные параметры не трогаем
+    assert [a["code"] for a in synced["alerts"]] == ["floater_differs_from_iss"]
+
+
 def test_edit_rules(trader: Api, ops: Api) -> None:
     bond = trader.ok("POST", "/instruments", {"code": "SU46020RMFS2"})
     path = f"/instruments/{bond['id']}/versions"

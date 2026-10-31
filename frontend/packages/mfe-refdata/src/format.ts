@@ -61,6 +61,7 @@ export const FIELD_LABELS: Readonly<Record<Field, string>> = {
   amortizations: 'Амортизации',
   offers: 'Оферты',
   floater: 'Параметры флоатера',
+  iss_floater: 'Ставка и маржа флоатера по ISS',
 };
 
 const NO_VALUE = '—';

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-import type { Field, InstrumentKind, Params, Version } from '../api';
+import type { Field, InstrumentKind, IssFloater, Params, Version } from '../api';
 import {
   couponKindLabel,
   formatDate,
@@ -64,6 +64,7 @@ export function VersionDetails({
             {row('nominal_indexation', 'Индексация номинала', INDEXATION_LABELS[p.nominal_indexation])}
             {(p.coupon_kind === 'floater' || p.floater) &&
               row('floater', 'Параметры флоатера', floaterText(p))}
+            {p.iss_floater && row('iss_floater', 'Ставка и маржа по ISS', issFloaterText(p.iss_floater))}
           </>
         )}
       </dl>
@@ -79,6 +80,18 @@ function floaterText({ floater }: Params): string {
   const sign = floater.margin_bp.startsWith('-') ? '' : '+';
   const capitalized = floater.capitalized ? 'капитализируется' : 'без капитализации';
   return `${RATE_LABELS[floater.rate]} ${sign}${formatDecimal(floater.margin_bp)} бп, ${capitalized}`;
+}
+
+/** Как в ISS: незнакомую ставку показываем кодом ISS; маржи нет — только ставку. */
+function issFloaterText(iss: IssFloater): string {
+  const rate = iss.rate === 'other' ? iss.benchmark : RATE_LABELS[iss.rate];
+  if (iss.margin_bp === null) {
+    return rate;
+  }
+  // ISS даёт маржу в процентах: 1.30 → 130.00 бп; лишние нули не показываем.
+  const margin = iss.margin_bp.includes('.') ? iss.margin_bp.replace(/\.?0+$/, '') : iss.margin_bp;
+  const sign = margin.startsWith('-') ? '' : '+';
+  return `${rate} ${sign}${formatDecimal(margin)} бп`;
 }
 
 function Schedules({ params: p }: { readonly params: Params }) {

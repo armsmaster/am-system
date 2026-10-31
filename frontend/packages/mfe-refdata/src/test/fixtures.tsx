@@ -51,6 +51,7 @@ export function params(fields: Partial<Params> = {}): Params {
     amortizations: [{ date: '2041-05-15', percent: '100', amount: '1000', is_maturity: true }],
     offers: [],
     floater: null,
+    iss_floater: null,
     ...fields,
   };
 }

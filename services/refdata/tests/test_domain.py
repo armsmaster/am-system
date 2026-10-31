@@ -12,6 +12,7 @@ from refdata.domain import (
     Coupon,
     CouponKind,
     FloaterTerms,
+    IssFloater,
     NominalIndexation,
     Params,
     RateKind,
@@ -179,6 +180,71 @@ def test_alerts_tell_what_blocks_calculations() -> None:
     assert [a.code for a in floater_without_terms] == ["floater_terms_missing"]
     assert [a.code for a in unknown] == ["coupon_kind_unknown", "indexation_unknown"]
     assert complete == []
+
+
+def by_iss(benchmark: str, rate: RateKind, margin_bp: str | None) -> Params:
+    margin = None if margin_bp is None else Decimal(margin_bp)
+    return BASE.model_copy(
+        update={"iss_floater": IssFloater(benchmark=benchmark, rate=rate, margin_bp=margin)}
+    )
+
+
+def test_missing_floater_terms_hint_at_iss() -> None:
+    [alert] = alerts(by_iss("RUONIA", RateKind.RUONIA, "175.00"), [], None)
+
+    assert alert.message == (
+        "Не заполнены параметры флоатера — спред по бумаге не посчитать. По ISS: RUONIA + 175 бп."
+    )
+    # Маржи в ISS нет — подсказываем только ставку.
+    [no_margin] = alerts(by_iss("RUONIA", RateKind.RUONIA, None), [], None)
+    assert no_margin.message.endswith("По ISS: RUONIA.")
+
+
+@pytest.mark.parametrize(
+    ("iss", "mine", "message"),
+    [
+        # Ставка другая.
+        (
+            ("RREFKEYR", RateKind.KEY_RATE, "130"),
+            FloaterTerms(rate=RateKind.RUONIA, margin_bp=Decimal(130), capitalized=False),
+            "Параметры флоатера расходятся с ISS: в справочнике — RUONIA + 130 бп, "
+            "в ISS — ключевая ставка + 130 бп. Проверьте по проспекту.",
+        ),
+        # Маржа другая — например, эмитент пересмотрел её на оферте.
+        (
+            ("RUONIA", RateKind.RUONIA, "120"),
+            FloaterTerms(rate=RateKind.RUONIA, margin_bp=Decimal(-15), capitalized=True),
+            "Параметры флоатера расходятся с ISS: в справочнике — RUONIA − 15 бп, "
+            "в ISS — RUONIA + 120 бп. Проверьте по проспекту.",
+        ),
+        # Ставку ISS называет незнакомым кодом — сверяем только маржу.
+        (
+            ("MOSPRIME3M", RateKind.OTHER, "50"),
+            FloaterTerms(rate=RateKind.OTHER, margin_bp=Decimal(40), capitalized=False),
+            "Параметры флоатера расходятся с ISS: в справочнике — другая ставка + 40 бп, "
+            "в ISS — MOSPRIME3M + 50 бп. Проверьте по проспекту.",
+        ),
+    ],
+)
+def test_floater_terms_that_differ_from_iss(
+    iss: tuple[str, RateKind, str], mine: FloaterTerms, message: str
+) -> None:
+    params = by_iss(*iss).model_copy(update={"floater": mine})
+
+    assert [a.message for a in alerts(params, [], None)] == [message]
+
+
+@pytest.mark.parametrize(
+    "iss",
+    [
+        ("RUONIA", RateKind.RUONIA, "0"),
+        ("MOSPRIME3M", RateKind.OTHER, "0"),
+        ("RUONIA", RateKind.RUONIA, None),
+    ],
+)
+def test_floater_terms_that_agree_with_iss(iss: tuple[str, RateKind, str | None]) -> None:
+    # TERMS — RUONIA + 0 бп; маржи в ISS нет — сверять нечего.
+    assert alerts(by_iss(*iss).model_copy(update={"floater": TERMS}), [], None) == []
 
 
 def test_pinned_field_that_differs_from_iss_is_flagged() -> None:

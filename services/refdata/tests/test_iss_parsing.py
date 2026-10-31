@@ -14,7 +14,14 @@ from typing import Any
 
 import pytest
 
-from refdata.domain import CouponKind, InstrumentKind, NominalIndexation, OfferKind
+from refdata.domain import (
+    CouponKind,
+    InstrumentKind,
+    IssFloater,
+    NominalIndexation,
+    OfferKind,
+    RateKind,
+)
 from refdata.iss import (
     IssError,
     NotFoundInIssError,
@@ -76,12 +83,39 @@ def test_floater_is_recognised_but_needs_terms() -> None:
     floater = security("SU29014RMFS6").params
 
     assert floater.coupon_kind is CouponKind.FLOATER
-    assert floater.floater is None  # маржу и тип ставки ISS не сообщает
+    assert floater.floater is None  # параметры флоатера заполняет сопровождение
+    assert floater.iss_floater is None  # в этой записи ISS ставки и маржи ещё нет
     # Первый купон в ISS без ставки и суммы — так и сохраняем.
     assert (floater.coupons[0].rate, floater.coupons[0].amount, floater.coupons[0].record_date) == (
         None,
         None,
         None,
+    )
+
+
+def test_floater_rate_and_margin_as_published_by_iss() -> None:
+    # Газпром нефть 003P-08R: COUPON_BENCHMARK = RREFKEYR, COUPON_BENCHMARK_SPREAD = 1.30 (%).
+    bond = security("RU000A107HG1").params
+
+    assert bond.coupon_kind is CouponKind.FLOATER
+    assert bond.iss_floater == IssFloater(
+        benchmark="RREFKEYR", rate=RateKind.KEY_RATE, margin_bp=Decimal(130)
+    )
+    assert bond.floater is None
+
+
+def test_unknown_iss_rate_code_and_missing_margin() -> None:
+    candidate = pick("RU000A107HG1", parse_search(load("search_RU000A107HG1")))
+    description = load("desc_RU000A107HG1")
+    for row in description["description"]["data"]:
+        if row[0] == "COUPON_BENCHMARK":
+            row[2] = "MOSPRIME3M"
+        if row[0] == "COUPON_BENCHMARK_SPREAD":
+            row[2] = None
+
+    bond = parse_security(candidate, description, load("bond_RU000A107HG1")).params
+    assert bond.iss_floater == IssFloater(
+        benchmark="MOSPRIME3M", rate=RateKind.OTHER, margin_bp=None
     )
 
 

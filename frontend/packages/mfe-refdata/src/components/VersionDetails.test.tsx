@@ -135,6 +135,17 @@ describe('VersionDetails', () => {
     expect(facts()['Параметры флоатера']).toBe(expected);
   });
 
+  it.each([
+    ['a known rate', { benchmark: 'RREFKEYR', rate: 'key_rate', margin_bp: '130.00' }, 'ключевая ставка ЦБ +130 бп'],
+    ['an unknown ISS code', { benchmark: 'MOSPRIME3M', rate: 'other', margin_bp: '-20.50' }, 'MOSPRIME3M -20,5 бп'],
+    ['no margin', { benchmark: 'RUONIA', rate: 'ruonia', margin_bp: null }, 'RUONIA'],
+    ['a whole margin', { benchmark: 'RUONIA', rate: 'ruonia', margin_bp: '100' }, 'RUONIA +100 бп'],
+  ] as const)('shows the floater terms published by ISS: %s', (_name, iss, expected) => {
+    render(<VersionDetails version={version(1, { params: floaterParams({ iss_floater: iss }) })} kind="bond" />);
+
+    expect(facts()['Ставка и маржа по ISS']).toBe(expected);
+  });
+
   it('shows a fund share without bond terms and schedules', () => {
     render(
       <VersionDetails

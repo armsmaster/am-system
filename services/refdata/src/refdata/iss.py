@@ -23,16 +23,20 @@ from refdata.domain import (
     Coupon,
     CouponKind,
     InstrumentKind,
+    IssFloater,
     NominalIndexation,
     Offer,
     OfferKind,
     Params,
+    RateKind,
 )
 
 # Группы ISS, которые поддерживает справочник.
 _KINDS = {"stock_bonds": InstrumentKind.BOND, "stock_ppif": InstrumentKind.FUND_SHARE}
 # В ISS рубль обозначен старым кодом SUR.
 _CURRENCIES = {"SUR": "RUB", "RUR": "RUB"}
+# Коды ставок флоатеров в ISS, которые мы видели на настоящих бумагах; прочие — «другая».
+_BENCHMARKS = {"RREFKEYR": RateKind.KEY_RATE, "RUONIA": RateKind.RUONIA}
 
 
 class IssError(Exception):
@@ -145,6 +149,7 @@ def parse_security(
         coupon_kind=_coupon_kind(desc) if kind is InstrumentKind.BOND else None,
         coupon_frequency=_int(desc.get("COUPONFREQUENCY")),
         nominal_indexation=_indexation(desc.get("FACEVALUE_TYPE")),
+        iss_floater=_iss_floater(desc),
         **(_schedules(bondization) if bondization is not None else {}),
     )
     return Security(
@@ -163,6 +168,19 @@ def _coupon_kind(desc: Mapping[str, Any]) -> CouponKind:
     if "фиксирован" in text:
         return CouponKind.FIXED
     return CouponKind.UNKNOWN
+
+
+def _iss_floater(desc: Mapping[str, Any]) -> IssFloater | None:
+    """Ставка и маржа флоатера из описания ISS; маржа в ISS — в процентах."""
+    benchmark = desc.get("COUPON_BENCHMARK")
+    if not benchmark:
+        return None
+    spread = _decimal(desc.get("COUPON_BENCHMARK_SPREAD"))
+    return IssFloater(
+        benchmark=benchmark,
+        rate=_BENCHMARKS.get(benchmark, RateKind.OTHER),
+        margin_bp=None if spread is None else spread * 100,
+    )
 
 
 def _indexation(facevalue_type: str | None) -> NominalIndexation:

@@ -93,6 +93,16 @@ class FloaterTerms(_Frozen):
     capitalized: bool  # капитализируется ли ставка внутри купонного периода
 
 
+class IssFloater(_Frozen):
+    """Ставка и маржа флоатера, как их публикует ISS (COUPON_BENCHMARK,
+    COUPON_BENCHMARK_SPREAD). Капитализацию ISS не сообщает. По ним справочник
+    проверяет параметры сопровождения, а не заменяет их (решение 84)."""
+
+    benchmark: str  # код ставки в ISS: RREFKEYR, RUONIA…
+    rate: RateKind  # OTHER — код, которого справочник не знает
+    margin_bp: Decimal | None  # базисные пункты
+
+
 class Params(_Frozen):
     """Условия выпуска бумаги в одной версии.
 
@@ -117,6 +127,7 @@ class Params(_Frozen):
     amortizations: tuple[Amortization, ...] = ()
     offers: tuple[Offer, ...] = ()
     floater: FloaterTerms | None = None
+    iss_floater: IssFloater | None = None
 
 
 # Поля, которые знает только сопровождение: ISS их никогда не заполняет,
@@ -248,12 +259,28 @@ def alerts(params: Params, pinned: Iterable[str], iss_snapshot: Params | None) -
             )
         )
     if params.coupon_kind is CouponKind.FLOATER and params.floater is None:
+        hint = "" if params.iss_floater is None else f" По ISS: {_iss_text(params.iss_floater)}."
         result.append(
             Alert(
                 code="floater_terms_missing",
-                message="Не заполнены параметры флоатера — спред по бумаге не посчитать.",
+                message=f"Не заполнены параметры флоатера — спред по бумаге не посчитать.{hint}",
             )
         )
+    if params.floater is not None and params.iss_floater is not None:
+        mine, theirs = params.floater, params.iss_floater
+        if (theirs.rate is not RateKind.OTHER and theirs.rate is not mine.rate) or (
+            theirs.margin_bp is not None and theirs.margin_bp != mine.margin_bp
+        ):
+            result.append(
+                Alert(
+                    code="floater_differs_from_iss",
+                    message=(
+                        "Параметры флоатера расходятся с ISS: в справочнике — "
+                        f"{_floater_text(RATE_NAMES[mine.rate], mine.margin_bp)}, "
+                        f"в ISS — {_iss_text(theirs)}. Проверьте по проспекту."
+                    ),
+                )
+            )
     if params.nominal_indexation is NominalIndexation.UNKNOWN:
         result.append(
             Alert(
@@ -275,6 +302,27 @@ def alerts(params: Params, pinned: Iterable[str], iss_snapshot: Params | None) -
     return result
 
 
+RATE_NAMES: Mapping[RateKind, str] = {
+    RateKind.KEY_RATE: "ключевая ставка",
+    RateKind.RUONIA: "RUONIA",
+    RateKind.RUSFAR: "RUSFAR",
+    RateKind.OTHER: "другая ставка",
+}
+
+
+def _iss_text(found: IssFloater) -> str:
+    rate = found.benchmark if found.rate is RateKind.OTHER else RATE_NAMES[found.rate]
+    return _floater_text(rate, found.margin_bp)
+
+
+def _floater_text(rate: str, margin_bp: Decimal | None) -> str:
+    """«RUONIA + 175 бп»: маржа без лишних нулей."""
+    if margin_bp is None:
+        return rate
+    sign = "−" if margin_bp < 0 else "+"
+    return f"{rate} {sign} {abs(margin_bp).normalize():f} бп"
+
+
 FIELD_LABELS: Mapping[str, str] = {
     "name": "Название",
     "short_name": "Краткое название",
@@ -291,6 +339,7 @@ FIELD_LABELS: Mapping[str, str] = {
     "amortizations": "Амортизации",
     "offers": "Оферты",
     "floater": "Параметры флоатера",
+    "iss_floater": "Ставка и маржа флоатера по ISS",
 }
 
 
