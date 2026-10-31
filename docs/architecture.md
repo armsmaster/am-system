@@ -195,7 +195,8 @@ audience (`am-api`) и срок; роли берёт из `realm_access.roles`. 
    импорт → позиции, лестница расчётов, пересчёт задним числом.
    Методика — [design/05-booking.md](design/05-booking.md), спецификация
    импорта — [api/trade-import](api/trade-import/README.md). *(сделано)*
-6. Оценка, P&L, СЧА, комиссии.
+6. Оценка, P&L, СЧА, комиссии. Методика —
+   [design/06-valuation-nav.md](design/06-valuation-nav.md). *(методика утверждена)*
 7. РЕПО, флоатеры (с плоским прогнозом ставки), БПИФ — **это MVP**.
 8. `reconciliation`: приёмник остатков, сверка, закрытие дня.
 9. `limits`.
