@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatPrice, formatTime, fromMoscowInput, moscowInput, sourceLabel } from './format';
+import {
+  formatDate,
+  formatNumber,
+  formatPrice,
+  formatTime,
+  fromMoscowInput,
+  moscowInput,
+  sourceLabel,
+} from './format';
 
 describe('formatPrice', () => {
   it.each([
@@ -36,5 +44,21 @@ describe('sourceLabel', () => {
       'по барам',
       'quik',
     ]);
+  });
+});
+
+describe('formatNumber', () => {
+  it.each([
+    ['15.935227', 2, '15,94'],
+    ['2491.01', 0, '2 491'],
+    ['-67.49', 1, '−67,5'],
+    ['130.00', 0, '130'],
+  ])('%s with %i digits → %s', (value, digits, expected) => {
+    expect(formatNumber(value, digits)).toBe(expected);
+  });
+
+  it('shows a dash for no value and dates as day.month.year', () => {
+    expect(formatNumber(null, 2)).toBe('—');
+    expect(formatDate('2026-10-29')).toBe('29.10.2026');
   });
 });

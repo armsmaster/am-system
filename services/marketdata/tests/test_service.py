@@ -146,7 +146,7 @@ def test_spec_examples_are_accepted(
         other_client(datetime(2026, 10, 27, 23, 55, tzinfo=MOSCOW)), tokens, "script", "price_feed"
     )
 
-    for kind in ("quotes", "bars"):
+    for kind in ("quotes", "bars", "rates"):
         example = json.loads((EXAMPLES / f"{kind}.example.json").read_text(encoding="utf-8"))
         result = feed.ok("POST", f"/feed/v1/{kind}", example)
         assert (result["accepted"], result["rejected"]) == (len(example[kind]), [])

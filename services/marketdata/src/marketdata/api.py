@@ -14,11 +14,24 @@ from pydantic import AwareDatetime, BaseModel, Field, StringConstraints
 
 from am_common.app import AppResources, DbSession
 from am_common.auth import CurrentPrincipal, Principal, Role, require_any_role
+from am_common.clock import MOSCOW
 from am_common.events import Actor
+from am_quant.bond import Horizon, HorizonKind, QuantError
+from am_quant.yields import BASIS_POINTS
 from marketdata.accrual import OnDate
+from marketdata.analytics import Analytics, BondType, Inputs, PriceBasis, SpreadView, analytics
 from marketdata.commands import Commands, refresh_instruments
-from marketdata.feed import BarsIn, FeedResult, QuotesIn, Rejected, ingest_bars, ingest_quotes
-from marketdata.prices import PriceType, Rule, RuleViolationError
+from marketdata.feed import (
+    BarsIn,
+    FeedResult,
+    QuotesIn,
+    RatesIn,
+    Rejected,
+    ingest_bars,
+    ingest_quotes,
+    ingest_rates,
+)
+from marketdata.prices import Choice, PriceType, Rule, RuleViolationError
 from marketdata.queries import (
     PriceView,
     accrued_on_date,
@@ -26,6 +39,7 @@ from marketdata.queries import (
     price_views,
     series,
 )
+from marketdata.rates import RATE_LABELS, RateKind, RatePoint, rate_on
 from marketdata.refdata import RefdataClient, RefdataUnavailableError, refdata_client
 from marketdata.repository import NotFoundError, Repository, RuleRecord
 from marketdata.settings import MarketdataSettings
@@ -155,6 +169,79 @@ class OnDateOut(BaseModel):
     note: str
 
 
+class RateOut(BaseModel):
+    rate: RateKind
+    label: str
+    date: date | None  # дата значения; None — ставки ещё нет
+    value: Decimal | None  # % годовых
+    source: str | None  # iss или источник скрипта
+
+
+class ProblemOut(BaseModel):
+    code: str
+    message: str
+
+
+class HorizonOut(BaseModel):
+    kind: HorizonKind
+    date: date
+    price: Decimal  # % от непогашенного номинала
+
+
+class YieldOut(BaseModel):
+    horizon: HorizonOut
+    yield_percent: Decimal | None = None
+    macaulay_years: Decimal | None = None
+    macaulay_days: Decimal | None = None
+    modified_duration: Decimal | None = None
+    dv01: Decimal | None = None  # ₽ на бумагу за 1 бп
+    convexity: Decimal | None = None
+    problem: ProblemOut | None = None  # почему к этому горизонту не посчитать
+
+
+class BreakdownOut(BaseModel):
+    basis_bp: Decimal
+    capitalization_bp: Decimal
+    margin_bp: Decimal  # у линкера — купон
+    other_bp: Decimal
+    price_bp: Decimal
+
+
+class SpreadOut(BaseModel):
+    horizon: HorizonOut
+    rate: RateKind | None  # плавающая ставка флоатера; у линкера — None
+    margin_bp: Decimal | None
+    capitalized: bool | None
+    funding: RateOut  # RUONIA
+    funding_percent: Decimal  # эффективная годовая ставка фондирования
+    index: RateOut | None  # ставка индекса флоатера
+    spread_bp: Decimal
+    yield_percent: Decimal  # фондирование + спред
+    breakdown: BreakdownOut
+    spread_duration: Decimal
+    spread_dv01: Decimal  # ₽ на бумагу за 1 бп спреда
+
+
+class PriceUsedOut(BaseModel):
+    basis: PriceBasis
+    clean: Decimal  # % от непогашенного номинала
+    face_value: Decimal
+    accrued: Decimal
+    dirty: Decimal
+    valuation: ChoiceOut | None  # цена для оценки, если расчёт — по ней
+
+
+class AnalyticsOut(BaseModel):
+    instrument: InstrumentOut
+    at: datetime
+    trading_day: date
+    settlement_date: date
+    type: BondType
+    price: PriceUsedOut
+    yields: list[YieldOut]
+    spread: SpreadOut | None
+
+
 class BatchOut(BaseModel):
     id: UUID
     client: str
@@ -211,6 +298,13 @@ async def feed_bars(
     ids = await _resolve(session, refdata, resources, {b.code for b in batch.bars})
     async with session.begin():
         return await ingest_bars(Repository(session), batch, ids, client.username, now)
+
+
+@router.post("/feed/v1/rates", tags=["feed"])
+async def feed_rates(batch: RatesIn, *, client: Feed, session: DbSession, now: Now) -> FeedResult:
+    """Ставки от скрипта: RUONIA, а при необходимости — ключевая ставка и RUSFAR."""
+    async with session.begin():
+        return await ingest_rates(Repository(session), batch, client.username, now)
 
 
 @router.get("/feed/batches", tags=["feed"])
@@ -311,6 +405,52 @@ async def face_value(
     return _on_date(day, await face_value_on_date(session, instrument_id, day), "номинал")
 
 
+# --- ставки и расчёты -----------------------------------------------------------
+
+
+@router.get("/rates", tags=["analytics"])
+async def rates(
+    _user: Viewer,
+    session: DbSession,
+    now: Now,
+    day: Annotated[date | None, Query(alias="date", description="По умолчанию — сегодня")] = None,
+) -> list[RateOut]:
+    """Ставки на дату: последняя известная по каждой, её дата и источник."""
+    on = day or now.astimezone(MOSCOW).date()
+    points = await Repository(session).rates(list(RateKind), on)
+    return [
+        _rate_out(kind, rate_on((p for p in points if p.kind is kind), on)) for kind in RateKind
+    ]
+
+
+@router.get("/instruments/{instrument_id}/analytics", tags=["analytics"])
+async def bond_analytics(
+    instrument_id: UUID,
+    *,
+    _user: Viewer,
+    session: DbSession,
+    refdata: Refdata,
+    now: Now,
+    at: At = None,
+    price: Annotated[Decimal | None, Query(gt=0, le=1000, description="Чистая цена, %")] = None,
+    yield_percent: Annotated[
+        Decimal | None, Query(alias="yield", gt=-99, lt=1000, description="Доходность, %")
+    ] = None,
+    spread_bp: Annotated[
+        Decimal | None, Query(alias="spread", ge=-5000, le=10000, description="Спред, бп")
+    ] = None,
+) -> AnalyticsOut:
+    """Доходность и метрики или вменённый спред по цене для оценки (design/04).
+
+    «Что если»: задайте одно из ``price``, ``yield`` или ``spread``.
+    """
+    given = [v for v in (price, yield_percent, spread_bp) if v is not None]
+    if len(given) > 1:
+        raise QuantError("one_input", "Задайте что-то одно: цену, доходность или спред.")
+    inputs = Inputs(price=price, yield_percent=yield_percent, spread_bp=spread_bp)
+    return _analytics_out(await analytics(session, refdata, instrument_id, at or now, inputs))
+
+
 # --- правило и ручная цена ------------------------------------------------------
 
 
@@ -369,9 +509,14 @@ def install_error_handlers(app: FastAPI) -> None:
     async def refdata_unavailable(_request: Request, _exc: Exception) -> Response:
         return problem(503, "refdata_unavailable", "Справочник недоступен. Повторите позже.")
 
+    async def not_computable(_request: Request, exc: Exception) -> Response:
+        missing = cast(QuantError, exc)
+        return problem(422, missing.code, missing.message)
+
     app.add_exception_handler(RuleViolationError, rule_violation)
     app.add_exception_handler(NotFoundError, not_found)
     app.add_exception_handler(RefdataUnavailableError, refdata_unavailable)
+    app.add_exception_handler(QuantError, not_computable)
 
 
 def install_feed_limit(app: FastAPI, settings: MarketdataSettings) -> None:
@@ -414,21 +559,11 @@ async def _resolve(
 
 
 def _price_out(view: PriceView) -> PriceOut:
-    choice = view.price
     return PriceOut(
         instrument=_instrument_out(view.instrument),
         at=view.at,
         trading_day=view.trading_day,
-        price=None
-        if choice is None
-        else ChoiceOut(
-            value=_six(choice.value),
-            type=choice.type,
-            source=choice.source,
-            time=choice.time,
-            stale=choice.stale,
-            reason=choice.reason,
-        ),
+        price=_choice_out(view.price),
         candidates=[
             CandidateOut(
                 type=c.type, source=c.source, value=_six(c.value), time=c.time, today=c.today
@@ -438,6 +573,101 @@ def _price_out(view: PriceView) -> PriceOut:
         rule=_rule_out(view.rule),
         spread_bp=view.spread_bp,
         wide_spread=view.wide_spread,
+    )
+
+
+def _choice_out(choice: Choice | None) -> ChoiceOut | None:
+    if choice is None:
+        return None
+    return ChoiceOut(
+        value=_six(choice.value),
+        type=choice.type,
+        source=choice.source,
+        time=choice.time,
+        stale=choice.stale,
+        reason=choice.reason,
+    )
+
+
+def _rate_out(kind: RateKind, point: RatePoint | None) -> RateOut:
+    return RateOut(
+        rate=kind,
+        label=RATE_LABELS[kind],
+        date=None if point is None else point.as_of,
+        value=None if point is None else point.value,
+        source=None if point is None else point.source,
+    )
+
+
+def _horizon_out(horizon: Horizon) -> HorizonOut:
+    return HorizonOut(kind=horizon.kind, date=horizon.date, price=horizon.price)
+
+
+def _analytics_out(found: Analytics) -> AnalyticsOut:
+    yields: list[YieldOut] = []
+    for item in found.yields:
+        if item.result is None:
+            problem = cast(QuantError, item.problem)
+            yields.append(
+                YieldOut(
+                    horizon=_horizon_out(item.horizon),
+                    problem=ProblemOut(code=problem.code, message=problem.message),
+                )
+            )
+            continue
+        metrics = item.result.risk
+        yields.append(
+            YieldOut(
+                horizon=_horizon_out(item.horizon),
+                yield_percent=_six(item.result.yield_rate * 100),
+                macaulay_years=_six(metrics.macaulay),
+                macaulay_days=_places(metrics.macaulay_days, 2),
+                modified_duration=_six(metrics.modified),
+                dv01=_six(metrics.dv01),
+                convexity=_six(metrics.convexity),
+            )
+        )
+    return AnalyticsOut(
+        instrument=_instrument_out(found.instrument),
+        at=found.at,
+        trading_day=found.trading_day,
+        settlement_date=found.settlement,
+        type=found.type,
+        price=PriceUsedOut(
+            basis=found.basis,
+            clean=_six(found.clean),
+            face_value=_six(found.face_value),
+            accrued=_six(found.accrued),
+            dirty=_six(found.dirty),
+            valuation=_choice_out(found.valuation),
+        ),
+        yields=yields,
+        spread=None if found.spread is None else _spread_out(found.spread),
+    )
+
+
+def _spread_out(view: SpreadView) -> SpreadOut:
+    result, spec = view.result, view.terms.floater
+    parts = result.breakdown
+    return SpreadOut(
+        horizon=_horizon_out(result.horizon),
+        rate=None if spec is None else spec.rate,
+        margin_bp=None if spec is None else _bp(spec.margin),
+        capitalized=None if spec is None else spec.capitalized,
+        funding=_rate_out(view.funding.kind, view.funding),
+        funding_percent=_six(result.funding * 100),
+        index=None if view.index is None else _rate_out(view.index.kind, view.index),
+        spread_bp=_bp(result.spread),
+        yield_percent=_six((result.funding + result.spread) * 100),
+        breakdown=BreakdownOut(
+            basis_bp=_bp(parts.basis),
+            capitalization_bp=_bp(parts.capitalization),
+            margin_bp=_bp(parts.margin),
+            other_bp=_bp(parts.other),
+            price_bp=_bp(parts.price),
+        ),
+        spread_duration=_six(result.risk.modified),
+        spread_dv01=_six(result.risk.dv01),
     )
 
 
@@ -485,4 +715,13 @@ def _on_date(day: date, found: OnDate | None, what: str) -> OnDateOut:
 
 
 def _six(value: Decimal) -> Decimal:
-    return value.quantize(Decimal("0.000001"))
+    return _places(value, 6)
+
+
+def _bp(value: Decimal) -> Decimal:
+    return _places(value * BASIS_POINTS, 2)
+
+
+def _places(value: Decimal, places: int) -> Decimal:
+    # + 0 превращает «−0,00» в «0,00».
+    return value.quantize(Decimal(1).scaleb(-places)) + 0

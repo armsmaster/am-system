@@ -1,0 +1,67 @@
+{
+ "name": "ВЭБ.РФ ПБО-002Р-58",
+ "short_name": "ВЭБ2Р-58",
+ "board": "TQCB",
+ "currency": "RUB",
+ "issuer": "государственная корпорация развития \"ВЭБ.РФ\"",
+ "initial_face_value": "1000",
+ "issue_date": "2026-05-15",
+ "maturity_date": "2029-06-16",
+ "coupon_kind": "fixed",
+ "coupon_frequency": null,
+ "nominal_indexation": "unknown",
+ "coupons": [
+  {
+   "date": "2026-11-19",
+   "start_date": "2026-05-15",
+   "record_date": "2026-11-18",
+   "rate": "1.85",
+   "amount": null
+  },
+  {
+   "date": "2027-05-26",
+   "start_date": "2026-11-19",
+   "record_date": "2027-05-25",
+   "rate": "1.85",
+   "amount": null
+  },
+  {
+   "date": "2027-11-30",
+   "start_date": "2027-05-26",
+   "record_date": "2027-11-29",
+   "rate": "1.85",
+   "amount": null
+  },
+  {
+   "date": "2028-06-05",
+   "start_date": "2027-11-30",
+   "record_date": "2028-06-02",
+   "rate": "1.85",
+   "amount": null
+  },
+  {
+   "date": "2028-12-10",
+   "start_date": "2028-06-05",
+   "record_date": "2028-12-08",
+   "rate": "1.85",
+   "amount": null
+  },
+  {
+   "date": "2029-06-16",
+   "start_date": "2028-12-10",
+   "record_date": "2029-06-15",
+   "rate": "1.85",
+   "amount": null
+  }
+ ],
+ "amortizations": [
+  {
+   "date": "2029-06-16",
+   "percent": null,
+   "amount": null,
+   "is_maturity": true
+  }
+ ],
+ "offers": [],
+ "floater": null
+}

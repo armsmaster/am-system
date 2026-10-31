@@ -119,7 +119,7 @@ export interface Batch {
   readonly id: string;
   readonly client: string;
   readonly source: string;
-  readonly kind: 'quotes' | 'bars';
+  readonly kind: 'quotes' | 'bars' | 'rates';
   readonly received_at: string;
   readonly accepted: number;
   readonly rejected: readonly Rejected[];
@@ -127,6 +127,82 @@ export interface Batch {
 
 export interface RuleInput extends Rule {
   readonly comment: string;
+}
+
+export type RateKind = 'key_rate' | 'ruonia' | 'rusfar';
+
+/** Ставка на дату: последняя известная, её дата и источник; нет ставки — всё null. */
+export type Rate = {
+  readonly rate: RateKind;
+  readonly label: string;
+} & (
+  | { readonly date: string; readonly value: Decimal; readonly source: string }
+  | { readonly date: null; readonly value: null; readonly source: null }
+);
+
+export interface Horizon {
+  readonly kind: 'offer' | 'maturity';
+  readonly date: string;
+  readonly price: Decimal;
+}
+
+/** Доходность и метрики к горизонту; ``problem`` — почему к нему не посчитать. */
+export interface HorizonYield {
+  readonly horizon: Horizon;
+  readonly yield_percent: Decimal | null;
+  readonly macaulay_years: Decimal | null;
+  readonly macaulay_days: Decimal | null;
+  readonly modified_duration: Decimal | null;
+  readonly dv01: Decimal | null;
+  readonly convexity: Decimal | null;
+  readonly problem: { readonly code: string; readonly message: string } | null;
+}
+
+export interface Spread {
+  readonly horizon: Horizon;
+  /** Плавающая ставка флоатера; у линкера — null. */
+  readonly rate: RateKind | null;
+  readonly margin_bp: Decimal | null;
+  readonly capitalized: boolean | null;
+  readonly funding: Rate;
+  readonly funding_percent: Decimal;
+  readonly index: Rate | null;
+  readonly spread_bp: Decimal;
+  readonly yield_percent: Decimal;
+  readonly breakdown: {
+    readonly basis_bp: Decimal;
+    readonly capitalization_bp: Decimal;
+    readonly margin_bp: Decimal;
+    readonly other_bp: Decimal;
+    readonly price_bp: Decimal;
+  };
+  readonly spread_duration: Decimal;
+  readonly spread_dv01: Decimal;
+}
+
+export interface Analytics {
+  readonly instrument: Instrument;
+  readonly at: string;
+  readonly trading_day: string;
+  readonly settlement_date: string;
+  readonly type: 'fixed' | 'floater' | 'linker';
+  readonly price: {
+    readonly basis: 'valuation' | 'price' | 'yield' | 'spread';
+    readonly clean: Decimal;
+    readonly face_value: Decimal;
+    readonly accrued: Decimal;
+    readonly dirty: Decimal;
+    readonly valuation: Choice | null;
+  };
+  readonly yields: readonly HorizonYield[];
+  readonly spread: Spread | null;
+}
+
+/** «Что если»: одно из трёх; ничего — по цене для оценки. */
+export interface WhatIf {
+  readonly price?: string;
+  readonly yield?: string;
+  readonly spread?: string;
 }
 
 const BASE = '/api/marketdata';
@@ -145,6 +221,9 @@ export function marketdataApi(client: ApiClient) {
     manualPrice: (id: string, body: { value: string; comment: string }) =>
       client.post<ManualPrice>(`${BASE}/instruments/${id}/manual-prices`, body),
     batches: () => client.get<Batch[]>(`${BASE}/feed/batches`),
+    analytics: (id: string, whatIf: WhatIf = {}) =>
+      client.get<Analytics>(`${BASE}/instruments/${id}/analytics${query({ ...whatIf })}`),
+    rates: (date?: string) => client.get<Rate[]>(`${BASE}/rates${query({ date })}`),
   };
 }
 

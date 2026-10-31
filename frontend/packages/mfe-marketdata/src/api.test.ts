@@ -48,6 +48,15 @@ describe('marketdataApi', () => {
       ['/api/marketdata/instruments/i-1/manual-prices', { value: '99.5', comment: 'брокер' }],
     ],
     ['batches', () => api.batches(), 'get', ['/api/marketdata/feed/batches']],
+    ['analytics', () => api.analytics('i-1'), 'get', ['/api/marketdata/instruments/i-1/analytics']],
+    [
+      'analytics what if',
+      () => api.analytics('i-1', { yield: '15.5' }),
+      'get',
+      ['/api/marketdata/instruments/i-1/analytics?yield=15.5'],
+    ],
+    ['rates', () => api.rates(), 'get', ['/api/marketdata/rates']],
+    ['rates on a date', () => api.rates('2026-10-26'), 'get', ['/api/marketdata/rates?date=2026-10-26']],
   ] as const)('%s', async (_name, call, method, args) => {
     await call();
 

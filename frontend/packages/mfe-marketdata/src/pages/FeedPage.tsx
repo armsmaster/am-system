@@ -8,6 +8,7 @@ import { REFRESH_MS, useEvery } from '../refresh';
 const KIND_LABELS: Readonly<Record<Batch['kind'], string>> = {
   quotes: 'снимки цен',
   bars: 'бары',
+  rates: 'ставки',
 };
 
 /** Лента скрипта: что и когда пришло, что отклонено и почему. */

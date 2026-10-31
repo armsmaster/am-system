@@ -25,7 +25,7 @@ def validator(kind: str) -> Draft202012Validator:
     return Draft202012Validator(schema, format_checker=Draft202012Validator.FORMAT_CHECKER)
 
 
-@pytest.mark.parametrize("kind", ["quotes", "bars"])
+@pytest.mark.parametrize("kind", ["quotes", "bars", "rates"])
 def test_examples_match_their_schemas(kind: str) -> None:
     assert list(validator(kind).iter_errors(load(f"{kind}.example.json"))) == []
 
@@ -96,6 +96,21 @@ def test_examples_match_their_schemas(kind: str) -> None:
                         "low": 1,
                     }
                 ],
+            },
+        ),
+        (
+            "rates",
+            {"source": "cbr", "rates": [{"rate": "libor", "date": "2026-10-26", "value": 5}]},
+        ),
+        (
+            "rates",
+            {"source": "cbr", "rates": [{"rate": "ruonia", "date": "26.10.2026", "value": 13.9}]},
+        ),
+        (
+            "rates",
+            {
+                "source": "cbr",
+                "rates": [{"rate": "ruonia", "date": "2026-10-26", "value": 0.139e3}],
             },
         ),
     ],

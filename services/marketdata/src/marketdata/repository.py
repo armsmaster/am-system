@@ -21,9 +21,11 @@ from marketdata.db import (
     manual_price,
     price_rule,
     quote,
+    rate,
 )
 from marketdata.dema import Bar
 from marketdata.prices import ManualPrice, Observation, PriceType, Rule
+from marketdata.rates import RateKind, RatePoint
 from marketdata.refdata import RefInstrument
 
 HISTORY = "iss_history"  # точка из истории торгов — на дату торгов
@@ -281,6 +283,49 @@ class Repository:
         for row in sorted(result, key=lambda r: (r.as_of, r.source == HISTORY)):
             found[row.as_of] = row.value
         return found
+
+    # --- денежные ставки --------------------------------------------------------
+
+    async def upsert_rates(self, rows: Sequence[dict[str, Any]]) -> None:
+        unique = {(r["kind"], r["as_of"], r["source"]): r for r in rows}
+        if not unique:
+            return
+        statement = insert(rate).values(list(unique.values()))
+        await self._session.execute(
+            statement.on_conflict_do_update(
+                index_elements=[rate.c.kind, rate.c.as_of, rate.c.source],
+                set_={
+                    "value": statement.excluded.value,
+                    "received_at": statement.excluded.received_at,
+                    "batch_id": statement.excluded.batch_id,
+                },
+            )
+        )
+
+    async def rates(self, kinds: Iterable[RateKind], till: date) -> list[RatePoint]:
+        """Ставки не позже даты: по каждой ставке — все значения последней известной даты."""
+        latest = (
+            select(rate.c.kind, func.max(rate.c.as_of).label("as_of"))
+            .where(rate.c.kind.in_([k.value for k in kinds]), rate.c.as_of <= till)
+            .group_by(rate.c.kind)
+            .subquery()
+        )
+        result = await self._session.execute(
+            select(rate).join(
+                latest, (rate.c.kind == latest.c.kind) & (rate.c.as_of == latest.c.as_of)
+            )
+        )
+        return [
+            RatePoint(RateKind(row.kind), row.as_of, row.value, row.source, row.received_at)
+            for row in result
+        ]
+
+    async def last_rate_date(self, kind: RateKind, source: str) -> date | None:
+        result = await self._session.execute(
+            select(func.max(rate.c.as_of)).where(rate.c.kind == kind.value, rate.c.source == source)
+        )
+        last: date | None = result.scalar_one()
+        return last
 
     # --- правила оценки ---------------------------------------------------------
 

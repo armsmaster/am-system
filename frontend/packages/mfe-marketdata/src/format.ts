@@ -26,6 +26,7 @@ export const ERROR_LABELS: Readonly<Record<string, string>> = {
   inconsistent_ohlc: 'бар противоречив',
   bad_timeframe: 'длина бара больше 4 часов',
   duplicate_in_batch: 'повтор в пакете',
+  future_date: 'дата из будущего',
 };
 
 export function sourceLabel(source: string): string {
@@ -64,4 +65,21 @@ export function moscowInput(date: Date): string {
 /** Поле datetime-local (время по Москве) → момент со смещением для API. */
 export function fromMoscowInput(value: string): string {
   return `${value}:00+03:00`;
+}
+
+/** 15.935227 → 15,94: число с заданным числом знаков после запятой. */
+export function formatNumber(value: Decimal | null, digits: number): string {
+  if (value === null) {
+    return NO_VALUE;
+  }
+  // Разряды — обычным пробелом, как в formatPrice; минус — типографский.
+  return Number(value)
+    .toLocaleString('ru-RU', { minimumFractionDigits: digits, maximumFractionDigits: digits })
+    .replace(/\s/g, ' ')
+    .replace('-', '−');
+}
+
+/** 2026-10-29 → 29.10.2026. */
+export function formatDate(iso: string): string {
+  return iso.split('-').reverse().join('.');
 }

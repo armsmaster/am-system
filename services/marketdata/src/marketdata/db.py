@@ -165,8 +165,22 @@ feed_batch = Table(
     Column("received_at", DateTime(timezone=True), nullable=False),
     Column("accepted", Integer, nullable=False),
     Column("rejected", JSONB, nullable=False),
-    CheckConstraint("kind IN ('quotes', 'bars')", name="feed_batch_kind"),
+    CheckConstraint("kind IN ('quotes', 'bars', 'rates')", name="feed_batch_kind"),
     Index("feed_batch_recent", "received_at"),
+)
+
+# Денежные ставки на дату: из ISS (source = 'iss') и от скрипта (source — код источника).
+rate = Table(
+    "rate",
+    metadata,
+    Column("kind", Text, nullable=False),
+    Column("as_of", Date, nullable=False),
+    Column("source", Text, nullable=False),
+    Column("value", Numeric(10, 4), nullable=False),  # % годовых
+    Column("received_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("batch_id", Uuid),  # пакет скрипта; у ставок ISS — пусто
+    PrimaryKeyConstraint("kind", "as_of", "source", name="rate_pk"),
+    CheckConstraint("kind IN ('key_rate', 'ruonia', 'rusfar')", name="rate_kind"),
 )
 
 # Опрос ISS внутри дня: одна запись на 5-минутный слот — его выполняет один экземпляр.

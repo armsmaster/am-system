@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { MemoryRouter, Route, Routes, useParams } from 'react-router';
 import { vi } from 'vitest';
 
-import type { Batch, MarketdataApi, PriceView, RuleRecord, Series } from '../api';
+import type { Analytics, Batch, MarketdataApi, PriceView, Rate, RuleRecord, Series } from '../api';
 
 export function session(...roles: Role[]): Session {
   return {
@@ -108,6 +108,76 @@ export const BATCH: Batch = {
   ],
 };
 
+/** ОФЗ 26238: эталон design/04 — цена закрытия 28.10, расчёты 29.10. */
+export function fixedAnalytics(fields: Partial<Analytics> = {}): Analytics {
+  return {
+    instrument: OFZ,
+    at: '2026-10-28T12:00:00Z',
+    trading_day: '2026-10-28',
+    settlement_date: '2026-10-29',
+    type: 'fixed',
+    price: {
+      basis: 'valuation',
+      clean: '52.493000',
+      face_value: '1000.000000',
+      accrued: '28.790000',
+      dirty: '553.720000',
+      valuation: { ...view().price!, value: '52.493000' },
+    },
+    yields: [
+      {
+        horizon: { kind: 'maturity', date: '2041-05-15', price: '100' },
+        yield_percent: '15.935227',
+        macaulay_years: '6.824692',
+        macaulay_days: '2491.01',
+        modified_duration: '5.886642',
+        dv01: '0.325955',
+        convexity: '60.252300',
+        problem: null,
+      },
+    ],
+    spread: null,
+    ...fields,
+  };
+}
+
+export const RUONIA: Rate = {
+  rate: 'ruonia',
+  label: 'RUONIA',
+  date: '2026-10-28',
+  value: '13.9000',
+  source: 'cbr',
+};
+
+/** Газпром нефть 003P-08R: КС + 130 бп раз в месяц, цена 100,07 (эталон design/04). */
+export function floaterAnalytics(): Analytics {
+  return fixedAnalytics({
+    type: 'floater',
+    price: { ...fixedAnalytics().price, basis: 'price', clean: '100.070000', valuation: null },
+    yields: [],
+    spread: {
+      horizon: { kind: 'maturity', date: '2026-12-12', price: '100' },
+      rate: 'key_rate',
+      margin_bp: '130.00',
+      capitalized: false,
+      funding: RUONIA,
+      funding_percent: '14.909369',
+      index: { rate: 'key_rate', label: 'Ключевая ставка', date: '2026-10-26', value: '14.0000', source: 'iss' },
+      spread_bp: '81.51',
+      yield_percent: '15.724468',
+      breakdown: {
+        basis_bp: '11.49',
+        capitalization_bp: '-8.88',
+        margin_bp: '148.59',
+        other_bp: '-2.20',
+        price_bp: '-67.49',
+      },
+      spread_duration: '0.103286',
+      spread_dv01: '0.010405',
+    },
+  });
+}
+
 /** Подменный API: отвечает фиксированными данными, вызовы запоминает. */
 export function fakeApi() {
   const answer = <T,>(value: T) => vi.fn((..._args: unknown[]) => Promise.resolve(value));
@@ -119,6 +189,8 @@ export function fakeApi() {
     setRule: answer(RULE),
     manualPrice: answer(series().manual[0]!),
     batches: answer<Batch[]>([BATCH]),
+    analytics: answer(fixedAnalytics()),
+    rates: answer<Rate[]>([RUONIA]),
   } satisfies Record<keyof MarketdataApi, unknown>;
 }
 

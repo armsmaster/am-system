@@ -3,6 +3,7 @@ import { useCallback } from 'react';
 import { Link } from 'react-router';
 
 import type { MarketdataApi, PriceView, Series } from '../api';
+import { AnalyticsBlock } from '../components/AnalyticsBlock';
 import { ManualPriceForm } from '../components/ManualPriceForm';
 import { PriceChart } from '../components/PriceChart';
 import { RuleForm } from '../components/RuleForm';
@@ -16,7 +17,10 @@ interface Props {
   readonly canEdit: boolean;
 }
 
-/** Карточка цены бумаги: цена оценки и почему она, все цены, график, правило, ручная цена. */
+/**
+ * Карточка цены бумаги: цена оценки и почему она, все цены, расчёт по облигации,
+ * график, правило, ручная цена.
+ */
 export function PricePage({ api, id, basePath, canEdit }: Props) {
   const load = useCallback(() => Promise.all([api.price(id), api.series(id)]), [api, id]);
   const [state, reload] = useLoad(load);
@@ -56,6 +60,7 @@ export function PricePage({ api, id, basePath, canEdit }: Props) {
                 )}
               </section>
             </div>
+            {view.instrument.kind === 'bond' && <AnalyticsBlock api={api} id={id} />}
             <PriceChart series={series} timeframe={view.rule.dema_timeframe} />
             <RuleHistory series={series} />
           </article>

@@ -227,7 +227,16 @@ async def test_without_refdata_weekdays_are_trading_days(
     )
 
 
-@pytest.mark.parametrize("make_worker", [instruments_worker, history_worker, intraday_worker])
+@pytest.mark.parametrize(
+    "make_worker",
+    [
+        instruments_worker,
+        # Часы — во время торгов: в выходной опрос данных дня не идёт в БД и не падает.
+        lambda s: history_worker(s, clock=lambda: NOW),
+        lambda s: intraday_worker(s, clock=lambda: NOW),
+    ],
+    ids=["instruments", "history", "intraday"],
+)
 async def test_workers_keep_running_after_errors(
     settings: MarketdataSettings,
     caplog: pytest.LogCaptureFixture,

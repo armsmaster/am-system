@@ -1,9 +1,9 @@
-"""MOEX ISS для рыночных данных: итоги дня и данные дня (решения 60, 63, 72).
+"""MOEX ISS для рыночных данных: итоги дня, данные дня и ставки (решения 60, 63, 72).
 
 Итоги дня — история торгов: закрытие, средневзвешенная, рыночная цена,
 признаваемая котировка, НКД и номинал на дату торгов. Данные дня —
 с задержкой 15 минут: bid, ask, последняя сделка, средневзвешенная,
-НКД и номинал на дату расчётов.
+НКД и номинал на дату расчётов. Ставки — индексы KEYRATE и RUSFAR (вопрос 76).
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from marketdata.prices import PriceType
 
 MARKETS = {"bond": "bonds", "fund_share": "shares"}
 HISTORY_COLUMNS = "TRADEDATE,BOARDID,CLOSE,WAPRICE,MARKETPRICE3,ADMITTEDQUOTE,ACCINT,FACEVALUE"
+INDEX_COLUMNS = "TRADEDATE,BOARDID,CLOSE"
 SECURITIES_COLUMNS = {
     "bonds": "SECID,BOARDID,ACCRUEDINT,SETTLEDATE,FACEVALUEONSETTLEDATE",
     "shares": "SECID,BOARDID",
@@ -80,9 +81,30 @@ class IssClient:
     async def history(
         self, secid: str, kind: str, board: str | None, since: date, till: date
     ) -> list[DailyRow]:
-        """Итоги дней с ``since`` по ``till``; ISS отдаёт историю страницами по 100 строк."""
+        """Итоги дней с ``since`` по ``till``."""
         path = f"history/engines/stock/markets/{MARKETS[kind]}/securities/{secid}.json"
-        found: list[DailyRow] = []
+        return [
+            parse_daily(row)
+            for row in await self._history_rows(path, since, till, HISTORY_COLUMNS)
+            if board is None or row["BOARDID"] == board
+        ]
+
+    async def index_history(
+        self, secid: str, since: date, till: date
+    ) -> list[tuple[date, Decimal]]:
+        """Значения индекса ISS по дням: ключевая ставка (KEYRATE), RUSFAR — в % годовых."""
+        path = f"history/engines/stock/markets/index/securities/{secid}.json"
+        return [
+            (date.fromisoformat(row["TRADEDATE"]), value)
+            for row in await self._history_rows(path, since, till, INDEX_COLUMNS)
+            if (value := _decimal(row.get("CLOSE"))) is not None
+        ]
+
+    async def _history_rows(
+        self, path: str, since: date, till: date, columns: str
+    ) -> list[dict[str, Any]]:
+        """ISS отдаёт историю страницами по 100 строк."""
+        found: list[dict[str, Any]] = []
         start = 0
         while True:
             payload = await self._get(
@@ -91,14 +113,10 @@ class IssClient:
                     "from": since.isoformat(),
                     "till": till.isoformat(),
                     "start": str(start),
-                    "history.columns": HISTORY_COLUMNS,
+                    "history.columns": columns,
                 },
             )
-            found += [
-                parse_daily(row)
-                for row in rows(payload, "history")
-                if board is None or row["BOARDID"] == board
-            ]
+            found += rows(payload, "history")
             [cursor] = rows(payload, "history.cursor")
             start = int(cursor["INDEX"]) + int(cursor["PAGESIZE"])
             if start >= int(cursor["TOTAL"]):

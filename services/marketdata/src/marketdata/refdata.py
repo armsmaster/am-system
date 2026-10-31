@@ -1,9 +1,9 @@
-"""Справочник для рыночных данных: бумаги, основной режим торгов, купоны, календарь.
+"""Справочник для рыночных данных: бумаги, режим торгов, условия выпуска, календарь.
 
 Сервис читает справочник под своей служебной учётной записью Keycloak.
 Список бумаг хранит у себя копией (``instrument``): цены принимаются, даже
-когда справочник недоступен. Купоны и календарь держит в памяти несколько
-минут — они меняются редко.
+когда справочник недоступен. Условия выпуска и календарь держит в памяти
+несколько минут — они меняются редко.
 """
 
 from __future__ import annotations
@@ -76,15 +76,21 @@ class RefdataClient:
 
     async def coupon_periods(self, instrument_id: UUID, day: date) -> list[CouponPeriod]:
         """Купонные периоды по версии бумаги на дату; до выпуска — пусто."""
-        key = ("coupons", str(instrument_id), day.isoformat())
+        params = await self.terms(instrument_id, day)
+        return [] if params is None else _periods(params["coupons"])
+
+    async def terms(self, instrument_id: UUID, day: date) -> dict[str, Any] | None:
+        """Условия выпуска по версии бумаги на дату (JSON справочника); до выпуска — None."""
+        key = ("terms", str(instrument_id), day.isoformat())
         cached = self._cached(key)
         if cached is not None:
-            periods: list[CouponPeriod] = cached
-            return periods
+            params: dict[str, Any] | None = cached[0]
+            return params
         payload = await self._get(f"/instruments/{instrument_id}/as-of/{day}", missing_ok=True)
-        periods = [] if payload is None else _periods(payload["params"]["coupons"])
-        self._store(key, periods)
-        return periods
+        params = None if payload is None else payload["params"]
+        # В кортеже: «нет версии» тоже кэшируем.
+        self._store(key, (params,))
+        return params
 
     async def calendar(self, year: int) -> dict[date, bool]:
         """Исключения торгового календаря за год: праздники и рабочие выходные."""

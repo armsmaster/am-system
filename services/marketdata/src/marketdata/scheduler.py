@@ -1,4 +1,4 @@
-"""Фоновые задачи: список бумаг из справочника, история ISS, данные дня ISS.
+"""Фоновые задачи: список бумаг из справочника, история и ставки ISS, данные дня ISS.
 
 Каждая задача раз в несколько минут проверяет, есть ли работа. При нескольких
 экземплярах сервиса работу забирает один: загрузку истории — по бумаге
@@ -21,6 +21,7 @@ from am_common.clock import moscow_now
 from marketdata.commands import load_history, poll_intraday, refresh_instruments
 from marketdata.iss import IssClient, IssError
 from marketdata.queries import calendar_around
+from marketdata.rates import ISS, ISS_INDICES
 from marketdata.refdata import RefdataClient, RefdataUnavailableError, refdata_client
 from marketdata.repository import InstrumentRecord, Repository
 from marketdata.settings import MarketdataSettings
@@ -81,6 +82,47 @@ async def load_due_history(
     return loaded
 
 
+async def load_due_rates(
+    resources: Resources, refdata: RefdataClient, iss: IssClient, now: datetime
+) -> int:
+    """Догружает ключевую ставку и RUSFAR из индексов ISS до последнего торгового дня.
+
+    Захват не нужен: ставка на дату записывается поверх, повторная загрузка безвредна.
+    """
+    settings = cast(MarketdataSettings, resources.settings)
+    database = resources.require_database()
+    target = await history_target(refdata, settings, now)
+    loaded = 0
+    for kind, secid in ISS_INDICES.items():
+        async with database.session() as session:
+            last = await Repository(session).last_rate_date(kind, ISS)
+        since = last + timedelta(days=1) if last else settings.history_from
+        if since > target:
+            continue
+        try:
+            values = await iss.index_history(secid, since, target)
+        except IssError as exc:
+            logger.warning("ISS index %s failed, will retry: %s", secid, exc)
+            continue
+        received = moscow_now()
+        async with database.session() as session, session.begin():
+            await Repository(session).upsert_rates(
+                [
+                    {
+                        "kind": kind.value,
+                        "as_of": day,
+                        "source": ISS,
+                        "value": value,
+                        "received_at": received,
+                        "batch_id": None,
+                    }
+                    for day, value in values
+                ]
+            )
+        loaded += len(values)
+    return loaded
+
+
 async def poll_if_due(
     resources: Resources, refdata: RefdataClient, iss: IssClient, now: datetime
 ) -> bool:
@@ -135,6 +177,7 @@ def history_worker(
         while True:
             try:
                 await load_due_history(resources, refdata, iss, clock())
+                await load_due_rates(resources, refdata, iss, clock())
             except _ERRORS as exc:
                 logger.warning("ISS history load failed, will retry: %s", exc)
             await asyncio.sleep(settings.history_check_seconds)

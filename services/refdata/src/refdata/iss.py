@@ -191,9 +191,10 @@ def _schedules(payload: Mapping[str, Any]) -> dict[str, Any]:
         )
         for row in rows(payload, "amortizations")
     ]
+    # Строка «Оферта/Погашение» с датой 0000-00-00 — заглушка ISS, а не оферта.
     offers = [
         Offer(
-            date=_required_date(row["offerdate"]),
+            date=offer_date,
             kind=_offer_kind(row.get("offertype")),
             window_start=_date(row.get("offerdatestart")),
             window_end=_date(row.get("offerdateend")),
@@ -201,6 +202,7 @@ def _schedules(payload: Mapping[str, Any]) -> dict[str, Any]:
             iss_type=row.get("offertype"),
         )
         for row in rows(payload, "offers")
+        if (offer_date := _date(row["offerdate"])) is not None
     ]
     return {
         "coupons": tuple(sorted(coupons, key=lambda c: c.date)),

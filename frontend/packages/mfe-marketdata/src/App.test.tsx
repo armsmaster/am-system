@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import MarketdataApp from './App';
-import { BATCH, series, session, view } from './test/fixtures';
+import { BATCH, fixedAnalytics, series, session, view } from './test/fixtures';
 
 vi.mock('./components/PriceChart', () => ({ PriceChart: () => <div role="img" aria-label="График цен" /> }));
 
@@ -17,7 +17,9 @@ function stubService() {
   const fetchMock = vi.fn((path: string) => {
     const body = path.includes('/feed/batches')
       ? [BATCH]
-      : path.includes('/series')
+      : path.includes('/analytics')
+        ? fixedAnalytics()
+        : path.includes('/series')
         ? series()
         : path.includes('/price')
           ? view()

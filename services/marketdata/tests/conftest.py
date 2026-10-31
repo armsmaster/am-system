@@ -23,6 +23,8 @@ from marketdata.main import build_app
 from marketdata.settings import MarketdataSettings
 
 FIXTURES = Path(__file__).parent / "fixtures" / "iss"
+# Условия выпуска, как их отдаёт справочник (/as-of): ответы ISS, разобранные кодом справочника.
+TERMS = Path(__file__).parent / "fixtures" / "refdata"
 ISS_URL = "http://iss.test/iss"
 REFDATA_URL = "http://refdata.test"
 KEYCLOAK_URL = "http://keycloak.test/auth"
@@ -70,14 +72,35 @@ class World:
             ),
         ]
         # ОФЗ 26238: купонный период 03.06–02.12.2026, купон 35,40 ₽; у линкера сумма неизвестна.
-        self.coupons: dict[UUID, list[dict[str, Any]]] = {
-            OFZ: [_coupon("2026-06-03", "2026-12-02", "35.4")],
-            LINKER: [_coupon("2026-05-15", "2026-11-19", None)],
-            FUND: [],
+        # Индексацию номинала линкера на RUONIA указывает сопровождение: ISS её не знает.
+        self.terms: dict[UUID, dict[str, Any]] = {
+            OFZ: terms("SU26238RMFS4"),
+            LINKER: terms("RU000A10F504") | {"nominal_indexation": "ruonia"},
+            FUND: {"coupons": []},
         }
         self.calendar: dict[int, list[dict[str, Any]]] = {
             2026: [{"day": "2026-11-04", "is_trading": False, "comment": "праздник"}]
         }
+
+    @staticmethod
+    def recorded_terms(secid: str) -> dict[str, Any]:
+        """Условия выпуска из fixtures/refdata."""
+        return terms(secid)
+
+    def add_bond(
+        self, instrument_id: UUID, secid: str, short_name: str, params: dict[str, Any]
+    ) -> None:
+        self.instruments.append(
+            _instrument(
+                instrument_id,
+                secid=secid,
+                isin=secid,
+                kind="bond",
+                short_name=short_name,
+                board="TQCB",
+            )
+        )
+        self.terms[instrument_id] = params
 
     def transport(self) -> httpx2.MockTransport:
         return httpx2.MockTransport(self._handle)
@@ -107,10 +130,9 @@ class World:
             item = next(i for i in self.instruments if i["id"] == match[1])
             return httpx2.Response(200, json={"current": {"params": {"board": item["board"]}}})
         if match := re.fullmatch(r"/instruments/([^/]+)/as-of/(\d{4}-\d{2}-\d{2})", path):
-            if match[2] < "2021-01-01":
+            if match[2] < "2021-01-01" or UUID(match[1]) not in self.terms:
                 return httpx2.Response(404, json={"detail": {"code": "not_found"}})
-            coupons = self.coupons[UUID(match[1])]
-            return httpx2.Response(200, json={"params": {"coupons": coupons}})
+            return httpx2.Response(200, json={"params": self.terms[UUID(match[1])]})
         if match := re.fullmatch(r"/calendar/(\d{4})", path):
             return httpx2.Response(200, json=self.calendar.get(int(match[1]), []))
         return httpx2.Response(500)
@@ -150,8 +172,9 @@ def _summary(item: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in item.items() if key != "board"}
 
 
-def _coupon(start: str, end: str, amount: str | None) -> dict[str, Any]:
-    return {"date": end, "start_date": start, "amount": amount, "rate": None}
+def terms(secid: str) -> dict[str, Any]:
+    params: dict[str, Any] = json.loads((TERMS / f"{secid}.json").read_text(encoding="utf-8"))
+    return params
 
 
 @pytest.fixture(scope="session")

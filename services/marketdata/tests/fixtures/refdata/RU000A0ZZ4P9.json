@@ -1,0 +1,260 @@
+{
+ "name": "РЖД БО 001Р-06R",
+ "short_name": "РЖД 1Р-06R",
+ "board": "TQCB",
+ "currency": "RUB",
+ "issuer": null,
+ "initial_face_value": "1000",
+ "issue_date": "2018-04-23",
+ "maturity_date": "2033-04-04",
+ "coupon_kind": "fixed",
+ "coupon_frequency": 2,
+ "nominal_indexation": "none",
+ "coupons": [
+  {
+   "date": "2018-10-22",
+   "start_date": "2018-04-23",
+   "record_date": "2018-10-19",
+   "rate": "7.25",
+   "amount": "36.15"
+  },
+  {
+   "date": "2019-04-22",
+   "start_date": "2018-10-22",
+   "record_date": "2019-04-19",
+   "rate": "7.25",
+   "amount": "36.15"
+  },
+  {
+   "date": "2019-10-21",
+   "start_date": "2019-04-22",
+   "record_date": "2019-10-18",
+   "rate": "7.25",
+   "amount": "36.15"
+  },
+  {
+   "date": "2020-04-20",
+   "start_date": "2019-10-21",
+   "record_date": "2020-04-17",
+   "rate": "7.25",
+   "amount": "36.15"
+  },
+  {
+   "date": "2020-10-19",
+   "start_date": "2020-04-20",
+   "record_date": "2020-10-16",
+   "rate": "7.25",
+   "amount": "36.15"
+  },
+  {
+   "date": "2021-04-19",
+   "start_date": "2020-10-19",
+   "record_date": "2021-04-16",
+   "rate": "7.25",
+   "amount": "36.15"
+  },
+  {
+   "date": "2021-10-18",
+   "start_date": "2021-04-19",
+   "record_date": "2021-10-15",
+   "rate": "7.25",
+   "amount": "36.15"
+  },
+  {
+   "date": "2022-04-18",
+   "start_date": "2021-10-18",
+   "record_date": "2022-04-15",
+   "rate": "7.25",
+   "amount": "36.15"
+  },
+  {
+   "date": "2022-10-17",
+   "start_date": "2022-04-18",
+   "record_date": "2022-10-14",
+   "rate": "7.25",
+   "amount": "36.15"
+  },
+  {
+   "date": "2023-04-17",
+   "start_date": "2022-10-17",
+   "record_date": "2023-04-14",
+   "rate": "7.25",
+   "amount": "36.15"
+  },
+  {
+   "date": "2023-10-16",
+   "start_date": "2023-04-17",
+   "record_date": "2023-10-13",
+   "rate": "9.45",
+   "amount": "47.12"
+  },
+  {
+   "date": "2024-04-15",
+   "start_date": "2023-10-16",
+   "record_date": "2024-04-12",
+   "rate": "9.45",
+   "amount": "47.12"
+  },
+  {
+   "date": "2024-10-14",
+   "start_date": "2024-04-15",
+   "record_date": "2024-10-11",
+   "rate": "9.45",
+   "amount": "47.12"
+  },
+  {
+   "date": "2025-04-14",
+   "start_date": "2024-10-14",
+   "record_date": "2025-04-11",
+   "rate": "9.45",
+   "amount": "47.12"
+  },
+  {
+   "date": "2025-10-13",
+   "start_date": "2025-04-14",
+   "record_date": "2025-10-10",
+   "rate": "18.5",
+   "amount": "92.25"
+  },
+  {
+   "date": "2026-04-13",
+   "start_date": "2025-10-13",
+   "record_date": "2026-04-10",
+   "rate": "18.5",
+   "amount": "92.25"
+  },
+  {
+   "date": "2026-10-12",
+   "start_date": "2026-04-13",
+   "record_date": "2026-10-09",
+   "rate": "18.5",
+   "amount": "92.25"
+  },
+  {
+   "date": "2027-04-12",
+   "start_date": "2026-10-12",
+   "record_date": "2027-04-09",
+   "rate": "18.5",
+   "amount": "92.25"
+  },
+  {
+   "date": "2027-10-11",
+   "start_date": "2027-04-12",
+   "record_date": "2027-10-08",
+   "rate": "18.5",
+   "amount": "92.25"
+  },
+  {
+   "date": "2028-04-10",
+   "start_date": "2027-10-11",
+   "record_date": "2028-04-07",
+   "rate": null,
+   "amount": null
+  },
+  {
+   "date": "2028-10-09",
+   "start_date": "2028-04-10",
+   "record_date": "2028-10-06",
+   "rate": null,
+   "amount": null
+  },
+  {
+   "date": "2029-04-09",
+   "start_date": "2028-10-09",
+   "record_date": "2029-04-06",
+   "rate": null,
+   "amount": null
+  },
+  {
+   "date": "2029-10-08",
+   "start_date": "2029-04-09",
+   "record_date": "2029-10-05",
+   "rate": null,
+   "amount": null
+  },
+  {
+   "date": "2030-04-08",
+   "start_date": "2029-10-08",
+   "record_date": "2030-04-05",
+   "rate": null,
+   "amount": null
+  },
+  {
+   "date": "2030-10-07",
+   "start_date": "2030-04-08",
+   "record_date": "2030-10-04",
+   "rate": null,
+   "amount": null
+  },
+  {
+   "date": "2031-04-07",
+   "start_date": "2030-10-07",
+   "record_date": "2031-04-04",
+   "rate": null,
+   "amount": null
+  },
+  {
+   "date": "2031-10-06",
+   "start_date": "2031-04-07",
+   "record_date": "2031-10-03",
+   "rate": null,
+   "amount": null
+  },
+  {
+   "date": "2032-04-05",
+   "start_date": "2031-10-06",
+   "record_date": "2032-04-02",
+   "rate": null,
+   "amount": null
+  },
+  {
+   "date": "2032-10-04",
+   "start_date": "2032-04-05",
+   "record_date": "2032-10-01",
+   "rate": null,
+   "amount": null
+  },
+  {
+   "date": "2033-04-04",
+   "start_date": "2032-10-04",
+   "record_date": "2033-04-01",
+   "rate": null,
+   "amount": null
+  }
+ ],
+ "amortizations": [
+  {
+   "date": "2033-04-04",
+   "percent": "100",
+   "amount": "1000",
+   "is_maturity": true
+  }
+ ],
+ "offers": [
+  {
+   "date": "2023-04-20",
+   "kind": "put",
+   "window_start": "2023-04-11",
+   "window_end": "2023-04-17",
+   "price": "100",
+   "iss_type": "Оферта"
+  },
+  {
+   "date": "2025-04-17",
+   "kind": "put",
+   "window_start": "2025-04-08",
+   "window_end": "2025-04-14",
+   "price": "100",
+   "iss_type": "Оферта"
+  },
+  {
+   "date": "2027-10-14",
+   "kind": "put",
+   "window_start": null,
+   "window_end": null,
+   "price": "100",
+   "iss_type": "Оферта"
+  }
+ ],
+ "floater": null
+}

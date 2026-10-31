@@ -112,6 +112,21 @@ def test_corporate_bond_with_offers_and_amortization() -> None:
     assert bond.coupons == tuple(sorted(bond.coupons, key=lambda c: c.date))
 
 
+def test_offer_placeholder_without_a_date_is_skipped() -> None:
+    # У облигаций РЖД ISS первой строкой оферт отдаёт «Оферта/Погашение» с датой 0000-00-00.
+    candidate = pick("RU000A0JTZF1", parse_search(load("search_RU000A0JTZF1")))
+    bondization = load("bond_RU000A0JTZF1")
+    placeholder = list(bondization["offers"]["data"][0])
+    columns = bondization["offers"]["columns"]
+    placeholder[columns.index("offerdate")] = "0000-00-00"
+    placeholder[columns.index("offertype")] = "Оферта/Погашение"
+    bondization["offers"]["data"].insert(0, placeholder)
+
+    bond = parse_security(candidate, load("desc_RU000A0JTZF1"), bondization).params
+    assert "Оферта/Погашение" not in {o.iss_type for o in bond.offers}
+    assert len(bond.offers) == len(bondization["offers"]["data"]) - 1
+
+
 def test_linker_with_indexed_nominal() -> None:
     linker = security("RU000A10F504")
 

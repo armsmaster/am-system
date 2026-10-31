@@ -1,4 +1,4 @@
-"""Приём цен и баров от скрипта: спецификация docs/api/price-feed (решение 64).
+"""Приём цен, баров и ставок от скрипта: спецификация docs/api/price-feed (решение 64).
 
 Пакет, который не проходит схему, отклоняется целиком (422). Плохой элемент
 пакета отклоняется отдельно с кодом и сообщением, остальные принимаются.
@@ -6,9 +6,10 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Annotated, Any
 from uuid import UUID, uuid4
@@ -17,11 +18,13 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstrai
 
 from am_common.clock import MOSCOW
 from marketdata.prices import FEED_TYPES, MAX_TIMEFRAME, PriceType
+from marketdata.rates import RateKind
 from marketdata.repository import Repository
 
 MAX_ITEMS = 5000
 FUTURE_TOLERANCE = timedelta(minutes=5)
 PRICE_STEP = Decimal("0.000001")  # до 6 знаков после запятой; больше — округляем
+RATE_STEP = Decimal("0.0001")  # ставка — до 4 знаков
 
 Source = Annotated[str, StringConstraints(pattern=r"^[a-z0-9_-]{1,32}$")]
 Code = Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=20)]
@@ -80,6 +83,17 @@ class BarsIn(_Strict):
     bars: Annotated[list[BarIn], Field(min_length=1, max_length=MAX_ITEMS)]
 
 
+class RateIn(_Strict):
+    rate: RateKind
+    date: dt.date
+    value: Annotated[Decimal, Field(ge=0, le=100)]  # % годовых
+
+
+class RatesIn(_Strict):
+    source: Source
+    rates: Annotated[list[RateIn], Field(min_length=1, max_length=MAX_ITEMS)]
+
+
 class Rejected(BaseModel):
     index: int
     code: str
@@ -103,6 +117,7 @@ class _Problem:
 
 
 _DUPLICATE = _Problem("duplicate_in_batch", "Та же цена или тот же бар уже есть в этом пакете.")
+_DUPLICATE_RATE = _Problem("duplicate_in_batch", "Эта ставка на эту дату уже есть в пакете.")
 
 
 async def ingest_quotes(
@@ -193,6 +208,46 @@ async def ingest_bars(
         client=client,
         now=now,
         items=batch.bars,
+        rejected=rejected,
+    )
+
+
+async def ingest_rates(repo: Repository, batch: RatesIn, client: str, now: datetime) -> FeedResult:
+    batch_id = uuid4()
+    rows: list[dict[str, Any]] = []
+    rejected: list[Rejected] = []
+    seen: set[tuple[RateKind, date]] = set()
+    today = now.astimezone(MOSCOW).date()
+    for index, item in enumerate(batch.rates):
+        if item.date > today:
+            problem = _Problem(
+                "future_date", "Дата ставки позже сегодняшней — проверьте дату и часовой пояс."
+            )
+            rejected.append(problem.rejected(index, item.rate.value))
+            continue
+        if (item.rate, item.date) in seen:
+            rejected.append(_DUPLICATE_RATE.rejected(index, item.rate.value))
+            continue
+        seen.add((item.rate, item.date))
+        rows.append(
+            {
+                "kind": item.rate.value,
+                "as_of": item.date,
+                "source": batch.source,
+                "value": item.value.quantize(RATE_STEP, rounding=ROUND_HALF_UP),
+                "received_at": now,
+                "batch_id": batch_id,
+            }
+        )
+    await repo.upsert_rates(rows)
+    return await _finish(
+        repo,
+        batch_id=batch_id,
+        kind="rates",
+        source=batch.source,
+        client=client,
+        now=now,
+        items=batch.rates,
         rejected=rejected,
     )
 

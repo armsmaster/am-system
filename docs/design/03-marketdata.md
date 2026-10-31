@@ -261,12 +261,15 @@ feed_batch — пакет от скрипта: клиент, источник, �
 |---|---|---|---|
 | POST | `/feed/v1/quotes` | скрипт | снимки цен |
 | POST | `/feed/v1/bars` | скрипт | OHLC-бары |
+| POST | `/feed/v1/rates` | скрипт | ставки: RUONIA, ключевая, RUSFAR (шаг 4) |
 | GET | `/feed/batches` | все | последние пакеты от скрипта и ошибки в них |
 | GET | `/overview?at=…` | все | все бумаги: цена оценки, цены всех типов, разброс |
 | GET | `/instruments/{id}/price?at=…` | все | цена для оценки на момент и все цены-кандидаты |
 | GET | `/instruments/{id}/series?from=…&to=…` | все | цены, бары и DEMA для графика |
 | GET | `/instruments/{id}/accrued-interest?date=…` | все | НКД на дату и откуда он |
 | GET | `/instruments/{id}/face-value?date=…` | все | номинал на дату и откуда он |
+| GET | `/instruments/{id}/analytics?at=…` | все | доходность и метрики или спред на момент; «что если» — `price`, `yield`, `spread` ([04](04-bond-analytics.md)) |
+| GET | `/rates?date=…` | все | ставки на дату, их дата и источник |
 | PUT | `/instruments/{id}/rule` | трейдинг | правило оценки, DEMA, порог разброса |
 | POST | `/instruments/{id}/manual-prices` | трейдинг | ручная цена до конца дня |
 
