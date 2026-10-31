@@ -10,7 +10,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID
@@ -19,6 +19,7 @@ import httpx2
 
 from am_common.app import Resources
 from am_common.service_token import ServiceToken, ServiceTokenError, realm_token_url
+from booking.roll import Mark
 from booking.settings import BookingSettings
 from booking.terms import InstrumentHistory
 
@@ -152,6 +153,51 @@ class MarketdataClient(_ServiceClient):
             f"/instruments/{instrument_id}/{what}", missing_ok=True, date=day.isoformat()
         )
         return None if found is None else Decimal(found["value"])
+
+    async def marks(self, instrument_id: UUID, first: date, last: date) -> dict[date, Mark]:
+        """Цена для оценки, НКД на T+1 и номинал на каждый день; бумаги нет — пусто."""
+        found = await self._service_get(
+            f"/instruments/{instrument_id}/marks",
+            missing_ok=True,
+            **{"from": first.isoformat(), "till": last.isoformat()},
+        )
+        return {
+            date.fromisoformat(item["date"]): Mark(
+                price=None if item["price"] is None else Decimal(item["price"]["value"]),
+                stale=item["price"] is not None and item["price"]["stale"],
+                settle=date.fromisoformat(item["settle_date"]),
+                accrued=None if item["accrued"] is None else Decimal(item["accrued"]),
+                face=None if item["face_value"] is None else Decimal(item["face_value"]),
+            )
+            for item in found or []
+        }
+
+    async def metrics(self, instrument_id: UUID, at: datetime) -> Metrics | None:
+        """DV01 и модифицированная дюрация бумаги по цене для оценки на момент (design/04):
+        облигация с фиксированным купоном — по доходности, флоатер и линкер — по спреду."""
+        found = await self._service_get(
+            f"/instruments/{instrument_id}/analytics", missing_ok=True, at=at.isoformat()
+        )
+        if found is None:
+            return None
+        if found["spread"] is not None:
+            spread = found["spread"]
+            return Metrics(
+                "spread", Decimal(spread["spread_dv01"]), Decimal(spread["spread_duration"])
+            )
+        for item in found["yields"]:
+            if item["dv01"] is not None:
+                return Metrics("yield", Decimal(item["dv01"]), Decimal(item["modified_duration"]))
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class Metrics:
+    """Чувствительность бумаги: ``basis`` — к доходности или к спреду (флоатер, линкер)."""
+
+    basis: str
+    dv01: Decimal  # ₽ на бумагу за 1 бп
+    duration: Decimal  # модифицированная, лет
 
 
 @dataclass(frozen=True, slots=True)

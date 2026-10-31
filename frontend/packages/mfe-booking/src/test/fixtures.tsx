@@ -7,12 +7,14 @@ import { Booking } from '../App';
 import type {
   Account,
   BookingApi,
+  DayResult,
   ImportReport,
   Instrument,
   Ladder,
   Operation,
   Portfolio,
   Positions,
+  Results,
   Trade,
 } from '../api';
 
@@ -131,8 +133,12 @@ export function positions(fields: Partial<Positions> = {}): Positions {
         movements: [
           { kind: 'coupon', instrument_id: 'i-ofz', trade_id: null, operation_id: null, quantity: 0, cash: '1062000.00' },
         ],
+        result: dayResult(),
       },
     ],
+    result: dayResult(),
+    dv01_yield: '9780.00',
+    dv01_spread: '9780.00',
     lines: [
       {
         instrument_id: 'i-ofz',
@@ -156,6 +162,80 @@ export function positions(fields: Partial<Positions> = {}): Positions {
             accrued_paid: '1050300.00',
           },
         ],
+        price: '52.700000',
+        clean: '15810000.00',
+        accrued_value: '0.00',
+        coupon_due: '0.00',
+        unrealized: '60000.00',
+        revaluation: '36000.00',
+        realized: '0.00',
+        coupon: '5700.00',
+        fees: '0.00',
+        result: '41700.00',
+        flags: [],
+        dv01: '9780.00',
+        duration: '5.89',
+        metrics_basis: 'yield',
+      },
+    ],
+    ...fields,
+  };
+}
+
+/** Портфель облигаций на 02.12: купон пришёл, цена выросла (design/06, сквозной пример). */
+export function dayResult(fields: Partial<DayResult> = {}): DayResult {
+  return {
+    value: '60103400.00',
+    flows: '0.00',
+    revaluation: '36000.00',
+    realized: '0.00',
+    coupon: '5700.00',
+    fees: '0.00',
+    expenses: '0.00',
+    total: '41700.00',
+    receivable: '0.00',
+    payable: '0.00',
+    flags: [],
+    ...fields,
+  };
+}
+
+/** Результат фонда за 27.11–30.11 (design/06): без вознаграждения УК. */
+export function results(fields: Partial<Results> = {}): Results {
+  const day = (date: string, value: string, revaluation: string, realized: string, coupon: string, total: string) => ({
+    date,
+    value,
+    flows: '0.00',
+    revaluation,
+    realized,
+    coupon,
+    fees: '0.00',
+    expenses: '0.00',
+    total,
+    flags: [],
+  });
+  return {
+    portfolio_id: 'p-fund',
+    code: 'OPIF1',
+    name: 'ОПИФ 1',
+    first: '2026-11-27',
+    last: '2026-11-30',
+    portfolios: ['OPIF1-BONDS', 'OPIF1-TREASURY'],
+    waiting_since: null,
+    days: [
+      day('2026-11-27', '100025000.00', '25000.00', '0.00', '0.00', '25000.00'),
+      day('2026-11-30', '100066000.00', '11000.00', '20000.00', '10000.00', '41000.00'),
+    ],
+    lines: [
+      {
+        instrument_id: 'i-ofz',
+        secid: 'SU26238RMFS4',
+        short_name: 'ОФЗ 26238',
+        revaluation: '36000.00',
+        realized: '20000.00',
+        coupon: '10000.00',
+        fees: '0.00',
+        total: '66000.00',
       },
     ],
     ...fields,
@@ -288,6 +368,7 @@ export function fakeApi() {
     settleOperation: answer(operation({ settled_date: '2026-11-27' })),
     cancelOperation: answer(operation({ status: 'cancelled' })),
     ladder: answer(ladder()),
+    results: answer<Results>(results()),
     importTrades: answer<ImportReport>({
       created: 1,
       amended: 0,

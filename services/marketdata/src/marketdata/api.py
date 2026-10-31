@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -36,6 +37,7 @@ from marketdata.queries import (
     PriceView,
     accrued_on_date,
     face_value_on_date,
+    marks,
     price_views,
     series,
 )
@@ -50,6 +52,8 @@ Trading = Annotated[Principal, Depends(require_any_role(Role.TRADING))]
 Viewer = CurrentPrincipal
 Comment = Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=500)]
 At = Annotated[AwareDatetime | None, Query(description="Момент; по умолчанию — сейчас")]
+# Отметки за период — не больше десяти лет за запрос.
+MAX_MARK_DAYS = 3660
 
 router = APIRouter()
 
@@ -169,6 +173,16 @@ class OnDateOut(BaseModel):
     note: str
 
 
+class MarkOut(BaseModel):
+    """Отметка для оценки позиции на конец дня (design/06)."""
+
+    date: date
+    price: ChoiceOut | None  # цена для оценки на 23:59:59 МСК
+    settle_date: dt.date  # T+1: расчёты по сделке, заключённой в этот день
+    accrued: Decimal | None  # облигация: НКД на дату расчётов T+1
+    face_value: Decimal | None  # облигация: номинал на день
+
+
 class RateOut(BaseModel):
     rate: RateKind
     label: str
@@ -281,7 +295,9 @@ async def feed_quotes(
     """Снимки цен от скрипта (docs/api/price-feed)."""
     ids = await _resolve(session, refdata, resources, {q.code for q in batch.quotes})
     async with session.begin():
-        return await ingest_quotes(Repository(session), batch, ids, client.username, now)
+        return await ingest_quotes(
+            Repository(session), batch, ids, Actor.from_principal(client), now
+        )
 
 
 @router.post("/feed/v1/bars", tags=["feed"])
@@ -297,7 +313,7 @@ async def feed_bars(
     """OHLC-бары от скрипта (docs/api/price-feed)."""
     ids = await _resolve(session, refdata, resources, {b.code for b in batch.bars})
     async with session.begin():
-        return await ingest_bars(Repository(session), batch, ids, client.username, now)
+        return await ingest_bars(Repository(session), batch, ids, Actor.from_principal(client), now)
 
 
 @router.post("/feed/v1/rates", tags=["feed"])
@@ -392,6 +408,32 @@ async def accrued_interest(
 ) -> OnDateOut:
     """НКД на дату и откуда он: точка ISS или досчёт (решение 73)."""
     return _on_date(day, await accrued_on_date(session, refdata, instrument_id, day), "НКД")
+
+
+@router.get("/instruments/{instrument_id}/marks", tags=["prices"])
+async def valuation_marks(
+    instrument_id: UUID,
+    _user: Viewer,
+    session: DbSession,
+    refdata: Refdata,
+    first: Annotated[date, Query(alias="from")],
+    last: Annotated[date, Query(alias="till")],
+) -> list[MarkOut]:
+    """Цена, НКД на T+1 и номинал на каждый день периода — для оценки позиций."""
+    if last < first or (last - first).days > MAX_MARK_DAYS:
+        raise QuantError(
+            "bad_period", f"Период — от одного дня до {MAX_MARK_DAYS} дней, конец не раньше начала."
+        )
+    return [
+        MarkOut(
+            date=m.day,
+            price=_choice_out(m.price),
+            settle_date=m.settle_date,
+            accrued=None if m.accrued is None else m.accrued.value,
+            face_value=None if m.face is None else m.face.value,
+        )
+        for m in await marks(session, refdata, instrument_id, first, last)
+    ]
 
 
 @router.get("/instruments/{instrument_id}/face-value", tags=["prices"])

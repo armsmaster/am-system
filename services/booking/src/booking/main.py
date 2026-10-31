@@ -12,7 +12,7 @@ from am_common.logs import configure_logging
 from am_common.outbox import relay_worker
 from booking.api import install_error_handlers, router
 from booking.db import outbox
-from booking.recalc import recalc_worker, refdata_consumer
+from booking.recalc import market_consumer, recalc_worker
 from booking.settings import BookingSettings
 
 
@@ -25,7 +25,7 @@ def build_app(
     """``clock`` — время для API: в тестах его подменяют, в работе — Москва сейчас."""
     settings = settings or BookingSettings()
     background = (
-        [recalc_worker(settings), refdata_consumer(settings)] if settings.background_jobs else []
+        [recalc_worker(settings), market_consumer(settings)] if settings.background_jobs else []
     )
     app = create_app(
         settings,

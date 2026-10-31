@@ -21,7 +21,7 @@ from am_common.clock import MOSCOW
 from am_common.migrations import schema_diff
 from am_common.testing import TokenFactory
 from booking.db import day_snapshot, metadata, outbox, recalc_queue
-from booking.recalc import recalc_once, refdata_client
+from booking.recalc import marketdata_client, recalc_once, refdata_client
 from booking.settings import BookingSettings
 
 if TYPE_CHECKING:
@@ -103,8 +103,10 @@ SALE = {
 
 async def recalc(resources: Resources) -> list[UUID]:
     done = []
-    refdata = refdata_client(resources)
-    while portfolio := await recalc_once(resources.require_database(), refdata, NOW, STALE):
+    refdata, marketdata = refdata_client(resources), marketdata_client(resources)
+    while portfolio := await recalc_once(
+        resources.require_database(), refdata, NOW, STALE, marketdata=marketdata
+    ):
         done.append(portfolio)
     return done
 

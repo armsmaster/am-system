@@ -27,9 +27,16 @@ from booking.clients import (
 from booking.imports import ImportItem, Result, TradeImport
 from booking.ladder import Ladder, ladder
 from booking.operations import OperationDesk, OperationInput, OperationView
-from booking.queries import PortfolioState, PositionLine, positions
+from booking.queries import (
+    PortfolioState,
+    PositionLine,
+    ResultDay,
+    ResultLine,
+    positions,
+    results,
+)
 from booking.repository import NotFoundError, Repository
-from booking.roll import Movement, OperationKind, Side
+from booking.roll import DayResult, Movement, OperationKind, Side
 from booking.settings import BookingSettings
 from booking.trades import (
     TRACKED,
@@ -51,6 +58,8 @@ Authorization = Annotated[str, Header(alias="Authorization")]
 Comment = Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=500)]
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 OptionalComment = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] | None
+# Результат за период — не больше трёх лет за запрос.
+MAX_RESULT_DAYS = 1100
 Money = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=2)]
 Price = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)]
 Kopecks = Annotated[Decimal, Field(ge=0, max_digits=18, decimal_places=2)]
@@ -226,6 +235,22 @@ class LineOut(BaseModel):
     accrued_paid: Decimal
     average_price: Decimal | None
     lots: list[LotOut]
+    # Оценка на конец дня (design/06); без расчёта на этот день — нули и цены нет.
+    price: Decimal | None = None  # цена для оценки: облигация — %, пай — ₽
+    clean: Decimal = Decimal(0)  # стоимость по чистой цене
+    accrued_value: Decimal = Decimal(0)  # НКД в оценке: на дату расчётов T+1
+    coupon_due: Decimal = Decimal(0)  # купоны к получению
+    unrealized: Decimal = Decimal(0)
+    revaluation: Decimal = Decimal(0)  # результат дня по частям
+    realized: Decimal = Decimal(0)
+    coupon: Decimal = Decimal(0)
+    fees: Decimal = Decimal(0)
+    result: Decimal = Decimal(0)
+    flags: list[str] = []
+    # Чувствительность (решение 107): ₽ за 1 бп на всю позицию; основание — yield | spread.
+    dv01: Decimal | None = None
+    duration: Decimal | None = None
+    metrics_basis: str | None = None
 
 
 class MovementOut(BaseModel):
@@ -246,6 +271,22 @@ class FundFigures(BaseModel):
     expenses: Decimal  # начисленные и не выплаченные расходы
 
 
+class DayResultOut(BaseModel):
+    """Стоимость портфеля на конец дня и результат дня по частям, ₽ (design/06)."""
+
+    value: Decimal
+    flows: Decimal  # приток: паи, переводы из других портфелей фонда
+    revaluation: Decimal
+    realized: Decimal
+    coupon: Decimal
+    fees: Decimal
+    expenses: Decimal
+    total: Decimal
+    receivable: Decimal  # к получению по сделкам до расчётов
+    payable: Decimal  # к уплате по сделкам до расчётов
+    flags: list[str]
+
+
 class PortfolioStateOut(FundFigures):
     id: UUID
     code: str
@@ -254,6 +295,7 @@ class PortfolioStateOut(FundFigures):
     waiting_since: date | None
     cash: Decimal
     movements: list[MovementOut]
+    result: DayResultOut | None = None
 
 
 class PositionsOut(FundFigures):
@@ -264,6 +306,45 @@ class PositionsOut(FundFigures):
     cash: Decimal
     portfolios: list[PortfolioStateOut]
     lines: list[LineOut]
+    result: DayResultOut | None = None  # сумма по портфелям, посчитанным на этот день
+    dv01_yield: Decimal = Decimal(0)  # облигации с фиксированным купоном
+    dv01_spread: Decimal = Decimal(0)  # все облигации: по спреду
+
+
+class ResultDayOut(BaseModel):
+    date: date
+    value: Decimal
+    flows: Decimal
+    revaluation: Decimal
+    realized: Decimal
+    coupon: Decimal
+    fees: Decimal
+    expenses: Decimal
+    total: Decimal
+    flags: list[str]
+
+
+class ResultLineOut(BaseModel):
+    instrument_id: UUID
+    secid: str
+    short_name: str
+    revaluation: Decimal
+    realized: Decimal
+    coupon: Decimal
+    fees: Decimal
+    total: Decimal
+
+
+class ResultsOut(BaseModel):
+    portfolio_id: UUID
+    code: str
+    name: str
+    first: date
+    last: date
+    portfolios: list[str]
+    waiting_since: date | None
+    days: list[ResultDayOut]
+    lines: list[ResultLineOut]
 
 
 class _OperationBase(BaseModel):
@@ -595,7 +676,9 @@ async def get_positions(
     """Позиции на конец дня: по дате сделки и по дате расчётов, лоты FIFO, деньги."""
     visible = await services.portfolios.visible(authorization)
     on = day or now.astimezone(MOSCOW).date()
-    view = await positions(session, visible, portfolio_id, on)
+    view = await positions(
+        session, visible, portfolio_id, on, now=now, marketdata=services.marketdata
+    )
     if view is None:
         raise NotFoundError("portfolio", portfolio_id)
     return PositionsOut(
@@ -610,6 +693,51 @@ async def get_positions(
         expenses=view.expenses,
         portfolios=[_state_out(p) for p in view.portfolios],
         lines=[_line_out(line) for line in view.lines],
+        result=None
+        if not view.results
+        else DayResultOut(
+            **{name: view.result(name) for name in DayResultOut.model_fields if name != "flags"},
+            flags=[f.value for f in view.flags],
+        ),
+        dv01_yield=view.dv01("yield").quantize(Decimal("0.01")),
+        dv01_spread=view.dv01().quantize(Decimal("0.01")),
+    )
+
+
+@router.get("/results", tags=["positions"])
+async def get_results(
+    _user: Staff,
+    *,
+    session: DbSession,
+    authorization: Authorization,
+    services: Services,
+    now: Now,
+    portfolio_id: UUID,
+    first: Annotated[date, Query(alias="from")],
+    last: Annotated[date, Query(alias="till")],
+) -> ResultsOut:
+    """Финансовый результат по дням и по бумагам за период (design/06)."""
+    if last < first or (last - first).days > MAX_RESULT_DAYS:
+        raise RuleViolationError(
+            "bad_period",
+            f"Период — от одного дня до {MAX_RESULT_DAYS} дней, конец не раньше начала.",
+        )
+    visible = await services.portfolios.visible(authorization)
+    view = await results(
+        session, visible, portfolio_id, (first, last), now=now, marketdata=services.marketdata
+    )
+    if view is None:
+        raise NotFoundError("portfolio", portfolio_id)
+    return ResultsOut(
+        portfolio_id=view.portfolio.id,
+        code=view.portfolio.code,
+        name=view.portfolio.name,
+        first=view.first,
+        last=view.last,
+        portfolios=[p.code for p in view.portfolios],
+        waiting_since=view.waiting_since,
+        days=[_result_day_out(d) for d in view.days],
+        lines=[_result_line_out(line) for line in view.lines],
     )
 
 
@@ -809,6 +937,51 @@ def _state_out(state: PortfolioState) -> PortfolioStateOut:
         obligations=state.obligations,
         expenses=state.expenses,
         movements=[_movement_out(m) for m in state.movements],
+        result=None if state.result is None else _result_out(state.result),
+    )
+
+
+def _result_out(result: DayResult) -> DayResultOut:
+    return DayResultOut(
+        value=result.value,
+        flows=result.flows,
+        revaluation=result.revaluation,
+        realized=result.realized,
+        coupon=result.coupon,
+        fees=result.fees,
+        expenses=result.expenses,
+        total=result.total,
+        receivable=result.receivable,
+        payable=result.payable,
+        flags=[f.value for f in result.flags],
+    )
+
+
+def _result_day_out(day: ResultDay) -> ResultDayOut:
+    return ResultDayOut(
+        date=day.day,
+        value=day.value,
+        flows=day.flows,
+        revaluation=day.revaluation,
+        realized=day.realized,
+        coupon=day.coupon,
+        fees=day.fees,
+        expenses=day.expenses,
+        total=day.total,
+        flags=[f.value for f in day.flags],
+    )
+
+
+def _result_line_out(line: ResultLine) -> ResultLineOut:
+    return ResultLineOut(
+        instrument_id=line.instrument_id,
+        secid=line.secid,
+        short_name=line.short_name,
+        revaluation=line.revaluation,
+        realized=line.realized,
+        coupon=line.coupon,
+        fees=line.fees,
+        total=line.total,
     )
 
 
@@ -915,4 +1088,18 @@ def _line_out(line: PositionLine) -> LineOut:
             )
             for code, lot in line.lots
         ],
+        price=line.price,
+        clean=line.total("clean"),
+        accrued_value=line.total("accrued_value"),
+        coupon_due=line.total("coupon_due"),
+        unrealized=(line.total("clean") - line.total("cost")).quantize(Decimal("0.01")),
+        revaluation=line.total("revaluation"),
+        realized=line.total("realized"),
+        coupon=line.total("coupon"),
+        fees=line.total("fees"),
+        result=line.total("result"),
+        flags=[f.value for f in line.flags],
+        dv01=None if line.dv01 is None else line.dv01.quantize(Decimal("0.01")),
+        duration=None if line.metrics is None else line.metrics.duration,
+        metrics_basis=None if line.metrics is None else line.metrics.basis,
     )

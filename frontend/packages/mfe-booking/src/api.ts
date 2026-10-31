@@ -123,6 +123,46 @@ export interface Line {
   readonly accrued_paid: Decimal;
   readonly average_price: Decimal | null;
   readonly lots: readonly Lot[];
+  /** Цена для оценки на конец дня: облигация — %, пай — ₽; null — нет цены или расчёта. */
+  readonly price: Decimal | null;
+  /** Стоимость по чистой цене. */
+  readonly clean: Decimal;
+  /** НКД в оценке — на дату расчётов T+1 (решение 102). */
+  readonly accrued_value: Decimal;
+  /** Купоны к получению: дата фиксации прошла, выплаты ещё не было. */
+  readonly coupon_due: Decimal;
+  readonly unrealized: Decimal;
+  readonly revaluation: Decimal;
+  readonly realized: Decimal;
+  readonly coupon: Decimal;
+  readonly fees: Decimal;
+  /** Результат дня по бумаге. */
+  readonly result: Decimal;
+  readonly flags: readonly ValuationFlag[];
+  /** ₽ за 1 бп на всю позицию. */
+  readonly dv01: Decimal | null;
+  readonly duration: Decimal | null;
+  /** yield — по доходности, spread — по спреду (флоатер, линкер). */
+  readonly metrics_basis: 'yield' | 'spread' | null;
+}
+
+/** Почему оценка неполная или неточная (design/06). */
+export type ValuationFlag = 'no_price' | 'stale_price' | 'no_accrued' | 'no_face' | 'coupon_unknown';
+
+/** Стоимость портфеля на конец дня и результат дня по частям. */
+export interface DayResult {
+  readonly value: Decimal;
+  /** Приток: паи, переводы из других портфелей фонда. */
+  readonly flows: Decimal;
+  readonly revaluation: Decimal;
+  readonly realized: Decimal;
+  readonly coupon: Decimal;
+  readonly fees: Decimal;
+  readonly expenses: Decimal;
+  readonly total: Decimal;
+  readonly receivable: Decimal;
+  readonly payable: Decimal;
+  readonly flags: readonly ValuationFlag[];
 }
 
 export type MovementKind =
@@ -171,6 +211,7 @@ export interface PortfolioState extends FundFigures {
   readonly waiting_since: string | null;
   readonly cash: Decimal;
   readonly movements: readonly Movement[];
+  readonly result: DayResult | null;
 }
 
 export interface Positions extends FundFigures {
@@ -181,6 +222,48 @@ export interface Positions extends FundFigures {
   readonly cash: Decimal;
   readonly portfolios: readonly PortfolioState[];
   readonly lines: readonly Line[];
+  /** Сумма по портфелям, посчитанным на этот день; null — расчёта на день нет. */
+  readonly result: DayResult | null;
+  /** DV01 портфеля, ₽ за 1 бп: по доходности — фиксированный купон; по спреду — все облигации. */
+  readonly dv01_yield: Decimal;
+  readonly dv01_spread: Decimal;
+}
+
+export interface ResultDay {
+  readonly date: string;
+  readonly value: Decimal;
+  readonly flows: Decimal;
+  readonly revaluation: Decimal;
+  readonly realized: Decimal;
+  readonly coupon: Decimal;
+  readonly fees: Decimal;
+  readonly expenses: Decimal;
+  readonly total: Decimal;
+  readonly flags: readonly ValuationFlag[];
+}
+
+export interface ResultLine {
+  readonly instrument_id: string;
+  readonly secid: string;
+  readonly short_name: string;
+  readonly revaluation: Decimal;
+  readonly realized: Decimal;
+  readonly coupon: Decimal;
+  readonly fees: Decimal;
+  readonly total: Decimal;
+}
+
+/** Финансовый результат за период: по дням и по бумагам (design/06). */
+export interface Results {
+  readonly portfolio_id: string;
+  readonly code: string;
+  readonly name: string;
+  readonly first: string;
+  readonly last: string;
+  readonly portfolios: readonly string[];
+  readonly waiting_since: string | null;
+  readonly days: readonly ResultDay[];
+  readonly lines: readonly ResultLine[];
 }
 
 export type OperationKind =
@@ -329,6 +412,8 @@ export function bookingApi(client: ApiClient) {
       client.post<Trade>(`${BASE}/trades/${id}/confirm`, { comment: comment || null }),
     positions: (portfolioId: string, date: string) =>
       client.get<Positions>(`${BASE}/positions${query({ portfolio_id: portfolioId, date })}`),
+    results: (portfolioId: string, first: string, last: string) =>
+      client.get<Results>(`${BASE}/results${query({ portfolio_id: portfolioId, from: first, till: last })}`),
     operations: (portfolioId: string) =>
       client.get<Operation[]>(`${BASE}/operations${query({ portfolio_id: portfolioId })}`),
     enterOperation: (body: OperationInput) => client.post<Operation>(`${BASE}/operations`, body),

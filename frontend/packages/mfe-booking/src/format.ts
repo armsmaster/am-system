@@ -1,4 +1,4 @@
-import type { Decimal, ExpenseKind, MovementKind, OperationKind, Side, Status } from './api';
+import type { Decimal, ExpenseKind, MovementKind, OperationKind, Side, Status, ValuationFlag } from './api';
 
 export const SIDE_LABELS: Readonly<Record<Side, string>> = { buy: 'покупка', sell: 'продажа' };
 
@@ -60,7 +60,29 @@ export const FIELD_LABELS: Readonly<Record<string, string>> = {
   external_id: 'номер сделки',
 };
 
+/** Почему оценка неполная — словами (design/06). */
+export const FLAG_LABELS: Readonly<Record<ValuationFlag, string>> = {
+  no_price: 'цены не было — по цене покупки',
+  stale_price: 'цена не за этот день',
+  no_accrued: 'нет НКД на дату расчётов — без НКД',
+  no_face: 'нет номинала на день — номинал лотов',
+  coupon_unknown: 'сумма купона к получению не объявлена',
+};
+
 const NO_VALUE = '—';
+
+/** Сумма денежных значений до копейки — без ошибок дробной арифметики. */
+export function sumMoney(values: readonly Decimal[]): Decimal {
+  const kopecks = values.reduce((total, value) => {
+    const negative = value.startsWith('-');
+    const [whole = '0', fraction = ''] = value.replace('-', '').split('.');
+    const amount = BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0').slice(0, 2));
+    return total + (negative ? -amount : amount);
+  }, 0n);
+  const sign = kopecks < 0n ? '-' : '';
+  const absolute = kopecks < 0n ? -kopecks : kopecks;
+  return `${sign}${absolute / 100n}.${String(absolute % 100n).padStart(2, '0')}`;
+}
 
 function group(whole: string): string {
   return whole.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');

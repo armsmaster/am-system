@@ -123,8 +123,9 @@ def rule_view(rule: Rule) -> dict[str, Any]:
 
 async def load_history(
     database: Database, iss: IssClient, record: InstrumentRecord, since: date, till: date
-) -> int:
-    """Итоги дней ISS: цены, НКД и номинал на дату торгов. Возвращает число дней."""
+) -> date | None:
+    """Итоги дней ISS: цены, НКД и номинал на дату торгов. Возвращает первый
+    загруженный день; None — ISS за период ничего не отдал."""
     days = await iss.history(record.secid, record.kind, record.board, since, till)
     now = moscow_now()
     async with database.session() as session, session.begin():
@@ -158,7 +159,7 @@ async def load_history(
                 ],
             )
         await repo.finish_history(record.id, till)
-    return len(days)
+    return min((day.day for day in days), default=None)
 
 
 async def poll_intraday(

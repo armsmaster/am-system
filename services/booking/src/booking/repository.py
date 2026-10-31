@@ -288,6 +288,22 @@ class Repository:
         row = result.one_or_none()
         return None if row is None else Snapshot(row.portfolio_id, row.day, row.state, row.run_id)
 
+    async def snapshots_between(
+        self, portfolio_ids: Iterable[UUID], first: date, last: date
+    ) -> list[Snapshot]:
+        """Действующие снапшоты портфелей за период — по дням."""
+        result = await self._session.execute(
+            select(day_snapshot)
+            .where(
+                day_snapshot.c.portfolio_id.in_(list(portfolio_ids)),
+                day_snapshot.c.replaced_at.is_(None),
+                day_snapshot.c.day >= first,
+                day_snapshot.c.day <= last,
+            )
+            .order_by(day_snapshot.c.day, day_snapshot.c.portfolio_id)
+        )
+        return [Snapshot(r.portfolio_id, r.day, r.state, r.run_id) for r in result]
+
     async def last_days(self) -> dict[UUID, date]:
         """Последний рассчитанный день по каждому фонду."""
         result = await self._session.execute(

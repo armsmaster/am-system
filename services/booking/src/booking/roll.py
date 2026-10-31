@@ -15,7 +15,12 @@
 
 Порядок внутри дня: сделки по дате заключения → расчёты по сделкам →
 операции фонда и переводы → право на выплаты по бумагам на счёте на конец
-дня → выплаты дня → амортизация и погашение.
+дня → выплаты дня → амортизация и погашение → оценка на конец дня.
+
+Оценка (design/06): бумаги — по цене для оценки и НКД на дату расчётов T+1,
+сделки до расчётов — задолженностью, купоны после даты фиксации — к получению.
+Результат дня раскладывается на части, сумма которых точно равна изменению
+стоимости портфеля за вычетом притоков: паёв и переводов.
 """
 
 from __future__ import annotations
@@ -185,6 +190,83 @@ class Movement:
 
 
 @dataclass(frozen=True, slots=True)
+class Mark:
+    """Рыночные данные бумаги для оценки на конец дня."""
+
+    price: Decimal | None  # цена для оценки: облигация — чистая, %; пай — ₽ за пай
+    stale: bool = False
+    settle: date | None = None  # T+1: расчёты по сделке, заключённой в этот день
+    accrued: Decimal | None = None  # облигация: НКД на бумагу на дату T+1 (решение 102)
+    face: Decimal | None = None  # облигация: номинал на день
+
+
+# Отметка бумаги на конец дня.
+MarksOn = Callable[[UUID, date], Mark]
+
+
+class Flag(StrEnum):
+    """Почему оценка неполная или неточная."""
+
+    NO_PRICE = "no_price"  # цены не было никогда — по цене покупки (решение 103)
+    STALE_PRICE = "stale_price"  # цена не за этот торговый день
+    NO_ACCRUED = "no_accrued"  # нет НКД на дату расчётов — НКД 0
+    NO_FACE = "no_face"  # нет номинала на день — номинал лотов
+    COUPON_UNKNOWN = "coupon_unknown"  # купон к получению, сумма не объявлена
+
+
+@dataclass(frozen=True, slots=True)
+class Valuation:
+    """Бумага в портфеле на конец дня: оценка и результат дня по ней, ₽."""
+
+    instrument_id: UUID
+    kind: InstrumentKind
+    quantity: int  # по дате сделки
+    price: Decimal | None
+    accrued: Decimal  # НКД на бумагу в оценке
+    clean: Decimal  # стоимость по чистой цене, до копейки
+    accrued_value: Decimal  # НКД в оценке
+    coupon_due: Decimal  # купоны к получению: дата фиксации прошла, выплаты ещё не было
+    cost: Decimal  # открытые лоты по цене покупки
+    revaluation: Decimal = ZERO
+    realized: Decimal = ZERO
+    coupon: Decimal = ZERO
+    fees: Decimal = ZERO
+    flags: tuple[Flag, ...] = ()
+
+    @property
+    def value(self) -> Decimal:
+        return self.clean + self.accrued_value + self.coupon_due
+
+    @property
+    def unrealized(self) -> Decimal:
+        return self.clean - self.cost
+
+    @property
+    def result(self) -> Decimal:
+        return self.revaluation + self.realized + self.coupon + self.fees
+
+
+@dataclass(frozen=True, slots=True)
+class DayResult:
+    """Портфель на конец дня: стоимость и результат дня по частям, ₽."""
+
+    value: Decimal  # стоимость портфеля
+    flows: Decimal  # приток за день: паи, переводы из других портфелей фонда
+    revaluation: Decimal = ZERO
+    realized: Decimal = ZERO
+    coupon: Decimal = ZERO
+    fees: Decimal = ZERO  # комиссии по сделкам
+    expenses: Decimal = ZERO  # начисленные расходы фонда
+    receivable: Decimal = ZERO  # к получению по сделкам до расчётов
+    payable: Decimal = ZERO  # к уплате по сделкам до расчётов, с комиссией
+    flags: tuple[Flag, ...] = ()
+
+    @property
+    def total(self) -> Decimal:
+        return self.revaluation + self.realized + self.coupon + self.fees + self.expenses
+
+
+@dataclass(frozen=True, slots=True)
 class State:
     day: date
     cash: Decimal = ZERO
@@ -196,6 +278,9 @@ class State:
     claims: Decimal = ZERO  # требования к пайщикам: паи выданы, деньги не пришли
     obligations: Decimal = ZERO  # обязательства перед пайщиками: паи погашены, деньги не ушли
     expenses: Decimal = ZERO  # начисленные и не выплаченные расходы
+    # Оценка на конец дня; без рыночных данных (ролл позиций шага 5) — пусто.
+    valuations: Mapping[UUID, Valuation] = field(default_factory=dict)
+    result: DayResult | None = None
 
 
 class OperationKind(StrEnum):
@@ -243,11 +328,23 @@ class _Day:
     claims: Decimal
     obligations: Decimal
     expenses: Decimal
+    # Для оценки: вчерашняя оценка и события дня, которые её меняют.
+    previous: State
+    traded: list[Trade] = field(default_factory=list)  # по дате заключения сегодня
+    unsettled: list[Trade] = field(default_factory=list)  # заключены, расчётов ещё не было
+    realized: dict[UUID, Decimal] = field(default_factory=dict)
+    moved: dict[UUID, tuple[int, Decimal]] = field(
+        default_factory=dict
+    )  # перевод: штуки, стоимость
+    flows: Decimal = ZERO  # паи, переводы денег
+    expensed: Decimal = ZERO  # начисленные расходы
 
 
-def roll(previous: State, trades: Iterable[Trade], terms_on: TermsOn) -> State:
+def roll(
+    previous: State, trades: Iterable[Trade], terms_on: TermsOn, marks_on: MarksOn | None = None
+) -> State:
     """Состояние портфеля на конец следующего дня после ``previous``."""
-    return _close(_open(previous, trades), terms_on)
+    return _close(_open(previous, trades), terms_on, marks_on)
 
 
 def roll_fund(
@@ -257,10 +354,12 @@ def roll_fund(
     operations: Sequence[Operation],
     terms_on: TermsOn,
     *,
+    marks_on: MarksOn | None = None,
     projected: bool = False,
 ) -> dict[UUID, State]:
     """Состояния всех портфелей фонда на конец ``day`` по состояниям на конец предыдущего дня.
 
+    ``marks_on`` — рыночные данные для оценки; без них ролл ведёт только позиции.
     ``projected`` — прогноз для лестницы: расчёт по паям, который ещё не отмечен,
     проходит в плановую дату.
     """
@@ -274,7 +373,7 @@ def roll_fund(
     works = {p: _open(previous.get(p) or State(day=before), trades.get(p, ())) for p in portfolios}
     for operation in sorted(operations, key=lambda o: str(o.id)):
         _OPERATIONS[operation.kind](operation, works, day, projected)
-    return {p: _close(work, terms_on) for p, work in works.items()}
+    return {p: _close(work, terms_on, marks_on) for p, work in works.items()}
 
 
 def roll_fund_days(
@@ -285,6 +384,7 @@ def roll_fund_days(
     trades: Mapping[UUID, Sequence[Trade]],
     operations: Sequence[Operation],
     terms_on: TermsOn,
+    marks_on: MarksOn | None = None,
     projected: bool = False,
 ) -> list[dict[UUID, State]]:
     """Состояния фонда на каждый календарный день с ``first_day`` по ``till``."""
@@ -292,7 +392,9 @@ def roll_fund_days(
     current = dict(previous)
     day = first_day
     while day <= till:
-        current = roll_fund(current, day, trades, operations, terms_on, projected=projected)
+        current = roll_fund(
+            current, day, trades, operations, terms_on, marks_on=marks_on, projected=projected
+        )
         days.append(current)
         day += timedelta(days=1)
     return days
@@ -312,20 +414,23 @@ def _open(previous: State, trades: Iterable[Trade]) -> _Day:
         claims=previous.claims,
         obligations=previous.obligations,
         expenses=previous.expenses,
+        previous=previous,
+        traded=[t for t in todays if t.trade_date == day],
+        unsettled=[t for t in todays if t.trade_date <= day < t.settle_date],
     )
-    _trade_day(work.holdings, [t for t in todays if t.trade_date == day])
+    _trade_day(work.holdings, work.traded, work.realized)
     work.cash = _settle(
         work.holdings, [t for t in todays if t.settle_date == day], work.cash, work.movements
     )
     return work
 
 
-def _close(work: _Day, terms_on: TermsOn) -> State:
-    """Конец дня: право на выплаты, выплаты, амортизация и погашение."""
+def _close(work: _Day, terms_on: TermsOn, marks_on: MarksOn | None) -> State:
+    """Конец дня: право на выплаты, выплаты, амортизация и погашение, оценка."""
     pending = [*work.pending, *_record(work.holdings, work.day, terms_on)]
     pending, received = _payments(pending, work.day, terms_on, work.movements)
-    _amortize(work.holdings, work.day, terms_on)
-    return State(
+    _amortize(work.holdings, work.day, terms_on, work.realized)
+    state = State(
         day=work.day,
         cash=work.cash + received,
         holdings={k: v for k, v in work.holdings.items() if not v.empty},
@@ -336,6 +441,273 @@ def _close(work: _Day, terms_on: TermsOn) -> State:
         obligations=work.obligations,
         expenses=work.expenses,
     )
+    if marks_on is None:
+        return state
+    valuations, result = _appraise(work, state, terms_on, marks_on)
+    return replace(state, valuations=valuations, result=result)
+
+
+def _unit(kind: InstrumentKind, price: Decimal, face: Decimal | None) -> Decimal:
+    """Цена одной бумаги в рублях: облигация — % от номинала, пай — ₽ за пай."""
+    if kind is InstrumentKind.BOND and face is not None:
+        return price * face / HUNDRED
+    return price
+
+
+def _appraise(
+    work: _Day, state: State, terms_on: TermsOn, marks_on: MarksOn
+) -> tuple[dict[UUID, Valuation], DayResult]:
+    """Оценка на конец дня и результат дня по бумагам (design/06).
+
+    По каждой бумаге результат дня — сумма частей:
+
+    - переоценка и реализованный = изменение стоимости по чистой цене + погашение
+      номинала + чистая часть сделок дня − перенос переводом;
+    - купонный доход = изменение НКД в оценке и купонов к получению + купоны
+      деньгами + НКД в сделках дня − НКД в переносе;
+    - комиссии по сделкам дня.
+
+    Всё в копейках, поэтому части сходятся с изменением стоимости портфеля точно.
+    """
+    kinds = (
+        {i: v.kind for i, v in work.previous.valuations.items()}
+        | {t.instrument_id: t.kind for t in work.traded}
+        | {i: h.kind for i, h in state.holdings.items()}
+    )
+    paid = _paid_today(state.movements)
+    instruments = set(kinds) | {e.instrument_id for e in state.pending} | set(work.moved)
+    valuations: dict[UUID, Valuation] = {}
+    moved_in = ZERO
+    for instrument_id in sorted(instruments, key=str):
+        valuation, moved_value = _value(
+            work,
+            state,
+            instrument_id,
+            kind=kinds.get(instrument_id, InstrumentKind.BOND),
+            terms_on=terms_on,
+            marks_on=marks_on,
+            paid=paid.get(instrument_id, (ZERO, ZERO)),
+        )
+        moved_in += moved_value
+        if (
+            valuation.quantity
+            or valuation.cost
+            or valuation.coupon_due
+            or valuation.result
+            or valuation.flags
+        ):
+            valuations[instrument_id] = valuation
+
+    receivable = sum((t.amount for t in work.unsettled if t.side is Side.SELL), ZERO)
+    payable = sum((t.amount for t in work.unsettled if t.side is Side.BUY), ZERO) + sum(
+        (t.fee for t in work.unsettled), ZERO
+    )
+    values = list(valuations.values())
+    result = DayResult(
+        value=state.cash
+        + sum((v.value for v in values), ZERO)
+        + receivable
+        - payable
+        + state.claims
+        - state.obligations
+        - state.expenses,
+        flows=work.flows + moved_in,
+        revaluation=sum((v.revaluation for v in values), ZERO),
+        realized=sum((v.realized for v in values), ZERO),
+        coupon=sum((v.coupon for v in values), ZERO),
+        fees=sum((v.fees for v in values), ZERO),
+        expenses=ZERO - work.expensed,
+        receivable=receivable,
+        payable=payable,
+        flags=tuple(sorted({f for v in values for f in v.flags})),
+    )
+    return valuations, result
+
+
+def remark(state: State, marks_on: MarksOn) -> State:
+    """Оценка дня по текущим ценам — переоценка внутри дня (решение 68).
+
+    Меняется стоимость по чистой цене, а с ней — переоценка и стоимость портфеля.
+    НКД на T+1 и купоны внутри дня не меняются.
+    """
+    if state.result is None:
+        return state
+    valuations: dict[UUID, Valuation] = {}
+    delta = ZERO
+    for instrument_id, valuation in state.valuations.items():
+        mark = marks_on(instrument_id, state.day) if valuation.quantity else Mark(price=None)
+        if mark.price is None:
+            valuations[instrument_id] = valuation
+            continue
+        holding = state.holdings.get(instrument_id)
+        lots = () if holding is None else holding.lots
+        face = mark.face or next((lot.face for lot in lots if lot.face is not None), None)
+        clean = _kopecks(valuation.quantity * _unit(valuation.kind, mark.price, face))
+        flags: list[Flag] = [
+            f for f in valuation.flags if f not in {Flag.NO_PRICE, Flag.STALE_PRICE}
+        ]
+        if mark.stale:
+            flags.append(Flag.STALE_PRICE)
+        delta += clean - valuation.clean
+        valuations[instrument_id] = replace(
+            valuation,
+            price=mark.price,
+            clean=clean,
+            revaluation=valuation.revaluation + clean - valuation.clean,
+            flags=tuple(flags),
+        )
+    result = replace(
+        state.result,
+        value=state.result.value + delta,
+        revaluation=state.result.revaluation + delta,
+        flags=tuple(sorted({f for v in valuations.values() for f in v.flags})),
+    )
+    return replace(state, valuations=valuations, result=result)
+
+
+def _paid_today(movements: Iterable[Movement]) -> dict[UUID, tuple[Decimal, Decimal]]:
+    """Выплаты деньгами сегодня по бумагам: купоны и погашение номинала."""
+    paid: dict[UUID, tuple[Decimal, Decimal]] = {}
+    for movement in movements:
+        if movement.instrument_id is None:
+            continue
+        coupons, principal = paid.get(movement.instrument_id, (ZERO, ZERO))
+        if movement.kind is MovementKind.COUPON:
+            coupons += movement.cash
+        elif movement.kind in {MovementKind.AMORTIZATION, MovementKind.REDEMPTION}:
+            principal += movement.cash
+        paid[movement.instrument_id] = (coupons, principal)
+    return paid
+
+
+def _value(
+    work: _Day,
+    state: State,
+    instrument_id: UUID,
+    *,
+    kind: InstrumentKind,
+    terms_on: TermsOn,
+    marks_on: MarksOn,
+    paid: tuple[Decimal, Decimal],
+) -> tuple[Valuation, Decimal]:
+    """Оценка одной бумаги и её результат дня; второе — приток бумагами переводом."""
+    day = work.day
+    holding = state.holdings.get(instrument_id)
+    quantity = 0 if holding is None else holding.trade_quantity
+    lots = () if holding is None else holding.lots
+    moved, moved_cost = work.moved.get(instrument_id, (0, ZERO))
+    entitled = [e for e in state.pending if e.instrument_id == instrument_id]
+    held = bool(quantity or moved)
+    mark = marks_on(instrument_id, day) if held or entitled else Mark(price=None)
+    terms = terms_on(instrument_id, day)
+    flags: list[Flag] = []
+    cost = sum((lot.cost for lot in lots), ZERO)
+
+    face = mark.face
+    if kind is InstrumentKind.BOND and face is None and held:
+        face = next((lot.face for lot in lots if lot.face is not None), None)
+        flags.append(Flag.NO_FACE)
+    unit = None if mark.price is None else _unit(kind, mark.price, face)
+    if quantity and mark.price is None:
+        flags.append(Flag.NO_PRICE)
+    if quantity and mark.stale:
+        flags.append(Flag.STALE_PRICE)
+    clean = _kopecks(quantity * unit if unit is not None else cost)
+
+    accrued = ZERO
+    if kind is InstrumentKind.BOND and held:
+        if mark.accrued is None:
+            flags.append(Flag.NO_ACCRUED)
+        else:
+            accrued = mark.accrued - _coupon_after_record(terms, day, mark.settle)
+    accrued_value = _kopecks(quantity * accrued)
+    coupon_due, unknown = _coupon_due(entitled, terms)
+    if unknown:
+        flags.append(Flag.COUPON_UNKNOWN)
+    clean_flow, accrued_flow, fees = _traded(work.traded, instrument_id)
+
+    moved_clean = _kopecks(moved * unit if unit is not None else moved_cost)
+    moved_accrued = _kopecks(moved * accrued)
+    coupons, principal = paid
+    previous = work.previous.valuations.get(instrument_id)
+    price_effect = (
+        clean
+        - (ZERO if previous is None else previous.clean)
+        + principal
+        + clean_flow
+        - moved_clean
+    )
+    coupon = (
+        accrued_value
+        + coupon_due
+        - (ZERO if previous is None else previous.accrued_value + previous.coupon_due)
+        + coupons
+        + accrued_flow
+        - moved_accrued
+    )
+    realized = _kopecks(work.realized.get(instrument_id, ZERO))
+    valuation = Valuation(
+        instrument_id=instrument_id,
+        kind=kind,
+        quantity=quantity,
+        price=mark.price,
+        accrued=accrued,
+        clean=clean,
+        accrued_value=accrued_value,
+        coupon_due=coupon_due,
+        cost=cost,
+        revaluation=price_effect - realized,
+        realized=realized,
+        coupon=coupon,
+        fees=fees,
+        flags=tuple(dict.fromkeys(flags)),
+    )
+    return valuation, moved_clean + moved_accrued
+
+
+def _coupon_after_record(terms: Terms, day: date, settle: date | None) -> Decimal:
+    """Купон, который НКД на T+1 ещё содержит, а покупатель уже не получит: дата
+    фиксации прошла, расчёты раньше выплаты. Он — к получению, не в НКД бумаги."""
+    return sum(
+        (
+            p.coupon
+            for p in terms.payments
+            if p.coupon is not None
+            and p.record_date <= day < p.pay_date
+            and settle is not None
+            and settle < p.pay_date
+        ),
+        ZERO,
+    )
+
+
+def _coupon_due(entitled: Iterable[Entitlement], terms: Terms) -> tuple[Decimal, bool]:
+    """Купоны к получению по правам на выплату; второе — есть купон с необъявленной суммой."""
+    due = ZERO
+    unknown = False
+    for entitlement in entitled:
+        payment = terms.paid_on(entitlement.pay_date)
+        if payment is None or not payment.has_coupon:
+            continue
+        if payment.coupon is None:
+            unknown = True
+            continue
+        due += _kopecks(entitlement.quantity * payment.coupon)
+    return due, unknown
+
+
+def _traded(trades: Iterable[Trade], instrument_id: UUID) -> tuple[Decimal, Decimal, Decimal]:
+    """Сделки дня по бумаге: чистая часть суммы, НКД в сумме, комиссии — со знаком для фонда."""
+    clean = accrued = fees = ZERO
+    for trade in trades:
+        if trade.instrument_id != instrument_id:
+            continue
+        sign = 1 if trade.side is Side.SELL else -1
+        in_trade = trade.quantity * (trade.accrued or ZERO)
+        clean += sign * (trade.amount - in_trade)
+        accrued += sign * in_trade
+        fees -= trade.fee
+    return clean, accrued, fees
 
 
 def _units(operation: Operation, works: dict[UUID, _Day], day: date, projected: bool) -> None:
@@ -346,6 +718,7 @@ def _units(operation: Operation, works: dict[UUID, _Day], day: date, projected: 
     sign = 1 if issue else -1
     if operation.day == day:
         work.units += sign * operation.units
+        work.flows += sign * operation.amount
         if issue:
             work.claims += operation.amount
         else:
@@ -373,6 +746,7 @@ def _expense(operation: Operation, works: dict[UUID, _Day], day: date, _projecte
     work = works[operation.portfolio_id]
     if operation.kind is OperationKind.EXPENSE_ACCRUAL:
         work.expenses += operation.amount
+        work.expensed += operation.amount
         work.movements.append(
             Movement(MovementKind.EXPENSE_ACCRUAL, None, None, 0, ZERO, operation.id)
         )
@@ -394,6 +768,8 @@ def _transfer(operation: Operation, works: dict[UUID, _Day], day: date, _project
     if operation.kind is OperationKind.CASH_TRANSFER:
         sender.cash -= operation.amount
         receiver.cash += operation.amount
+        sender.flows -= operation.amount
+        receiver.flows += operation.amount
         sender.movements.append(
             Movement(MovementKind.TRANSFER_OUT, None, None, 0, -operation.amount, operation.id)
         )
@@ -418,6 +794,11 @@ def _transfer(operation: Operation, works: dict[UUID, _Day], day: date, _project
         settle_quantity=got.settle_quantity + quantity,
         lots=tuple(sorted([*got.lots, *taken], key=lambda lot: (lot.opened_at, str(lot.trade_id)))),
     )
+    # Стоимость переноса для оценки — по цене дня; без цены — по лотам (решение 103).
+    cost = sum((lot.cost for lot in taken), ZERO)
+    for work, sign in ((sender, -1), (receiver, 1)):
+        moved, moved_cost = work.moved.get(instrument, (0, ZERO))
+        work.moved[instrument] = (moved + sign * quantity, moved_cost + sign * cost)
     sender.movements.append(
         Movement(MovementKind.TRANSFER_OUT, instrument, None, -quantity, ZERO, operation.id)
     )
@@ -459,15 +840,18 @@ def _holding(holdings: dict[UUID, Holding], trade: Trade) -> Holding:
     return holdings.get(trade.instrument_id) or Holding(trade.instrument_id, trade.kind)
 
 
-def _trade_day(holdings: dict[UUID, Holding], trades: Iterable[Trade]) -> None:
-    """Сделки по дате заключения: экономическая позиция и лоты FIFO."""
+def _trade_day(
+    holdings: dict[UUID, Holding], trades: Iterable[Trade], realized: dict[UUID, Decimal]
+) -> None:
+    """Сделки по дате заключения: экономическая позиция, лоты FIFO, реализованный результат."""
     for trade in _ordered(trades):
         current = _holding(holdings, trade)
+        lots, closed = _fifo(current.lots, trade)
         holdings[trade.instrument_id] = replace(
-            current,
-            trade_quantity=current.trade_quantity + trade.signed,
-            lots=fifo(current.lots, trade),
+            current, trade_quantity=current.trade_quantity + trade.signed, lots=lots
         )
+        if closed:
+            realized[trade.instrument_id] = realized.get(trade.instrument_id, ZERO) + closed
 
 
 def _settle(
@@ -529,16 +913,20 @@ def _payments(
     return still, received
 
 
-def _amortize(holdings: dict[UUID, Holding], day: date, terms_on: TermsOn) -> None:
-    """Погашение закрывает позицию; амортизация — лоты стоят от непогашенного номинала."""
+def _amortize(
+    holdings: dict[UUID, Holding], day: date, terms_on: TermsOn, realized: dict[UUID, Decimal]
+) -> None:
+    """Погашение закрывает позицию; амортизация — лоты стоят от непогашенного номинала.
+    Эмитент возвращает номинал по 100%, а лоты куплены по своей цене — это реализованный
+    результат."""
     for instrument_id, current in list(holdings.items()):
         payment = terms_on(instrument_id, day).paid_on(day)
         if payment is None:
             continue
+        outstanding = payment.outstanding or ZERO
         if payment.final:
             holdings[instrument_id] = Holding(instrument_id, current.kind)
         elif payment.outstanding is not None:
-            outstanding = payment.outstanding
             holdings[instrument_id] = replace(
                 current,
                 lots=tuple(
@@ -546,6 +934,21 @@ def _amortize(holdings: dict[UUID, Holding], day: date, terms_on: TermsOn) -> No
                     for lot in current.lots
                 ),
             )
+        else:
+            continue
+        # Лоты облигации всегда с номиналом.
+        repaid = sum(
+            (
+                lot.quantity
+                * (lot.face - (ZERO if payment.final else min(lot.face, outstanding)))
+                * (1 - lot.price / HUNDRED)
+                for lot in current.lots
+                if lot.face is not None
+            ),
+            ZERO,
+        )
+        if repaid:
+            realized[instrument_id] = realized.get(instrument_id, ZERO) + repaid
 
 
 def roll_days(
@@ -562,10 +965,20 @@ def roll_days(
 
 def fifo(lots: tuple[Lot, ...], trade: Trade) -> tuple[Lot, ...]:
     """Сделка закрывает встречные лоты с самого раннего; остаток открывает новый лот."""
+    return _fifo(lots, trade)[0]
+
+
+def _fifo(lots: tuple[Lot, ...], trade: Trade) -> tuple[tuple[Lot, ...], Decimal]:
+    """Лоты после сделки и реализованный результат закрытых лотов по чистой цене."""
     remaining = trade.signed
     result = list(lots)
+    unit = _unit(trade.kind, trade.price, trade.face_value)
+    realized = ZERO
     while remaining and result and (result[0].quantity > 0) != (remaining > 0):
         first = result[0]
+        closed = first.quantity if abs(first.quantity) <= abs(remaining) else -remaining
+        # Закрыли длинный лот продажей — сделка минус лот; короткий покупкой — наоборот.
+        realized += closed * unit - first.cost * Decimal(closed) / Decimal(first.quantity)
         if abs(first.quantity) <= abs(remaining):
             remaining += first.quantity
             result.pop(0)
@@ -583,7 +996,7 @@ def fifo(lots: tuple[Lot, ...], trade: Trade) -> tuple[Lot, ...]:
                 accrued=trade.accrued or ZERO,
             )
         )
-    return tuple(result)
+    return tuple(result), realized
 
 
 def _kopecks(value: Decimal) -> Decimal:
@@ -675,6 +1088,41 @@ def to_json(state: State) -> dict[str, Any]:
         "claims": str(state.claims),
         "obligations": str(state.obligations),
         "expenses": str(state.expenses),
+        "valuations": [
+            {
+                "instrument_id": str(v.instrument_id),
+                "kind": v.kind.value,
+                "quantity": v.quantity,
+                "price": None if v.price is None else str(v.price),
+                "accrued": str(v.accrued),
+                "clean": str(v.clean),
+                "accrued_value": str(v.accrued_value),
+                "coupon_due": str(v.coupon_due),
+                "cost": str(v.cost),
+                "revaluation": str(v.revaluation),
+                "realized": str(v.realized),
+                "coupon": str(v.coupon),
+                "fees": str(v.fees),
+                "flags": [f.value for f in v.flags],
+            }
+            for v in state.valuations.values()
+        ],
+        "result": None if state.result is None else _result_json(state.result),
+    }
+
+
+def _result_json(result: DayResult) -> dict[str, Any]:
+    return {
+        "value": str(result.value),
+        "flows": str(result.flows),
+        "revaluation": str(result.revaluation),
+        "realized": str(result.realized),
+        "coupon": str(result.coupon),
+        "fees": str(result.fees),
+        "expenses": str(result.expenses),
+        "receivable": str(result.receivable),
+        "payable": str(result.payable),
+        "flags": [f.value for f in result.flags],
     }
 
 
@@ -727,6 +1175,43 @@ def from_json(data: Mapping[str, Any]) -> State:
         claims=Decimal(data.get("claims", "0")),
         obligations=Decimal(data.get("obligations", "0")),
         expenses=Decimal(data.get("expenses", "0")),
+        valuations={
+            UUID(v["instrument_id"]): Valuation(
+                instrument_id=UUID(v["instrument_id"]),
+                kind=InstrumentKind(v["kind"]),
+                quantity=v["quantity"],
+                price=None if v["price"] is None else Decimal(v["price"]),
+                accrued=Decimal(v["accrued"]),
+                clean=Decimal(v["clean"]),
+                accrued_value=Decimal(v["accrued_value"]),
+                coupon_due=Decimal(v["coupon_due"]),
+                cost=Decimal(v["cost"]),
+                revaluation=Decimal(v["revaluation"]),
+                realized=Decimal(v["realized"]),
+                coupon=Decimal(v["coupon"]),
+                fees=Decimal(v["fees"]),
+                flags=tuple(Flag(f) for f in v["flags"]),
+            )
+            for v in data.get("valuations", [])
+        },
+        result=_result(data.get("result")),
+    )
+
+
+def _result(data: Mapping[str, Any] | None) -> DayResult | None:
+    if data is None:
+        return None
+    return DayResult(
+        value=Decimal(data["value"]),
+        flows=Decimal(data["flows"]),
+        revaluation=Decimal(data["revaluation"]),
+        realized=Decimal(data["realized"]),
+        coupon=Decimal(data["coupon"]),
+        fees=Decimal(data["fees"]),
+        expenses=Decimal(data["expenses"]),
+        receivable=Decimal(data["receivable"]),
+        payable=Decimal(data["payable"]),
+        flags=tuple(Flag(f) for f in data["flags"]),
     )
 
 

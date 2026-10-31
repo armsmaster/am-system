@@ -1,17 +1,19 @@
-"""Чтение рыночных данных: цена для оценки на момент, ряды для графика, НКД и номинал."""
+"""Чтение рыночных данных: цена для оценки на момент, ряды для графика, НКД и номинал,
+отметки для оценки позиций по дням."""
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from am_common.calendar import previous_trading_day
+from am_common.calendar import add_trading_days, previous_trading_day
+from am_common.clock import MOSCOW
 from marketdata.accrual import OnDate, accrued_on, face_value_on
 from marketdata.db import accrued_interest, face_value
 from marketdata.dema import Bar, DemaPoint, HalfLife, dema
@@ -163,6 +165,53 @@ async def series(
         manual=await repo.manual_between(instrument_id, since, till),
         rules=history,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class Mark:
+    """Всё для оценки бумаги на конец дня (design/06)."""
+
+    day: date
+    price: Choice | None  # цена для оценки на конец дня
+    settle_date: date  # T+1: расчёты по сделке, заключённой в этот день
+    accrued: OnDate | None  # облигация: НКД на дату расчётов T+1
+    face: OnDate | None  # облигация: номинал на день
+
+
+def end_of_day(day: date) -> datetime:
+    return datetime.combine(day, time.max, tzinfo=MOSCOW)
+
+
+async def marks(
+    session: AsyncSession, refdata: RefdataClient, instrument_id: UUID, first: date, last: date
+) -> list[Mark]:
+    """Отметки на каждый календарный день: цена на 23:59:59 МСК по правилу бумаги,
+    НКД на дату расчётов T+1 (решение 102), номинал на день."""
+    repo = Repository(session)
+    record = await repo.get(instrument_id)
+    bond = record.kind == "bond"
+    accrued_points = await repo.points(accrued_interest, instrument_id) if bond else {}
+    face_points = await repo.points(face_value, instrument_id) if bond else {}
+    exceptions: dict[date, bool] = {}
+    for year in range(first.year, last.year + 2):
+        exceptions |= await calendar_around(refdata, date(year, 1, 1))
+    found: list[Mark] = []
+    day = first
+    while day <= last:
+        [view] = await price_views(session, refdata, end_of_day(day), [instrument_id])
+        settle = add_trading_days(day + timedelta(days=1), 0, exceptions)
+        accrued = face = None
+        if bond:
+            periods = (
+                []
+                if settle in accrued_points
+                else await refdata.coupon_periods(instrument_id, settle)
+            )
+            accrued = accrued_on(settle, accrued_points, periods)
+            face = face_value_on(day, face_points)
+        found.append(Mark(day, view.price, settle, accrued, face))
+        day += timedelta(days=1)
+    return found
 
 
 async def accrued_on_date(

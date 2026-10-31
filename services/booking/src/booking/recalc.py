@@ -4,7 +4,13 @@
 состояние могло измениться. Пересчёт — по фонду целиком: перевод связывает
 его портфели (решения 37 и 98). Воркер забирает фонд (захват — только этот
 экземпляр), роллит дни до сегодня и сохраняет снапшоты всех портфелей фонда;
-прежние снапшоты остаются замещёнными. Запросы к справочнику — вне транзакции.
+прежние снапшоты остаются замещёнными. Запросы к справочнику и сервису цен —
+вне транзакции.
+
+Оценка (design/06): ролл берёт у сервиса цен отметки — цену для оценки на конец
+дня, НКД на T+1, номинал — за весь пересчитываемый период одним запросом
+на бумагу. В начале нового дня вчерашний день пересчитывается по ценам закрытия;
+цены за прошлые дни, пришедшие позже, ставят фонды в очередь событием.
 """
 
 from __future__ import annotations
@@ -12,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -26,10 +32,17 @@ from am_common.clock import MOSCOW, moscow_now
 from am_common.consumer import StreamConsumer
 from am_common.db import Database
 from am_common.events import Event, stream_name
-from booking.clients import RefdataClient, ServiceUnavailableError, service_token
+from booking.clients import (
+    MarketdataClient,
+    RefdataClient,
+    ServiceUnavailableError,
+    service_token,
+)
 from booking.repository import Claim, Repository, Snapshot
 from booking.roll import (
     InstrumentKind,
+    Mark,
+    MarksOn,
     Operation,
     OperationKind,
     Side,
@@ -53,16 +66,29 @@ def refdata_client(resources: Resources) -> RefdataClient:
     return RefdataClient(resources.http, settings.refdata_url, service_token(resources))
 
 
+def marketdata_client(resources: Resources) -> MarketdataClient:
+    settings = cast(BookingSettings, resources.settings)
+    return MarketdataClient(resources.http, settings.marketdata_url, service_token(resources))
+
+
 async def recalc_once(
-    database: Database, refdata: RefdataClient, now: datetime, stale: timedelta
+    database: Database,
+    refdata: RefdataClient,
+    now: datetime,
+    stale: timedelta,
+    *,
+    marketdata: MarketdataClient | None = None,
 ) -> UUID | None:
-    """Пересчитывает один фонд из очереди; None — очередь пуста."""
+    """Пересчитывает один фонд из очереди; None — очередь пуста.
+
+    ``marketdata`` — откуда брать отметки для оценки; без него ролл ведёт только позиции.
+    """
     async with database.session() as session, session.begin():
         claim = await Repository(session).claim(now, stale)
     if claim is None:
         return None
     try:
-        await recompute(database, refdata, claim, now)
+        await recompute(database, refdata, claim, now, marketdata=marketdata)
     except (ServiceUnavailableError, SQLAlchemyError) as exc:
         # Захват снимаем сразу: следующая попытка не ждёт срока захвата.
         logger.warning("recalc of %s failed, will retry: %s", claim.fund_id, exc)
@@ -107,17 +133,23 @@ async def load_inputs(repo: Repository, fund_id: UUID, since: date, today: date)
     return FundInputs(dict(trades), operations, previous, first_day)
 
 
-async def terms_book(
-    refdata: RefdataClient, inputs: FundInputs, till: date
-) -> tuple[TermsBook, dict[date, bool]]:
-    """Условия бумаг фонда и торговый календарь от начала ролла до ``till``."""
+def fund_instruments(inputs: FundInputs) -> list[UUID]:
+    """Бумаги фонда: из сделок, переводов и позиций на начало ролла."""
     instruments = (
         {t.instrument_id for trades in inputs.trades.values() for t in trades}
         | {o.instrument_id for o in inputs.operations if o.instrument_id is not None}
         | {i for state in inputs.states.values() for i in state.holdings}
+        | {e.instrument_id for state in inputs.states.values() for e in state.pending}
     )
+    return sorted(instruments, key=str)
+
+
+async def terms_book(
+    refdata: RefdataClient, inputs: FundInputs, till: date
+) -> tuple[TermsBook, dict[date, bool]]:
+    """Условия бумаг фонда и торговый календарь от начала ролла до ``till``."""
     histories: dict[UUID, InstrumentHistory] = {}
-    for instrument_id in sorted(instruments, key=str):
+    for instrument_id in fund_instruments(inputs):
         history = await refdata.history(instrument_id)
         if history is not None:
             histories[instrument_id] = history
@@ -125,19 +157,46 @@ async def terms_book(
     return TermsBook(histories, exceptions), exceptions
 
 
+async def marks_book(
+    marketdata: MarketdataClient, instruments: Iterable[UUID], first: date, last: date
+) -> MarksOn:
+    """Отметки сервиса цен по бумагам за период — один запрос на бумагу."""
+    found: dict[tuple[UUID, date], Mark] = {}
+    if first <= last:
+        for instrument_id in instruments:
+            for day, mark in (await marketdata.marks(instrument_id, first, last)).items():
+                found[(instrument_id, day)] = mark
+
+    def marks_on(instrument_id: UUID, day: date) -> Mark:
+        return found.get((instrument_id, day), Mark(price=None))
+
+    return marks_on
+
+
 async def recompute(
-    database: Database, refdata: RefdataClient, claim: Claim, now: datetime
+    database: Database,
+    refdata: RefdataClient,
+    claim: Claim,
+    now: datetime,
+    *,
+    marketdata: MarketdataClient | None = None,
 ) -> None:
     today = now.astimezone(MOSCOW).date()
     async with database.session() as session:
         inputs = await load_inputs(Repository(session), claim.fund_id, claim.since, today)
     book, _ = await terms_book(refdata, inputs, today)
+    marks = (
+        None
+        if marketdata is None
+        else await marks_book(marketdata, fund_instruments(inputs), inputs.first_day, today)
+    )
     days = roll_fund_days(
         inputs.states,
         inputs.first_day,
         today,
         trades=inputs.trades,
         operations=inputs.operations,
+        marks_on=marks,
         terms_on=book,
     )
     replace_from = inputs.first_day if inputs.previous else min(claim.since, inputs.first_day)
@@ -199,18 +258,21 @@ def _operation(row: Any) -> Operation:
 
 
 async def extend_to_today(database: Database, now: datetime) -> int:
-    """Новый день: фонды досчитываются до сегодня — купоны идут по графику и без сделок."""
+    """Новый день: фонды досчитываются до сегодня — купоны идут по графику и без сделок.
+    Последний посчитанный день пересчитывается заново: днём его оценивали по текущим
+    ценам, теперь — по ценам закрытия."""
     today = now.astimezone(MOSCOW).date()
     async with database.session() as session, session.begin():
         repo = Repository(session)
         behind = {f: d for f, d in (await repo.last_days()).items() if d < today}
         for fund_id, last in behind.items():
-            await repo.mark_dirty(fund_id, last + timedelta(days=1), now)
+            await repo.mark_dirty(fund_id, last, now)
     return len(behind)
 
 
-class RefdataEvents:
-    """События справочника: новая версия бумаги, правка торгового календаря."""
+class MarketEvents:
+    """События соседей: новая версия бумаги и правка календаря в справочнике,
+    цены за прошлые дни в сервисе цен."""
 
     def __init__(self, database: Database, clock: Callable[[], datetime] = moscow_now) -> None:
         self._database = database
@@ -223,6 +285,9 @@ class RefdataEvents:
             await self._mark(since, instrument_id=UUID(event.entity_id))
         elif event.type in {"calendar.day_set", "calendar.day_cleared"}:
             await self._mark(date.fromisoformat(event.entity_id))
+        elif event.type == "prices.backfilled":
+            for item in event.data["instruments"]:
+                await self._mark(date.fromisoformat(item["since"]), instrument_id=UUID(item["id"]))
 
     async def _mark(self, since: date, instrument_id: UUID | None = None) -> None:
         now = self._clock()
@@ -244,6 +309,7 @@ def recalc_worker(settings: BookingSettings, clock: Callable[[], datetime] = mos
     async def recalc(resources: Resources) -> None:
         database = resources.require_database()
         refdata = refdata_client(resources)
+        marketdata = marketdata_client(resources)
         stale = timedelta(seconds=settings.recalc_stale_seconds)
         day: date | None = None
         while True:
@@ -252,7 +318,7 @@ def recalc_worker(settings: BookingSettings, clock: Callable[[], datetime] = mos
                 if now.astimezone(MOSCOW).date() != day:
                     await extend_to_today(database, now)
                     day = now.astimezone(MOSCOW).date()
-                while await recalc_once(database, refdata, clock(), stale):
+                while await recalc_once(database, refdata, clock(), stale, marketdata=marketdata):
                     pass
             except _ERRORS as exc:
                 logger.warning("recalc failed, will retry: %s", exc)
@@ -261,15 +327,15 @@ def recalc_worker(settings: BookingSettings, clock: Callable[[], datetime] = mos
     return recalc
 
 
-def refdata_consumer(settings: BookingSettings) -> Worker:
-    async def refdata_events(resources: Resources) -> None:
+def market_consumer(settings: BookingSettings) -> Worker:
+    async def market_events(resources: Resources) -> None:
         consumer = StreamConsumer(
             resources.require_redis(),
-            streams=[stream_name("refdata")],
+            streams=[stream_name("refdata"), stream_name("marketdata")],
             group=settings.consumer_group,
             consumer=settings.consumer_name,
-            handler=RefdataEvents(resources.require_database()).handle,
+            handler=MarketEvents(resources.require_database()).handle,
         )
         await consumer.run()
 
-    return refdata_events
+    return market_events

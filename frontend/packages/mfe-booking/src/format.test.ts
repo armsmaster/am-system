@@ -10,6 +10,7 @@ import {
   fromMoscowInput,
   moscowInput,
   moscowToday,
+  sumMoney,
 } from './format';
 
 describe('format', () => {
@@ -41,5 +42,11 @@ describe('format', () => {
     expect(fromMoscowInput('2026-11-27T11:42')).toBe('2026-11-27T11:42:00+03:00');
     expect(moscowToday(new Date('2026-12-02T22:30:00Z'))).toBe('2026-12-03');
     expect(decimalInput(' 1 000,5 ')).toBe('1000.5');
+  });
+
+  it('sums money to the kopeck', () => {
+    expect(sumMoney(['0.10', '0.20', '-1.05', '1000000000.7'])).toBe('999999999.95');
+    expect(sumMoney(['-0.30', '0.05'])).toBe('-0.25');
+    expect(sumMoney([])).toBe('0.00');
   });
 });

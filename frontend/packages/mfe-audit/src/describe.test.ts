@@ -187,6 +187,19 @@ describe('changes', () => {
     expect(['trade.cancelled', 'trade.confirmed'].map(actionLabel)).toEqual(['Отменена сделка', 'Подтверждена сделка']);
   });
 
+  it('describes prices for past days', () => {
+    const backfilled = event('prices.backfilled', {
+      since: '2026-10-22',
+      instruments: [{ id: 'i-1', secid: 'LQDT', since: '2026-10-26' }, { id: 'i-2', secid: 'SU26238RMFS4', since: '2026-10-22' }],
+    });
+
+    expect([actionLabel(backfilled.type), objectLabel(backfilled)]).toEqual([
+      'Цены за прошлые дни',
+      'LQDT, SU26238RMFS4 — с 22.10.2026',
+    ]);
+    expect(changes(backfilled)).toEqual([]);
+  });
+
   it('describes fund operations', () => {
     const settled = event('operation.settled', {
       operation: { kind: 'unit_issue', portfolio: 'OPIF1-TREASURY' },

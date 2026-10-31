@@ -62,6 +62,11 @@ class Repository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    @property
+    def session(self) -> AsyncSession:
+        """Сессия — чтобы событие ушло в той же транзакции, что и данные."""
+        return self._session
+
     # --- бумаги -----------------------------------------------------------------
 
     async def sync_instruments(self, items: Sequence[RefInstrument]) -> None:

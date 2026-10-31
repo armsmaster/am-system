@@ -19,12 +19,12 @@ from am_common.events import SYSTEM_ACTOR, Event, stream_name
 from am_common.testing import TokenFactory
 from booking.db import day_snapshot, recalc_queue
 from booking.recalc import (
-    RefdataEvents,
+    MarketEvents,
     extend_to_today,
+    market_consumer,
     recalc_once,
     recalc_worker,
     refdata_client,
-    refdata_consumer,
 )
 from booking.repository import Repository
 from booking.settings import BookingSettings
@@ -155,7 +155,8 @@ async def test_new_day_extends_funds(
     assert await extend_to_today(resources.require_database(), NOW) == 0
     tomorrow = NOW + timedelta(days=1)
     assert await extend_to_today(resources.require_database(), tomorrow) == 1
-    assert await queue(resources) == {FUND: date(2026, 12, 4)}
+    # Вчерашний день — заново, по ценам закрытия; дальше — до сегодня.
+    assert await queue(resources) == {FUND: date(2026, 12, 3)}
 
 
 async def test_refdata_events_mark_funds(
@@ -171,7 +172,7 @@ async def test_refdata_events_mark_funds(
     )
     await run(resources)
     await run(resources)
-    events = RefdataEvents(resources.require_database(), clock=lambda: NOW)
+    events = MarketEvents(resources.require_database(), clock=lambda: NOW)
 
     def event(kind: str, entity: str, **data: Any) -> Event:
         return Event(
@@ -191,6 +192,15 @@ async def test_refdata_events_mark_funds(
     assert await queue(resources) == {FUND: date(2000, 1, 1), OTHER_FUND: date(2026, 11, 30)}
     await events.handle(event("instrument.loaded", str(OFZ)))  # не про условия бумаги
     assert len(await queue(resources)) == 2
+    # Сервис цен прислал цены за прошлые дни: пересчёт оценки с этой даты.
+    await events.handle(
+        event(
+            "prices.backfilled",
+            "2026-11-20",
+            instruments=[{"id": str(LQDT), "secid": "LQDT", "since": "2026-11-20"}],
+        )
+    )
+    assert (await queue(resources))[OTHER_FUND] == date(2026, 11, 20)
 
 
 async def test_workers(
@@ -208,7 +218,7 @@ async def test_workers(
     )
     tasks = [
         asyncio.ensure_future(recalc_worker(quick, clock=lambda: NOW)(live)),
-        asyncio.ensure_future(refdata_consumer(quick)(live)),
+        asyncio.ensure_future(market_consumer(quick)(live)),
     ]
     for _ in range(100):
         if not await queue(resources):

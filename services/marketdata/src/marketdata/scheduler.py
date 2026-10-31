@@ -12,12 +12,15 @@ import logging
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from typing import cast
+from uuid import UUID
 
 from sqlalchemy.exc import SQLAlchemyError
 
 from am_common.app import Resources, Worker
 from am_common.calendar import is_trading_day, previous_trading_day
-from am_common.clock import moscow_now
+from am_common.clock import MOSCOW, moscow_now
+from am_common.events import SYSTEM_ACTOR
+from marketdata.backfill import announce, past_days
 from marketdata.commands import load_history, poll_intraday, refresh_instruments
 from marketdata.iss import IssClient, IssError
 from marketdata.queries import calendar_around
@@ -52,13 +55,17 @@ async def history_target(
 async def load_due_history(
     resources: Resources, refdata: RefdataClient, iss: IssClient, now: datetime
 ) -> int:
-    """Догружает историю ISS по бумагам, у которых её нет до последнего торгового дня."""
+    """Догружает историю ISS по бумагам, у которых её нет до последнего торгового дня.
+
+    Итоги прошлых дней меняют оценку позиций — одно событие на загрузку.
+    """
     settings = cast(MarketdataSettings, resources.settings)
     database = resources.require_database()
     target = await history_target(refdata, settings, now)
     async with database.session() as session:
         records = await _with_board(Repository(session))
     loaded = 0
+    first_days: list[tuple[UUID, date]] = []
     for record in records:
         since = (
             record.history_till + timedelta(days=1)
@@ -71,14 +78,20 @@ async def load_due_history(
             if not await Repository(session).claim_history(record.id, now, STALE_AFTER):
                 continue
         try:
-            await load_history(database, iss, record, since, target)
+            first = await load_history(database, iss, record, since, target)
         except (IssError, SQLAlchemyError) as exc:
             # Захват снимаем сразу: иначе следующая попытка ждала бы полчаса.
             logger.warning("ISS history for %s failed, will retry: %s", record.secid, exc)
             async with database.session() as session, session.begin():
                 await Repository(session).finish_history(record.id, None)
             continue
+        if first is not None:
+            first_days.append((record.id, first))
         loaded += 1
+    earliest = past_days(first_days, now.astimezone(MOSCOW).date())
+    if earliest:
+        async with database.session() as session, session.begin():
+            await announce(session, earliest, {r.id: r.secid for r in records}, SYSTEM_ACTOR)
     return loaded
 
 

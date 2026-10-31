@@ -43,6 +43,7 @@ class World:
     def __init__(self, tokens: TokenFactory) -> None:
         self.tokens = tokens
         self.iss_down = False
+        self.iss_empty: set[str] = set()
         self.refdata_down = False
         self.requests: list[str] = []
         self.instruments: list[dict[str, Any]] = [
@@ -145,6 +146,12 @@ class World:
             r"/iss/history/engines/stock/markets/\w+/securities/(\w+)\.json", path
         ):
             name = f"history_{match[1]}_{request.url.params['start']}.json"
+            if match[1] in self.iss_empty:
+                # ISS ответил, но торгов за период не было.
+                empty = json.loads((FIXTURES / f"history_{match[1]}_0.json").read_text("utf-8"))
+                empty["history"]["data"] = []
+                empty["history.cursor"]["data"] = [[0, 0, 100]]
+                return httpx2.Response(200, json=empty)
         elif match := re.fullmatch(r"/iss/engines/stock/markets/(\w+)/securities\.json", path):
             name = f"intraday_{match[1]}.json"
         else:

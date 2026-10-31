@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
@@ -17,6 +17,8 @@ from uuid import UUID, uuid4
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from am_common.clock import MOSCOW
+from am_common.events import Actor
+from marketdata.backfill import announce, past_days
 from marketdata.prices import FEED_TYPES, MAX_TIMEFRAME, PriceType
 from marketdata.rates import RateKind
 from marketdata.repository import Repository
@@ -121,7 +123,7 @@ _DUPLICATE_RATE = _Problem("duplicate_in_batch", "Эта ставка на эт�
 
 
 async def ingest_quotes(
-    repo: Repository, batch: QuotesIn, ids: Mapping[str, UUID], client: str, now: datetime
+    repo: Repository, batch: QuotesIn, ids: Mapping[str, UUID], client: Actor, now: datetime
 ) -> FeedResult:
     batch_id = uuid4()
     rows: list[dict[str, Any]] = []
@@ -150,12 +152,13 @@ async def ingest_quotes(
             for kind, value in item.prices().items()
         ]
     await repo.add_quotes(rows)
+    await _announce(repo, ids, client, now, ((r["instrument_id"], r["observed_at"]) for r in rows))
     return await _finish(
         repo,
         batch_id=batch_id,
         kind="quotes",
         source=batch.source,
-        client=client,
+        client=client.username,
         now=now,
         items=batch.quotes,
         rejected=rejected,
@@ -163,7 +166,7 @@ async def ingest_quotes(
 
 
 async def ingest_bars(
-    repo: Repository, batch: BarsIn, ids: Mapping[str, UUID], client: str, now: datetime
+    repo: Repository, batch: BarsIn, ids: Mapping[str, UUID], client: Actor, now: datetime
 ) -> FeedResult:
     batch_id = uuid4()
     rows: list[dict[str, Any]] = []
@@ -200,12 +203,13 @@ async def ingest_bars(
             }
         )
     await repo.add_bars(rows)
+    await _announce(repo, ids, client, now, ((r["instrument_id"], r["start_at"]) for r in rows))
     return await _finish(
         repo,
         batch_id=batch_id,
         kind="bars",
         source=batch.source,
-        client=client,
+        client=client.username,
         now=now,
         items=batch.bars,
         rejected=rejected,
@@ -313,3 +317,16 @@ async def _finish(
         }
     )
     return FeedResult(batch_id=batch_id, accepted=len(items) - len(rejected), rejected=rejected)
+
+
+async def _announce(
+    repo: Repository,
+    ids: Mapping[str, UUID],
+    client: Actor,
+    now: datetime,
+    observed: Iterable[tuple[UUID, datetime]],
+) -> None:
+    """Цены за прошлые дни — событие для пересчёта оценки позиций."""
+    today = now.astimezone(MOSCOW).date()
+    earliest = past_days(((i, t.astimezone(MOSCOW).date()) for i, t in observed), today)
+    await announce(repo.session, earliest, {i: code for code, i in ids.items()}, client)

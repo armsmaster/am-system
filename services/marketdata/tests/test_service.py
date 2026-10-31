@@ -459,6 +459,96 @@ def test_manual_prices_and_rules_go_to_the_journal(
     assert rule["data"]["after"]["price_types"] == "VWAP, последняя сделка"
 
 
+def test_prices_for_past_days_are_announced(stream: redis.Redis, feed: Api) -> None:
+    # Цены за сегодня событий не дают: сегодняшнюю оценку сервис сделок берёт при чтении.
+    feed.ok(
+        "POST",
+        "/feed/v1/quotes",
+        {"source": "quik", "quotes": [quote("SU26238RMFS4", moment(11, 0), vwap=51.8)]},
+    )
+    feed.ok(
+        "POST",
+        "/feed/v1/quotes",
+        {
+            "source": "quik",
+            "quotes": [
+                quote("SU26238RMFS4", moment(18, 0, day=23), close=51.7),
+                quote("SU26238RMFS4", moment(18, 0, day=22), close=51.6),
+                quote("LQDT", moment(18, 0, day=26), close=1.8),
+                quote("SU26238RMFS4", moment(11, 1), vwap=51.9),
+            ],
+        },
+    )
+    feed.ok(
+        "POST",
+        "/feed/v1/bars",
+        {"source": "quik", "bars": [bar("RU000A10F504", moment(10, 0, day=26), 99.7)]},
+    )
+
+    events: list[dict[str, Any]] = []
+    for _ in range(100):
+        events = [json.loads(f["event"]) for _id, f in stream.xrange("am.events.marketdata")]  # type: ignore[union-attr, index]
+        if len(events) >= 2:
+            break
+        time.sleep(0.05)
+    stream.close()
+
+    quotes, bars = events
+    assert (quotes["type"], quotes["entity_id"], quotes["actor"]["username"]) == (
+        "prices.backfilled",
+        "2026-10-22",
+        "service-account-am-price-feed",
+    )
+    assert quotes["data"]["instruments"] == [
+        {"id": str(FUND), "secid": "LQDT", "since": "2026-10-26"},
+        {"id": str(OFZ), "secid": "SU26238RMFS4", "since": "2026-10-22"},
+    ]
+    assert bars["data"]["instruments"] == [
+        {"id": str(LINKER), "secid": "RU000A10F504", "since": "2026-10-26"}
+    ]
+
+
+def test_marks_for_valuation_by_day(feed: Api, trader: Api) -> None:
+    feed.ok(
+        "POST",
+        "/feed/v1/quotes",
+        {
+            "source": "quik",
+            "quotes": [
+                quote("SU26238RMFS4", moment(18, 0, day=23), vwap=51.7),
+                quote("SU26238RMFS4", moment(18, 0, day=26), vwap=51.75),
+                quote("SU26238RMFS4", moment(11, 0), vwap=51.8),
+                quote("LQDT", moment(11, 0), vwap=1.8),
+            ],
+        },
+    )
+
+    found = trader.ok(
+        "GET", f"/instruments/{OFZ}/marks", None, **{"from": "2026-10-23", "till": "2026-10-27"}
+    )
+
+    # Выходные — цена пятницы; расчёты T+1 — следующий торговый день.
+    assert [
+        (m["date"], m["price"]["value"], m["price"]["stale"], m["settle_date"]) for m in found
+    ] == [
+        ("2026-10-23", "51.700000", False, "2026-10-26"),
+        ("2026-10-24", "51.700000", False, "2026-10-26"),
+        ("2026-10-25", "51.700000", False, "2026-10-26"),
+        ("2026-10-26", "51.750000", False, "2026-10-27"),
+        ("2026-10-27", "51.800000", False, "2026-10-28"),
+    ]
+    # НКД — на дату расчётов: в субботу и воскресенье тот же, что в пятницу.
+    assert len({m["accrued"] for m in found[:3]}) == 1
+    assert found[0]["accrued"] < found[3]["accrued"] < found[4]["accrued"]
+    shares = trader.ok(
+        "GET", f"/instruments/{FUND}/marks", None, **{"from": "2026-10-27", "till": "2026-10-27"}
+    )
+    assert (shares[0]["accrued"], shares[0]["face_value"]) == (None, None)
+    assert trader.problem(
+        "GET", f"/instruments/{OFZ}/marks", None, **{"from": "2026-10-27", "till": "2026-10-26"}
+    ) == (422, "bad_period")
+
+
 def test_nothing_accepted_and_nothing_to_show(feed: Api, trader: Api) -> None:
     assert trader.ok("GET", "/overview") == []
 

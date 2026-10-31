@@ -20,7 +20,7 @@ from am_common.clock import MOSCOW
 from am_common.db import Database
 from am_common.testing import TokenFactory
 from marketdata.commands import refresh_instruments
-from marketdata.db import accrued_interest, face_value, iss_poll, quote
+from marketdata.db import accrued_interest, face_value, iss_poll, outbox, quote
 from marketdata.refdata import refdata_client
 from marketdata.repository import Repository
 from marketdata.scheduler import (
@@ -92,6 +92,17 @@ async def test_history_is_loaded_once_per_day(resources: Resources, world: World
 
     assert await load_due_history(resources, refdata, iss, NOW) == 3
     assert await load_due_history(resources, refdata, iss, NOW) == 0
+
+    # Итоги прошлых дней меняют оценку позиций — одно событие на загрузку.
+    async with resources.require_database().session() as session:
+        [event] = [row.payload for row in await session.execute(select(outbox.c.payload))]
+    assert (event["type"], event["actor"]["username"]) == ("prices.backfilled", "system")
+    assert [i["secid"] for i in event["data"]["instruments"]] == [
+        "LQDT",
+        "RU000A10F504",
+        "SU26238RMFS4",
+    ]
+    assert event["data"]["since"] == min(i["since"] for i in event["data"]["instruments"])
 
     assert await count(resources, quote, instrument_id=OFZ) == 5 * 3  # закрытие, VWAP, рыночная
     assert await count(resources, face_value, instrument_id=LINKER) == 116
@@ -177,6 +188,16 @@ async def test_failed_intraday_poll_is_recorded(resources: Resources, world: Wor
     async with resources.require_database().session() as session:
         [slot] = (await session.execute(select(iss_poll))).all()
     assert (slot.polled, slot.failed) == (0, 1)
+
+
+async def test_history_without_trading_is_not_announced(resources: Resources, world: World) -> None:
+    await prepared(resources)
+    world.iss_empty = {"LQDT", "RU000A10F504", "SU26238RMFS4"}
+
+    refdata, iss = refdata_client(resources), iss_client(resources)
+
+    assert await load_due_history(resources, refdata, iss, NOW) == 3
+    assert await count(resources, outbox) == 0
 
 
 async def test_instruments_wait_for_their_board(resources: Resources) -> None:

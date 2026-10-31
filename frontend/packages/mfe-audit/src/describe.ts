@@ -22,6 +22,7 @@ const ACTIONS: Readonly<Record<string, string>> = {
   'calendar.day_cleared': 'Удалено исключение календаря',
   'manual_price.set': 'Введена ручная цена',
   'price_rule.changed': 'Изменено правило оценки',
+  'prices.backfilled': 'Цены за прошлые дни',
   'trade.entered': 'Введена сделка',
   'trade.amended': 'Исправлена сделка',
   'trade.cancelled': 'Отменена сделка',
@@ -155,11 +156,17 @@ export function objectLabel(event: AuditEvent): string {
     instrument?: Ref;
     trade?: { readonly secid: string; readonly portfolio: string | null };
     operation?: { readonly kind: string; readonly portfolio: string | null };
+    instruments?: readonly { readonly secid: string }[];
+    since?: string;
     version?: number;
     day?: string;
   };
   if (data.trade) {
     return `${data.trade.portfolio ?? '—'}: ${data.trade.secid}`;
+  }
+  if (data.instruments && data.since) {
+    // Цены за прошлые дни: по ним сервис сделок пересчитывает оценку позиций.
+    return `${data.instruments.map((i) => i.secid).join(', ')} — с ${show(data.since)}`;
   }
   if (data.operation) {
     return `${data.operation.portfolio ?? '—'}: ${show(data.operation.kind)}`;

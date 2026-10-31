@@ -4,7 +4,7 @@ import asyncio
 import json
 import re
 from collections.abc import AsyncIterator, Iterator
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -126,6 +126,14 @@ class World:
             (OFZ, "2026-12-04"): "0.39",
         }
         self.face: dict[tuple[UUID, str], str] = {(OFZ, "2026-11-30"): "1000"}
+        # Для оценки (design/06): цены на конец дня, НКД на T+1 сверх ``accrued``, DV01.
+        self.prices: dict[tuple[UUID, str], str] = {}
+        self.stale: set[tuple[UUID, str]] = set()
+        self.valuation_accrued: dict[tuple[UUID, str], str] = {
+            (OFZ, "2026-11-27"): "34.43",
+            (OFZ, "2026-12-03"): "0.19",
+        }
+        self.metrics: dict[UUID, dict[str, Any]] = {}
         self.calendar: dict[int, list[dict[str, Any]]] = {
             2026: [{"day": "2026-11-04", "is_trading": False, "comment": "праздник"}]
         }
@@ -194,6 +202,13 @@ class World:
 
     def _marketdata(self, request: httpx2.Request, path: str) -> httpx2.Response:
         assert request.headers["Authorization"] == "Bearer service-token"
+        if match := re.fullmatch(r"/instruments/([^/]+)/marks", path):
+            return self._marks(UUID(match[1]), request)
+        if match := re.fullmatch(r"/instruments/([^/]+)/analytics", path):
+            found = self.metrics.get(UUID(match[1]))
+            if found is None:
+                return httpx2.Response(404, json={"detail": {"code": "not_found"}})
+            return httpx2.Response(200, json=found)
         match = re.fullmatch(r"/instruments/([^/]+)/(accrued-interest|face-value)", path)
         assert match is not None
         day = request.url.params["date"]
@@ -202,6 +217,45 @@ class World:
         if value is None:
             return httpx2.Response(404, json={"detail": {"code": "not_found"}})
         return httpx2.Response(200, json={"date": day, "value": value, "method": "iss"})
+
+    def _marks(self, instrument_id: UUID, request: httpx2.Request) -> httpx2.Response:
+        """Отметки как в сервисе цен: цена — последняя известная к концу дня,
+        расчёты T+1 — следующий будний день, кроме праздника 04.11."""
+        if instrument_id not in self.instruments:
+            return httpx2.Response(404, json={"detail": {"code": "not_found"}})
+        bond = self.instruments[instrument_id]["kind"] == "bond"
+        day = date.fromisoformat(request.url.params["from"])
+        till = date.fromisoformat(request.url.params["till"])
+        found = []
+        while day <= till:
+            known = [d for (i, d) in self.prices if i == instrument_id and d <= day.isoformat()]
+            price = None
+            if known:
+                last = max(known)
+                price = {
+                    "value": self.prices[(instrument_id, last)],
+                    "type": "vwap",
+                    "source": "quik",
+                    "time": f"{last}T18:00:00+03:00",
+                    "stale": (instrument_id, last) in self.stale,
+                    "reason": "по правилу",
+                }
+            settle = day + timedelta(days=1)
+            while settle.weekday() >= 5 or settle == date(2026, 11, 4):
+                settle += timedelta(days=1)
+            key = (instrument_id, settle.isoformat())
+            accrued = self.valuation_accrued.get(key, self.accrued.get(key))
+            found.append(
+                {
+                    "date": day.isoformat(),
+                    "price": price,
+                    "settle_date": settle.isoformat(),
+                    "accrued": accrued if bond else None,
+                    "face_value": "1000" if bond and instrument_id != LINKER else None,
+                }
+            )
+            day += timedelta(days=1)
+        return httpx2.Response(200, json=found)
 
     def _portfolio(self, request: httpx2.Request, path: str) -> httpx2.Response:
         assert path == "/portfolios"

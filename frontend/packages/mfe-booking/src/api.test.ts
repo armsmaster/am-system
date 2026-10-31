@@ -54,6 +54,12 @@ describe('bookingApi', () => {
       ['/api/booking/operations/o-1/cancel', { comment: 'ошибка' }],
     ],
     ['ladder', () => api.ladder('a-1'), 'get', ['/api/booking/ladder?account_id=a-1']],
+    [
+      'results',
+      () => api.results('p-1', '2026-11-01', '2026-11-30'),
+      'get',
+      ['/api/booking/results?portfolio_id=p-1&from=2026-11-01&till=2026-11-30'],
+    ],
     ['importTrades', () => api.importTrades({ source: 'x' }), 'post', ['/api/booking/feed/v1/trades', { source: 'x' }]],
   ] as const)('%s', async (_name, call, method, args) => {
     await call();

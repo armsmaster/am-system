@@ -2,9 +2,10 @@ import { LoadedView, useLoad } from '@am/ui';
 import { Fragment, useCallback } from 'react';
 
 import type { Context } from '../App';
-import type { Instrument, Line, Positions, PortfolioState } from '../api';
+import type { DayResult, Instrument, Line, Positions, PortfolioState } from '../api';
 import { SelectionForm, useSelection } from '../components/Selection';
 import {
+  FLAG_LABELS,
   formatDate,
   formatMoney,
   formatPrice,
@@ -14,9 +15,10 @@ import {
 } from '../format';
 
 /**
- * Позиции на конец дня по двум датам (design/05): по дате сделки — риск
- * и стоимость, на счёте депо — что придёт или уйдёт к расчётам. Compound —
- * сумма по своим physical-портфелям.
+ * Позиции на конец дня по двум датам (design/05) и их оценка (design/06):
+ * по дате сделки — риск и стоимость, на счёте депо — что придёт или уйдёт
+ * к расчётам. Сегодня — по текущей цене. Compound — сумма по своим
+ * physical-портфелям.
  */
 export function PositionsPage({ context }: { readonly context: Context }) {
   const { portfolioId, date, update } = useSelection(context.portfolios);
@@ -61,26 +63,90 @@ function PositionsView({
         <strong>{formatMoney(view.cash)} ₽</strong>
       </p>
       <FundFiguresNote view={view} />
+      {view.result && <ResultNote result={view.result} />}
       {view.lines.length === 0 ? (
         <p className="muted">Бумаг нет.</p>
       ) : (
-        <table className="data" aria-label="Позиции">
-          <thead>
-            <tr>
-              <th>Бумага</th>
-              <th className="num">По дате сделки</th>
-              <th className="num">На счёте депо</th>
-              <th className="num">Средняя цена</th>
-              <th className="num">Стоимость, ₽</th>
-              <th className="num">Уплаченный НКД, ₽</th>
-            </tr>
-          </thead>
-          {view.lines.map((line) => (
-            <LineRows key={line.instrument_id} line={line} />
-          ))}
-        </table>
+        <>
+          <table className="data" aria-label="Позиции">
+            <thead>
+              <tr>
+                <th>Бумага</th>
+                <th className="num">По дате сделки</th>
+                <th className="num">На счёте депо</th>
+                <th className="num">Цена оценки</th>
+                <th className="num">Стоимость, ₽</th>
+                <th className="num">НКД в оценке, ₽</th>
+                <th className="num">Нереализованный, ₽</th>
+                <th className="num">Результат дня, ₽</th>
+                <th className="num">DV01, ₽</th>
+              </tr>
+            </thead>
+            {view.lines.map((line) => (
+              <LineRows key={line.instrument_id} line={line} />
+            ))}
+          </table>
+          {Number(view.dv01_spread) !== 0 && (
+            <p className="muted">
+              DV01 портфеля за 1 бп: по доходности — {formatMoney(view.dv01_yield)} ₽ (облигации с
+              фиксированным купоном), по спреду — {formatMoney(view.dv01_spread)} ₽ (все облигации).
+            </p>
+          )}
+        </>
       )}
       <Movements portfolios={view.portfolios} instruments={instruments} />
+    </>
+  );
+}
+
+/** Стоимость портфеля и результат дня по частям: части в сумме дают результат. */
+function ResultNote({ result }: { readonly result: DayResult }) {
+  const parts = [
+    ['переоценка', result.revaluation],
+    ['реализованный результат', result.realized],
+    ['купонный доход', result.coupon],
+    ['комиссии по сделкам', result.fees],
+    ['расходы фонда', result.expenses],
+  ] as const;
+  return (
+    <>
+      <dl className="facts" aria-label="Стоимость и результат дня">
+        <dt>стоимость портфеля</dt>
+        <dd>{formatMoney(result.value)} ₽</dd>
+        <dt>результат дня</dt>
+        <dd>
+          <strong>{formatMoney(result.total)} ₽</strong>
+        </dd>
+        {parts.map(([label, value]) => (
+          <Fragment key={label}>
+            <dt>{label}</dt>
+            <dd>{formatMoney(value)} ₽</dd>
+          </Fragment>
+        ))}
+        {Number(result.flows) !== 0 && (
+          <>
+            <dt>приток: паи и переводы</dt>
+            <dd>{formatMoney(result.flows)} ₽</dd>
+          </>
+        )}
+        {Number(result.receivable) !== 0 && (
+          <>
+            <dt>к получению по сделкам до расчётов</dt>
+            <dd>{formatMoney(result.receivable)} ₽</dd>
+          </>
+        )}
+        {Number(result.payable) !== 0 && (
+          <>
+            <dt>к уплате по сделкам до расчётов</dt>
+            <dd>{formatMoney(result.payable)} ₽</dd>
+          </>
+        )}
+      </dl>
+      {result.flags.length > 0 && (
+        <p className="notice notice-warning">
+          Оценка неполная: {result.flags.map((f) => FLAG_LABELS[f]).join('; ')}.
+        </p>
+      )}
     </>
   );
 }
@@ -145,15 +211,49 @@ function LineRows({ line }: { readonly line: Line }) {
         <td className="num">{formatQuantity(line.trade_quantity)}</td>
         <td className="num">{formatQuantity(line.settle_quantity)}</td>
         <td className="num">
-          {line.average_price === null ? '—' : `${formatPrice(line.average_price)}${unit}`}
+          {line.price === null ? '—' : `${formatPrice(line.price)}${unit}`}
+          {line.flags.includes('stale_price') && <span className="danger"> *</span>}
         </td>
-        <td className="num">{formatMoney(line.cost)}</td>
-        <td className="num">{formatMoney(line.accrued_paid)}</td>
+        <td className="num">{formatMoney(line.clean)}</td>
+        <td className="num">{formatMoney(line.accrued_value)}</td>
+        <td className="num">{formatMoney(line.unrealized)}</td>
+        <td className="num">{formatMoney(line.result)}</td>
+        <td className="num">{line.dv01 === null ? '—' : formatMoney(line.dv01)}</td>
       </tr>
       <tr>
-        <td colSpan={6}>
+        <td colSpan={9}>
           <details>
-            <summary>Лоты FIFO: {line.lots.length}</summary>
+            <summary>Подробнее и лоты FIFO: {line.lots.length}</summary>
+            <dl className="facts" aria-label={`Оценка ${line.secid}`}>
+              <dt>средняя цена покупки</dt>
+              <dd>{line.average_price === null ? '—' : `${formatPrice(line.average_price)}${unit}`}</dd>
+              <dt>стоимость покупки, ₽</dt>
+              <dd>{formatMoney(line.cost)}</dd>
+              <dt>уплаченный НКД, ₽</dt>
+              <dd>{formatMoney(line.accrued_paid)}</dd>
+              <dt>результат дня: переоценка, реализованный, купонный доход, комиссии, ₽</dt>
+              <dd>
+                {[line.revaluation, line.realized, line.coupon, line.fees].map(formatMoney).join(' · ')}
+              </dd>
+              {Number(line.coupon_due) !== 0 && (
+                <>
+                  <dt>купоны к получению, ₽</dt>
+                  <dd>{formatMoney(line.coupon_due)}</dd>
+                </>
+              )}
+              {line.duration !== null && (
+                <>
+                  <dt>{line.metrics_basis === 'spread' ? 'спред-дюрация' : 'модифицированная дюрация'}</dt>
+                  <dd>{formatPrice(line.duration)}</dd>
+                </>
+              )}
+              {line.flags.length > 0 && (
+                <>
+                  <dt>оценка</dt>
+                  <dd className="danger">{line.flags.map((f) => FLAG_LABELS[f]).join('; ')}</dd>
+                </>
+              )}
+            </dl>
             <table className="data" aria-label={`Лоты ${line.secid}`}>
               <thead>
                 <tr>
