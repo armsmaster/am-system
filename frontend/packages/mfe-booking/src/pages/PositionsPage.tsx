@@ -1,5 +1,5 @@
 import { LoadedView, useLoad } from '@am/ui';
-import { useCallback } from 'react';
+import { Fragment, useCallback } from 'react';
 
 import type { Context } from '../App';
 import type { Instrument, Line, Positions, PortfolioState } from '../api';
@@ -60,6 +60,7 @@ function PositionsView({
         Деньги по дате расчётов на конец {formatDate(view.date)}:{' '}
         <strong>{formatMoney(view.cash)} ₽</strong>
       </p>
+      <FundFiguresNote view={view} />
       {view.lines.length === 0 ? (
         <p className="muted">Бумаг нет.</p>
       ) : (
@@ -81,6 +82,33 @@ function PositionsView({
       )}
       <Movements portfolios={view.portfolios} instruments={instruments} />
     </>
+  );
+}
+
+/** Паи, требования, обязательства и расходы — если у портфеля они есть. */
+function FundFiguresNote({ view }: { readonly view: Positions }) {
+  const figures = [
+    ['паи фонда', view.units, ' шт.'],
+    ['требования к пайщикам', view.claims, ' ₽'],
+    ['обязательства перед пайщиками', view.obligations, ' ₽'],
+    ['начисленные расходы', view.expenses, ' ₽'],
+  ] as const;
+  const shown = figures.filter(([, value]) => Number(value) !== 0);
+  if (shown.length === 0) {
+    return null;
+  }
+  return (
+    <dl className="facts" aria-label="Паи и расчёты с пайщиками">
+      {shown.map(([label, value, unit]) => (
+        <Fragment key={label}>
+          <dt>{label}</dt>
+          <dd>
+            {unit === ' шт.' ? formatPrice(value) : formatMoney(value)}
+            {unit}
+          </dd>
+        </Fragment>
+      ))}
+    </dl>
   );
 }
 
@@ -169,7 +197,8 @@ function Movements({
   if (rows.length === 0) {
     return null;
   }
-  const secid = (id: string) => instruments.find((i) => i.id === id)?.secid ?? id;
+  const secid = (id: string | null) =>
+    id === null ? '—' : (instruments.find((i) => i.id === id)?.secid ?? id);
   return (
     <table className="data" aria-label="Движения дня">
       <thead>

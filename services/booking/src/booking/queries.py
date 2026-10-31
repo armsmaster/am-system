@@ -22,6 +22,10 @@ class PortfolioState:
     waiting_since: date | None  # стоит в очереди пересчёта с этой даты
     cash: Decimal
     movements: tuple[Movement, ...]  # движения дня снапшота
+    units: Decimal = ZERO
+    claims: Decimal = ZERO
+    obligations: Decimal = ZERO
+    expenses: Decimal = ZERO
 
 
 @dataclass(slots=True)
@@ -66,6 +70,22 @@ class PositionsView:
     def cash(self) -> Decimal:
         return sum((p.cash for p in self.portfolios), ZERO)
 
+    @property
+    def units(self) -> Decimal:
+        return sum((p.units for p in self.portfolios), ZERO)
+
+    @property
+    def claims(self) -> Decimal:
+        return sum((p.claims for p in self.portfolios), ZERO)
+
+    @property
+    def obligations(self) -> Decimal:
+        return sum((p.obligations for p in self.portfolios), ZERO)
+
+    @property
+    def expenses(self) -> Decimal:
+        return sum((p.expenses for p in self.portfolios), ZERO)
+
 
 async def positions(
     session: AsyncSession, visible: Mapping[UUID, PortfolioRef], portfolio_id: UUID, day: date
@@ -76,7 +96,7 @@ async def positions(
         return None
     physical = physical_under(portfolio_id, visible)
     repo = Repository(session)
-    waiting = await repo.waiting(p.id for p in physical)
+    waiting = await repo.waiting(p.fund_id for p in physical)
     states: list[PortfolioState] = []
     lines: dict[UUID, PositionLine] = {}
     for ref in physical:
@@ -85,11 +105,15 @@ async def positions(
         states.append(
             PortfolioState(
                 portfolio=ref,
-                as_of=None if snapshot is None else snapshot.day,
-                waiting_since=waiting.get(ref.id),
+                as_of=None if state is None else state.day,
+                waiting_since=None if ref.fund_id is None else waiting.get(ref.fund_id),
                 cash=ZERO if state is None else state.cash,
                 # Движения — только если снапшот именно на этот день.
                 movements=() if state is None or state.day != day else state.movements,
+                units=ZERO if state is None else state.units,
+                claims=ZERO if state is None else state.claims,
+                obligations=ZERO if state is None else state.obligations,
+                expenses=ZERO if state is None else state.expenses,
             )
         )
         for holding in [] if state is None else state.holdings.values():
@@ -102,7 +126,7 @@ async def positions(
             line.lots += [(ref.code, lot) for lot in holding.lots]
     names = await repo.instruments_named(lines)
     for instrument_id, line in lines.items():
-        # Позиция есть только по бумагам из сделок — имя есть всегда.
+        # Позиция есть только по бумагам из сделок и переводов — имя есть всегда.
         line.secid, line.short_name = names[instrument_id].secid, names[instrument_id].short_name
     return PositionsView(
         portfolio, day, states, sorted(lines.values(), key=lambda line: line.secid)

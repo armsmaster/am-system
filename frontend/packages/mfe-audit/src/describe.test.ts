@@ -187,6 +187,31 @@ describe('changes', () => {
     expect(['trade.cancelled', 'trade.confirmed'].map(actionLabel)).toEqual(['Отменена сделка', 'Подтверждена сделка']);
   });
 
+  it('describes fund operations', () => {
+    const settled = event('operation.settled', {
+      operation: { kind: 'unit_issue', portfolio: 'OPIF1-TREASURY' },
+      before: { portfolio: 'OPIF1-TREASURY', receiver: null, status: 'active', kind: 'unit_issue', units: '100000', settled_date: null },
+      after: { portfolio: 'OPIF1-TREASURY', receiver: null, status: 'active', kind: 'unit_issue', units: '100000', settled_date: '2026-11-27' },
+    });
+    const hidden = event('operation.entered', {
+      operation: { kind: 'expense_accrual', portfolio: null },
+      before: null,
+      after: { expense_kind: 'specdep' },
+    });
+
+    expect([actionLabel(settled.type), objectLabel(settled)]).toEqual([
+      'Отмечен расчёт по паям',
+      'OPIF1-TREASURY: выдача паёв',
+    ]);
+    expect(changes(settled)).toEqual([{ field: 'Расчёт отмечен', before: '—', after: '27.11.2026' }]);
+    expect(objectLabel(hidden)).toBe('—: начисление расхода');
+    expect(changes(hidden)).toEqual([{ field: 'Вид расхода', before: '—', after: 'специализированный депозитарий' }]);
+    expect(['operation.entered', 'operation.cancelled'].map(actionLabel)).toEqual([
+      'Проведена операция фонда',
+      'Отменена операция фонда',
+    ]);
+  });
+
   it('spells out floater terms', () => {
     const item = event('instrument.version_added', {
       before: { floater: null },

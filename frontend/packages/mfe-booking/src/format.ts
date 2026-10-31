@@ -1,4 +1,4 @@
-import type { Decimal, MovementKind, Side, Status } from './api';
+import type { Decimal, ExpenseKind, MovementKind, OperationKind, Side, Status } from './api';
 
 export const SIDE_LABELS: Readonly<Record<Side, string>> = { buy: 'покупка', sell: 'продажа' };
 
@@ -17,6 +17,30 @@ export const MOVEMENT_LABELS: Readonly<Record<MovementKind, string>> = {
   amortization: 'амортизация',
   redemption: 'погашение',
   payment_unknown: 'выплата: сумма не объявлена',
+  unit_issue: 'выдача паёв',
+  unit_redemption: 'погашение паёв',
+  unit_settlement: 'расчёт по паям',
+  expense_accrual: 'начисление расхода',
+  expense_payment: 'выплата расхода',
+  transfer_out: 'перевод: ушло',
+  transfer_in: 'перевод: пришло',
+};
+
+export const OPERATION_LABELS: Readonly<Record<OperationKind, string>> = {
+  unit_issue: 'выдача паёв',
+  unit_redemption: 'погашение паёв',
+  expense_accrual: 'начисление расхода',
+  expense_payment: 'выплата расхода',
+  cash_transfer: 'перевод денег',
+  security_transfer: 'перевод бумаг',
+};
+
+export const EXPENSE_LABELS: Readonly<Record<ExpenseKind, string>> = {
+  specdep: 'специализированный депозитарий',
+  registrar: 'регистратор',
+  auditor: 'аудитор',
+  exchange_broker: 'биржа и брокер',
+  other: 'прочие',
 };
 
 /** Поля сделки, как их называет карточка версий. */

@@ -47,7 +47,7 @@ function TradeCard({
   const confirm = useAction(onChanged);
   // Подтверждённую сделку правит и отменяет только сопровождение (решение 95).
   const changeable =
-    trade.status !== 'cancelled' && (trade.status !== 'confirmed' || context.canConfirm);
+    trade.status !== 'cancelled' && (trade.status !== 'confirmed' || context.isOperations);
   const done = () => {
     setMode('view');
     onChanged();
@@ -96,7 +96,7 @@ function TradeCard({
         <dd>{trade.external_id ?? '—'}</dd>
       </dl>
       <p>
-        {context.canConfirm && trade.status === 'entered' && (
+        {context.isOperations && trade.status === 'entered' && (
           <button
             type="button"
             disabled={confirm.busy}

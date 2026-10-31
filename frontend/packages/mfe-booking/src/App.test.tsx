@@ -45,17 +45,19 @@ describe('BookingApp', () => {
     expect(await screen.findByRole('link', { name: 'SU26238RMFS4' })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith('/api/portfolio/portfolios', expect.anything());
     expect(screen.getByRole('link', { name: 'Позиции' })).toHaveAttribute('href', '/booking/positions');
+    expect(screen.getByRole('link', { name: 'Лестница' })).toHaveAttribute('href', '/booking/ladder');
+    expect(screen.getByRole('link', { name: 'Операции фонда' })).toHaveAttribute('href', '/booking/operations');
   });
 
   it.each([
     [['operations'] as const, true],
     [['trading'] as const, false],
-  ])('opens a trade; confirmation for %s: %s', async (roles, canConfirm) => {
+  ])('opens a trade; confirmation for %s: %s', async (roles, isOperations) => {
     stubServices();
     renderInShell('/booking/trades/t-1', ...roles);
 
     expect(await screen.findByRole('heading', { name: /SU26238RMFS4/ })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Подтвердить' }) !== null).toBe(canConfirm);
+    expect(screen.queryByRole('button', { name: 'Подтвердить' }) !== null).toBe(isOperations);
   });
 
   it('opens positions', async () => {

@@ -1,8 +1,8 @@
-"""HTTP API сделок и позиций. Правила — в docs/design/05-booking.md."""
+"""HTTP API сделок, операций фонда, позиций и лестницы. Правила — в docs/design/05-booking.md."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal, cast
@@ -18,14 +18,17 @@ from am_common.clock import MOSCOW
 from booking.clients import (
     MarketdataClient,
     PortfolioClient,
+    PortfolioRef,
     RefdataClient,
     ServiceUnavailableError,
     physical_under,
     service_token,
 )
+from booking.ladder import Ladder, ladder
+from booking.operations import OperationDesk, OperationInput, OperationView
 from booking.queries import PortfolioState, PositionLine, positions
 from booking.repository import NotFoundError, Repository
-from booking.roll import Side
+from booking.roll import Movement, OperationKind, Side
 from booking.settings import BookingSettings
 from booking.trades import Defaults, RuleViolationError, TradeDesk, TradeInput, TradeView
 
@@ -35,6 +38,8 @@ Operations = Annotated[Principal, Depends(require_any_role(Role.OPERATIONS))]
 Authorization = Annotated[str, Header(alias="Authorization")]
 Comment = Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=500)]
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+OptionalComment = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] | None
+Money = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=2)]
 
 router = APIRouter()
 
@@ -78,6 +83,23 @@ def desk(
         authorization,
         refdata=services.refdata,
         marketdata=services.marketdata,
+        portfolios=services.portfolios,
+        clock=lambda: now,
+    )
+
+
+def operation_desk(
+    session: DbSession,
+    principal: Principal,
+    authorization: str,
+    services: Clients,
+    now: datetime,
+) -> OperationDesk:
+    return OperationDesk(
+        session,
+        principal,
+        authorization,
+        refdata=services.refdata,
         portfolios=services.portfolios,
         clock=lambda: now,
     )
@@ -193,13 +215,23 @@ class LineOut(BaseModel):
 
 class MovementOut(BaseModel):
     kind: str
-    instrument_id: UUID
+    instrument_id: UUID | None
     trade_id: UUID | None
+    operation_id: UUID | None
     quantity: int
     cash: Decimal
 
 
-class PortfolioStateOut(BaseModel):
+class FundFigures(BaseModel):
+    """Паи, требования и обязательства — у казначейского портфеля фонда."""
+
+    units: Decimal
+    claims: Decimal  # к пайщикам: паи выданы, деньги не пришли
+    obligations: Decimal  # перед пайщиками: паи погашены, деньги не ушли
+    expenses: Decimal  # начисленные и не выплаченные расходы
+
+
+class PortfolioStateOut(FundFigures):
     id: UUID
     code: str
     name: str
@@ -209,7 +241,7 @@ class PortfolioStateOut(BaseModel):
     movements: list[MovementOut]
 
 
-class PositionsOut(BaseModel):
+class PositionsOut(FundFigures):
     portfolio_id: UUID
     code: str
     name: str
@@ -217,6 +249,118 @@ class PositionsOut(BaseModel):
     cash: Decimal
     portfolios: list[PortfolioStateOut]
     lines: list[LineOut]
+
+
+class _OperationBase(BaseModel):
+    op_date: date
+    comment: OptionalComment = None
+
+
+class UnitsIn(_OperationBase):
+    """Выдача или погашение паёв: паи с 5 знаками и сумма (вопрос 50)."""
+
+    kind: Literal["unit_issue", "unit_redemption"]
+    fund_id: UUID
+    units: Annotated[Decimal, Field(gt=0, max_digits=20, decimal_places=5)]
+    amount: Money
+    planned_date: date
+
+
+class ExpenseIn(_OperationBase):
+    kind: Literal["expense_accrual", "expense_payment"]
+    fund_id: UUID
+    expense_kind: Literal["specdep", "registrar", "auditor", "exchange_broker", "other"]
+    amount: Money
+
+
+class CashTransferIn(_OperationBase):
+    kind: Literal["cash_transfer"]
+    portfolio_id: UUID
+    receiver_id: UUID
+    amount: Money
+
+
+class SecurityTransferIn(_OperationBase):
+    kind: Literal["security_transfer"]
+    portfolio_id: UUID
+    receiver_id: UUID
+    instrument_id: UUID
+    quantity: Annotated[int, Field(gt=0, le=10**12)]
+
+
+OperationIn = Annotated[
+    UnitsIn | ExpenseIn | CashTransferIn | SecurityTransferIn, Field(discriminator="kind")
+]
+
+
+class SettleIn(BaseModel):
+    settled_date: date
+    comment: OptionalComment = None
+
+
+class OperationOut(BaseModel):
+    id: UUID
+    number: int
+    status: str
+    kind: OperationKind
+    fund_id: UUID
+    portfolio_id: UUID
+    portfolio_code: str | None
+    receiver_id: UUID | None
+    receiver_code: str | None
+    op_date: date
+    amount: Decimal | None
+    units: Decimal | None
+    planned_date: date | None
+    settled_date: date | None
+    expense_kind: str | None
+    instrument_id: UUID | None
+    secid: str | None
+    short_name: str | None
+    quantity: int | None
+    comment: str | None
+    author: str
+    created_at: datetime
+    versions: list[VersionOut] = []
+    warnings: list[str] = []
+
+
+class LadderMovementOut(MovementOut):
+    portfolio_code: str
+
+
+class LadderSecurityOut(BaseModel):
+    instrument_id: UUID
+    quantity: int  # на счёте депо на конец дня; меньше нуля — дефицит
+
+
+class LadderDayOut(BaseModel):
+    date: date
+    trading: bool
+    movements: list[LadderMovementOut]
+    cash: Decimal  # меньше нуля — дефицит денег
+    securities: list[LadderSecurityOut]
+
+
+class InstrumentOut(BaseModel):
+    instrument_id: UUID
+    secid: str
+    short_name: str
+
+
+class LadderPortfolioOut(BaseModel):
+    id: UUID
+    code: str
+    name: str
+
+
+class LadderOut(BaseModel):
+    account_id: UUID
+    portfolios: list[LadderPortfolioOut]
+    as_of: date | None
+    waiting_since: date | None
+    instruments: list[InstrumentOut]
+    days: list[LadderDayOut]
 
 
 # --- сделки ---------------------------------------------------------------------
@@ -360,9 +504,117 @@ async def get_positions(
         name=view.portfolio.name,
         date=view.day,
         cash=view.cash,
+        units=view.units,
+        claims=view.claims,
+        obligations=view.obligations,
+        expenses=view.expenses,
         portfolios=[_state_out(p) for p in view.portfolios],
         lines=[_line_out(line) for line in view.lines],
     )
+
+
+# --- операции фонда и переводы --------------------------------------------------
+
+
+@router.post("/operations", status_code=201, tags=["operations"])
+async def enter_operation(
+    body: OperationIn,
+    *,
+    user: Operations,
+    session: DbSession,
+    authorization: Authorization,
+    services: Services,
+    now: Now,
+) -> OperationOut:
+    """Паи и расходы — в казначейский портфель фонда; перевод — внутри фонда."""
+    entry = OperationInput(**(body.model_dump() | {"kind": OperationKind(body.kind)}))
+    view = await operation_desk(session, user, authorization, services, now).enter(entry)
+    return _operation_out(view)
+
+
+@router.get("/operations", tags=["operations"])
+async def list_operations(
+    _user: Staff,
+    *,
+    session: DbSession,
+    authorization: Authorization,
+    services: Services,
+    portfolio_id: UUID,
+    day: Annotated[date | None, Query(alias="date")] = None,
+) -> list[OperationOut]:
+    """Операции портфеля, фонда или compound — по всем его physical; новые сверху."""
+    visible = await services.portfolios.visible(authorization)
+    physical = {p.id for p in physical_under(portfolio_id, visible)}
+    rows = await Repository(session).operations(portfolio_ids=physical, op_date=day)
+    return [_operation_row_out(row, visible) for row in reversed(rows)]
+
+
+@router.get("/operations/{operation_id}", tags=["operations"])
+async def get_operation(
+    operation_id: UUID,
+    *,
+    user: Staff,
+    session: DbSession,
+    authorization: Authorization,
+    services: Services,
+    now: Now,
+) -> OperationOut:
+    desk_ = operation_desk(session, user, authorization, services, now)
+    return _operation_out(await desk_.view(operation_id))
+
+
+@router.post("/operations/{operation_id}/settle", tags=["operations"])
+async def settle_operation(
+    operation_id: UUID,
+    *,
+    body: SettleIn,
+    user: Operations,
+    session: DbSession,
+    authorization: Authorization,
+    services: Services,
+    now: Now,
+) -> OperationOut:
+    """Отметка расчёта по паям: деньги пришли или ушли (решение 42)."""
+    desk_ = operation_desk(session, user, authorization, services, now)
+    return _operation_out(await desk_.settle(operation_id, body.settled_date, body.comment))
+
+
+@router.post("/operations/{operation_id}/cancel", tags=["operations"])
+async def cancel_operation(
+    operation_id: UUID,
+    *,
+    body: CommentIn,
+    user: Operations,
+    session: DbSession,
+    authorization: Authorization,
+    services: Services,
+    now: Now,
+) -> OperationOut:
+    desk_ = operation_desk(session, user, authorization, services, now)
+    return _operation_out(await desk_.cancel(operation_id, body.comment))
+
+
+# --- лестница расчётов ----------------------------------------------------------
+
+
+@router.get("/ladder", tags=["positions"])
+async def get_ladder(
+    _user: Staff,
+    *,
+    session: DbSession,
+    authorization: Authorization,
+    services: Services,
+    now: Now,
+    account_id: UUID,
+) -> LadderOut:
+    """Деньги и бумаги на счёте на каждую дату расчётов от сегодня, дефициты."""
+    visible = await services.portfolios.visible(authorization)
+    found = await ladder(
+        session, services.refdata, visible, account_id, now.astimezone(MOSCOW).date()
+    )
+    if found is None:
+        raise NotFoundError("account", account_id)
+    return _ladder_out(found)
 
 
 # --- ошибки → ответы HTTP -------------------------------------------------------
@@ -449,6 +701,17 @@ def _trade_out(view: TradeView) -> TradeOut:
     return out.model_copy(update={"versions": versions, "warnings": view.warnings})
 
 
+def _movement_out(m: Movement) -> MovementOut:
+    return MovementOut(
+        kind=m.kind.value,
+        instrument_id=m.instrument_id,
+        trade_id=m.trade_id,
+        operation_id=m.operation_id,
+        quantity=m.quantity,
+        cash=m.cash,
+    )
+
+
 def _state_out(state: PortfolioState) -> PortfolioStateOut:
     return PortfolioStateOut(
         id=state.portfolio.id,
@@ -457,15 +720,88 @@ def _state_out(state: PortfolioState) -> PortfolioStateOut:
         as_of=state.as_of,
         waiting_since=state.waiting_since,
         cash=state.cash,
-        movements=[
-            MovementOut(
-                kind=m.kind.value,
-                instrument_id=m.instrument_id,
-                trade_id=m.trade_id,
-                quantity=m.quantity,
-                cash=m.cash,
+        units=state.units,
+        claims=state.claims,
+        obligations=state.obligations,
+        expenses=state.expenses,
+        movements=[_movement_out(m) for m in state.movements],
+    )
+
+
+OPERATION_TRACKED = ("status", "settled_date")
+
+
+def _operation_row_out(row: Any, visible: Mapping[UUID, PortfolioRef]) -> OperationOut:
+    def code(portfolio_id: UUID | None) -> str | None:
+        found = None if portfolio_id is None else visible.get(portfolio_id)
+        return None if found is None else found.code
+
+    return OperationOut(
+        id=row.operation_id,
+        portfolio_code=code(row.portfolio_id),
+        receiver_code=code(row.receiver_id),
+        **{name: getattr(row, name) for name in OperationOut.model_fields if hasattr(row, name)},
+    )
+
+
+def _operation_out(view: OperationView) -> OperationOut:
+    out = _operation_row_out(view.current, view.visible)
+    previous: Any = None
+    versions: list[VersionOut] = []
+    for row in view.versions:
+        changed = (
+            []
+            if previous is None
+            else [
+                name for name in OPERATION_TRACKED if getattr(row, name) != getattr(previous, name)
+            ]
+        )
+        versions.append(
+            VersionOut(
+                number=row.number,
+                status=row.status,
+                author=row.author,
+                created_at=row.created_at,
+                comment=row.comment,
+                changed=changed,
             )
-            for m in state.movements
+        )
+        previous = row
+    return out.model_copy(update={"versions": versions, "warnings": view.warnings})
+
+
+def _ladder_out(found: Ladder) -> LadderOut:
+    codes = {p.id: p.code for p in found.portfolios}
+    return LadderOut(
+        account_id=found.account_id,
+        portfolios=[
+            LadderPortfolioOut(id=p.id, code=p.code, name=p.name) for p in found.portfolios
+        ],
+        as_of=found.as_of,
+        waiting_since=found.waiting_since,
+        instruments=sorted(
+            (
+                InstrumentOut(instrument_id=i, secid=row.secid, short_name=row.short_name)
+                for i, row in found.names.items()
+            ),
+            key=lambda item: item.secid,
+        ),
+        days=[
+            LadderDayOut(
+                date=d.day,
+                trading=d.trading,
+                cash=d.cash,
+                movements=[
+                    LadderMovementOut(
+                        portfolio_code=codes[portfolio_id], **_movement_out(m).model_dump()
+                    )
+                    for portfolio_id, m in d.movements
+                ],
+                securities=[
+                    LadderSecurityOut(instrument_id=i, quantity=q) for i, q in d.securities.items()
+                ],
+            )
+            for d in found.days
         ],
     )
 

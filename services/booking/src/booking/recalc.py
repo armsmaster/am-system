@@ -1,17 +1,21 @@
 """Пересчёт задним числом (design/05, «Ролл и пересчёт задним числом»).
 
-Изменение входов ставит портфель в очередь с даты, начиная с которой его
-состояние могло измениться. Воркер забирает портфель (захват — только этот
-экземпляр), роллит дни до сегодня и сохраняет снапшоты; прежние снапшоты
-остаются замещёнными. Запросы к справочнику — вне транзакции.
+Изменение входов ставит фонд в очередь с даты, начиная с которой его
+состояние могло измениться. Пересчёт — по фонду целиком: перевод связывает
+его портфели (решения 37 и 98). Воркер забирает фонд (захват — только этот
+экземпляр), роллит дни до сегодня и сохраняет снапшоты всех портфелей фонда;
+прежние снапшоты остаются замещёнными. Запросы к справочнику — вне транзакции.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from collections import defaultdict
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -23,8 +27,18 @@ from am_common.consumer import StreamConsumer
 from am_common.db import Database
 from am_common.events import Event, stream_name
 from booking.clients import RefdataClient, ServiceUnavailableError, service_token
-from booking.repository import Claim, Repository
-from booking.roll import InstrumentKind, Side, Trade, from_json, roll_days, start, to_json
+from booking.repository import Claim, Repository, Snapshot
+from booking.roll import (
+    InstrumentKind,
+    Operation,
+    OperationKind,
+    Side,
+    State,
+    Trade,
+    from_json,
+    roll_fund_days,
+    to_json,
+)
 from booking.settings import BookingSettings
 from booking.terms import InstrumentHistory, TermsBook
 
@@ -42,7 +56,7 @@ def refdata_client(resources: Resources) -> RefdataClient:
 async def recalc_once(
     database: Database, refdata: RefdataClient, now: datetime, stale: timedelta
 ) -> UUID | None:
-    """Пересчитывает один портфель из очереди; None — очередь пуста."""
+    """Пересчитывает один фонд из очереди; None — очередь пуста."""
     async with database.session() as session, session.begin():
         claim = await Repository(session).claim(now, stale)
     if claim is None:
@@ -51,13 +65,64 @@ async def recalc_once(
         await recompute(database, refdata, claim, now)
     except (ServiceUnavailableError, SQLAlchemyError) as exc:
         # Захват снимаем сразу: следующая попытка не ждёт срока захвата.
-        logger.warning("recalc of %s failed, will retry: %s", claim.portfolio_id, exc)
+        logger.warning("recalc of %s failed, will retry: %s", claim.fund_id, exc)
         async with database.session() as session, session.begin():
-            await Repository(session).release(claim.portfolio_id)
+            await Repository(session).release(claim.fund_id)
         return None
     async with database.session() as session, session.begin():
         await Repository(session).finish(claim)
-    return claim.portfolio_id
+    return claim.fund_id
+
+
+@dataclass(frozen=True, slots=True)
+class FundInputs:
+    """Вход ролла фонда: сделки по портфелям, операции, состояния накануне ``first_day``."""
+
+    trades: dict[UUID, list[Trade]]
+    operations: list[Operation]
+    previous: list[Snapshot]
+    first_day: date
+
+    @property
+    def states(self) -> dict[UUID, State]:
+        return {s.portfolio_id: from_json(s.state) for s in self.previous}
+
+
+async def load_inputs(repo: Repository, fund_id: UUID, since: date, today: date) -> FundInputs:
+    """Ролл начинается после последнего снапшота до ``since``; снапшотов нет —
+    с первой сделки или операции фонда."""
+    trade_rows = await repo.fund_trades(fund_id)
+    operations = [_operation(row) for row in await repo.fund_operations(fund_id)]
+    previous = await repo.fund_before(fund_id, since)
+    trades: dict[UUID, list[Trade]] = defaultdict(list)
+    for row in trade_rows:
+        trades[row.portfolio_id].append(_trade(row))
+    if previous:
+        first_day = previous[0].day + timedelta(days=1)
+    elif trade_rows or operations:
+        first_day = min([r.trade_date for r in trade_rows] + [o.day for o in operations])
+    else:
+        # Ни сделок, ни операций — прежние снапшоты замещаются пустым запуском.
+        first_day = today + timedelta(days=1)
+    return FundInputs(dict(trades), operations, previous, first_day)
+
+
+async def terms_book(
+    refdata: RefdataClient, inputs: FundInputs, till: date
+) -> tuple[TermsBook, dict[date, bool]]:
+    """Условия бумаг фонда и торговый календарь от начала ролла до ``till``."""
+    instruments = (
+        {t.instrument_id for trades in inputs.trades.values() for t in trades}
+        | {o.instrument_id for o in inputs.operations if o.instrument_id is not None}
+        | {i for state in inputs.states.values() for i in state.holdings}
+    )
+    histories: dict[UUID, InstrumentHistory] = {}
+    for instrument_id in sorted(instruments, key=str):
+        history = await refdata.history(instrument_id)
+        if history is not None:
+            histories[instrument_id] = history
+    exceptions = await refdata.calendar_around(inputs.first_day - timedelta(days=1), till)
+    return TermsBook(histories, exceptions), exceptions
 
 
 async def recompute(
@@ -65,38 +130,33 @@ async def recompute(
 ) -> None:
     today = now.astimezone(MOSCOW).date()
     async with database.session() as session:
-        repo = Repository(session)
-        rows = await repo.current(portfolio_ids=[claim.portfolio_id], include_cancelled=False)
-        previous = await repo.snapshot_before(claim.portfolio_id, claim.since)
-    trades = [_trade(row) for row in rows]
-    if previous is not None:
-        state = from_json(previous.state)
-    elif trades:
-        state = start(min(t.trade_date for t in trades))
-    else:
-        # Сделок не осталось — прежние снапшоты замещаются пустым запуском.
-        state = start(today + timedelta(days=1))
-    instruments = {t.instrument_id for t in trades} | set(state.holdings)
-    histories: dict[UUID, InstrumentHistory] = {}
-    for instrument_id in instruments:
-        history = await refdata.history(instrument_id)
-        if history is not None:
-            histories[instrument_id] = history
-    exceptions = await refdata.calendar_around(state.day, today)
-    states = roll_days(state, today, trades, TermsBook(histories, exceptions))
-    replace_from = state.day + timedelta(days=1) if previous is not None else claim.since
+        inputs = await load_inputs(Repository(session), claim.fund_id, claim.since, today)
+    book, _ = await terms_book(refdata, inputs, today)
+    days = roll_fund_days(
+        inputs.states,
+        inputs.first_day,
+        today,
+        trades=inputs.trades,
+        operations=inputs.operations,
+        terms_on=book,
+    )
+    replace_from = inputs.first_day if inputs.previous else min(claim.since, inputs.first_day)
     async with database.session() as session, session.begin():
         await Repository(session).save_run(
             {
                 "id": uuid4(),
-                "portfolio_id": claim.portfolio_id,
+                "fund_id": claim.fund_id,
                 "since": replace_from,
                 "till": today,
                 "started_at": now,
                 "finished_at": moscow_now(),
             },
-            min(replace_from, state.day + timedelta(days=1)),
-            [(s.day, to_json(s)) for s in states],
+            replace_from,
+            [
+                (portfolio_id, state.day, to_json(state))
+                for day in days
+                for portfolio_id, state in sorted(day.items(), key=lambda item: str(item[0]))
+            ],
             now,
         )
 
@@ -119,14 +179,33 @@ def _trade(row: Any) -> Trade:
     )
 
 
+def _operation(row: Any) -> Operation:
+    return Operation(
+        id=row.operation_id,
+        kind=OperationKind(row.kind),
+        portfolio_id=row.portfolio_id,
+        day=row.op_date,
+        amount=row.amount or Decimal(0),
+        units=row.units or Decimal(0),
+        planned=row.planned_date,
+        settled=row.settled_date,
+        receiver_id=row.receiver_id,
+        instrument_id=row.instrument_id,
+        instrument_kind=None
+        if row.instrument_kind is None
+        else InstrumentKind(row.instrument_kind),
+        quantity=row.quantity or 0,
+    )
+
+
 async def extend_to_today(database: Database, now: datetime) -> int:
-    """Новый день: портфели досчитываются до сегодня — купоны идут по графику и без сделок."""
+    """Новый день: фонды досчитываются до сегодня — купоны идут по графику и без сделок."""
     today = now.astimezone(MOSCOW).date()
     async with database.session() as session, session.begin():
         repo = Repository(session)
-        behind = {p: d for p, d in (await repo.last_days()).items() if d < today}
-        for portfolio_id, last in behind.items():
-            await repo.mark_dirty(portfolio_id, last + timedelta(days=1), now)
+        behind = {f: d for f, d in (await repo.last_days()).items() if d < today}
+        for fund_id, last in behind.items():
+            await repo.mark_dirty(fund_id, last + timedelta(days=1), now)
     return len(behind)
 
 
@@ -149,13 +228,13 @@ class RefdataEvents:
         now = self._clock()
         async with self._database.session() as session, session.begin():
             repo = Repository(session)
-            portfolios = (
-                await repo.portfolios_with_trades()
+            funds = (
+                await repo.funds_with_activity()
                 if instrument_id is None
-                else await repo.portfolios_holding(instrument_id)
+                else await repo.funds_holding(instrument_id)
             )
-            for portfolio_id in portfolios:
-                await repo.mark_dirty(portfolio_id, since, now)
+            for fund_id in funds:
+                await repo.mark_dirty(fund_id, since, now)
 
 
 _ERRORS = (SQLAlchemyError, OSError)

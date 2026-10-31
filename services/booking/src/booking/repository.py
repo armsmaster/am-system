@@ -1,4 +1,4 @@
-"""Чтение и запись сделок, очереди пересчёта и снапшотов."""
+"""Чтение и запись сделок, операций фонда, очереди пересчёта и снапшотов."""
 
 from __future__ import annotations
 
@@ -8,11 +8,19 @@ from datetime import date, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Row, and_, func, or_, select, update
+from sqlalchemy import Row, Table, and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import distinct_on, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from booking.db import day_snapshot, recalc_queue, roll_run, trade, trade_version
+from booking.db import (
+    day_snapshot,
+    operation,
+    operation_version,
+    recalc_queue,
+    roll_run,
+    trade,
+    trade_version,
+)
 
 CANCELLED = "cancelled"
 
@@ -26,7 +34,7 @@ class NotFoundError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class Claim:
-    portfolio_id: UUID
+    fund_id: UUID
     since: date
     marked_at: datetime
 
@@ -53,19 +61,7 @@ class Repository:
 
     async def versions(self, trade_id: UUID, *, lock: bool = False) -> list[Row[Any]]:
         """Все версии сделки, от первой к последней."""
-        if lock:
-            await self._session.execute(
-                select(trade.c.id).where(trade.c.id == trade_id).with_for_update()
-            )
-        result = await self._session.execute(
-            select(trade_version)
-            .where(trade_version.c.trade_id == trade_id)
-            .order_by(trade_version.c.number)
-        )
-        rows = list(result)
-        if not rows:
-            raise NotFoundError("trade", trade_id)
-        return rows
+        return await self._versions(trade, trade_version, "trade_id", trade_id, lock=lock)
 
     async def current(
         self,
@@ -76,18 +72,7 @@ class Repository:
     ) -> list[Row[Any]]:
         """Действующие (последние) версии сделок портфелей."""
         ids = set(portfolio_ids)
-        # Портфель мог смениться в последней версии — фильтруем после выбора последней.
-        latest = (
-            select(trade_version)
-            .where(
-                trade_version.c.trade_id.in_(
-                    select(trade_version.c.trade_id).where(trade_version.c.portfolio_id.in_(ids))
-                )
-            )
-            .ext(distinct_on(trade_version.c.trade_id))
-            .order_by(trade_version.c.trade_id, trade_version.c.number.desc())
-        )
-        rows = list(await self._session.execute(latest))
+        rows = await self._latest(trade_version, "trade_id", trade_version.c.portfolio_id.in_(ids))
         return sorted(
             (
                 r
@@ -99,43 +84,105 @@ class Repository:
             key=lambda r: (r.trade_at, str(r.trade_id)),
         )
 
-    async def portfolios_holding(self, instrument_id: UUID) -> list[UUID]:
-        result = await self._session.execute(
-            select(trade_version.c.portfolio_id)
-            .where(trade_version.c.instrument_id == instrument_id)
-            .distinct()
-        )
-        return [row.portfolio_id for row in result]
-
-    async def portfolios_with_trades(self) -> list[UUID]:
-        result = await self._session.execute(select(trade_version.c.portfolio_id).distinct())
-        return [row.portfolio_id for row in result]
+    async def fund_trades(self, fund_id: UUID) -> list[Row[Any]]:
+        """Действующие неотменённые сделки фонда — вход ролла."""
+        rows = await self._latest(trade_version, "trade_id", trade_version.c.fund_id == fund_id)
+        return [r for r in rows if r.fund_id == fund_id and r.status != CANCELLED]
 
     async def instruments_named(self, instrument_ids: Iterable[UUID]) -> dict[UUID, Any]:
-        """Код и название бумаги — из последней введённой версии с этой бумагой."""
-        result = await self._session.execute(
-            select(
-                trade_version.c.instrument_id,
-                trade_version.c.instrument_kind,
-                trade_version.c.secid,
-                trade_version.c.short_name,
+        """Код и название бумаги — из последней введённой сделки или перевода с ней."""
+        ids = list(instrument_ids)
+        found: dict[UUID, Any] = {}
+        for versions in (trade_version, operation_version):
+            result = await self._session.execute(
+                select(
+                    versions.c.instrument_id,
+                    versions.c.instrument_kind,
+                    versions.c.secid,
+                    versions.c.short_name,
+                    versions.c.created_at,
+                )
+                .where(versions.c.instrument_id.in_(ids))
+                .ext(distinct_on(versions.c.instrument_id))
+                .order_by(versions.c.instrument_id, versions.c.created_at.desc())
             )
-            .where(trade_version.c.instrument_id.in_(list(instrument_ids)))
-            .ext(distinct_on(trade_version.c.instrument_id))
-            .order_by(trade_version.c.instrument_id, trade_version.c.created_at.desc())
+            for row in result:
+                known = found.get(row.instrument_id)
+                if known is None or known.created_at < row.created_at:
+                    found[row.instrument_id] = row
+        return found
+
+    # --- операции фонда -------------------------------------------------------
+
+    async def add_operation(self, values: dict[str, Any]) -> None:
+        await self._session.execute(insert(operation).values(**values))
+
+    async def add_operation_version(self, values: dict[str, Any]) -> None:
+        await self._session.execute(insert(operation_version).values(**values))
+
+    async def operation_versions(self, operation_id: UUID, *, lock: bool = False) -> list[Row[Any]]:
+        return await self._versions(
+            operation, operation_version, "operation_id", operation_id, lock=lock
         )
-        return {row.instrument_id: row for row in result}
+
+    async def operations(
+        self, *, portfolio_ids: Iterable[UUID], op_date: date | None = None
+    ) -> list[Row[Any]]:
+        """Действующие версии операций, где портфель — отправитель или получатель."""
+        ids = set(portfolio_ids)
+        rows = await self._latest(
+            operation_version,
+            "operation_id",
+            or_(
+                operation_version.c.portfolio_id.in_(ids),
+                operation_version.c.receiver_id.in_(ids),
+            ),
+        )
+        return sorted(
+            (
+                r
+                for r in rows
+                if (r.portfolio_id in ids or r.receiver_id in ids)
+                and (op_date is None or r.op_date == op_date)
+            ),
+            key=lambda r: (r.op_date, r.created_at),
+        )
+
+    async def fund_operations(self, fund_id: UUID) -> list[Row[Any]]:
+        """Действующие неотменённые операции фонда — вход ролла."""
+        rows = await self._latest(
+            operation_version, "operation_id", operation_version.c.fund_id == fund_id
+        )
+        return [r for r in rows if r.status != CANCELLED]
+
+    # --- что затрагивают изменения справочника ----------------------------------
+
+    async def funds_holding(self, instrument_id: UUID) -> list[UUID]:
+        result = await self._session.execute(
+            select(trade_version.c.fund_id)
+            .where(trade_version.c.instrument_id == instrument_id)
+            .union(
+                select(operation_version.c.fund_id).where(
+                    operation_version.c.instrument_id == instrument_id
+                )
+            )
+        )
+        return [row.fund_id for row in result]
+
+    async def funds_with_activity(self) -> list[UUID]:
+        result = await self._session.execute(
+            select(trade_version.c.fund_id).union(select(operation_version.c.fund_id))
+        )
+        return [row.fund_id for row in result]
 
     # --- очередь пересчёта ----------------------------------------------------
 
-    async def mark_dirty(self, portfolio_id: UUID, since: date, now: datetime) -> None:
-        """Портфель надо пересчитать с ``since``: раньше отмеченная дата не теряется."""
-        statement = insert(recalc_queue).values(
-            portfolio_id=portfolio_id, since=since, marked_at=now
-        )
+    async def mark_dirty(self, fund_id: UUID, since: date, now: datetime) -> None:
+        """Фонд надо пересчитать с ``since``: раньше отмеченная дата не теряется."""
+        statement = insert(recalc_queue).values(fund_id=fund_id, since=since, marked_at=now)
         await self._session.execute(
             statement.on_conflict_do_update(
-                index_elements=[recalc_queue.c.portfolio_id],
+                index_elements=[recalc_queue.c.fund_id],
                 set_={
                     "since": func.least(recalc_queue.c.since, statement.excluded.since),
                     "marked_at": statement.excluded.marked_at,
@@ -144,9 +191,9 @@ class Repository:
         )
 
     async def claim(self, now: datetime, stale: timedelta) -> Claim | None:
-        """Забирает портфель из очереди: его пересчитает только этот экземпляр."""
+        """Забирает фонд из очереди: его пересчитает только этот экземпляр."""
         waiting = (
-            select(recalc_queue.c.portfolio_id)
+            select(recalc_queue.c.fund_id)
             .where(
                 or_(recalc_queue.c.claimed_at.is_(None), recalc_queue.c.claimed_at < now - stale)
             )
@@ -157,58 +204,69 @@ class Repository:
         )
         result = await self._session.execute(
             update(recalc_queue)
-            .where(recalc_queue.c.portfolio_id == waiting)
+            .where(recalc_queue.c.fund_id == waiting)
             .values(claimed_at=now)
-            .returning(recalc_queue.c.portfolio_id, recalc_queue.c.since, recalc_queue.c.marked_at)
+            .returning(recalc_queue.c.fund_id, recalc_queue.c.since, recalc_queue.c.marked_at)
         )
         row = result.one_or_none()
-        return None if row is None else Claim(row.portfolio_id, row.since, row.marked_at)
+        return None if row is None else Claim(row.fund_id, row.since, row.marked_at)
 
     async def finish(self, claim: Claim) -> None:
-        """Снимает портфель с очереди, если за время пересчёта его не отметили снова."""
+        """Снимает фонд с очереди, если за время пересчёта его не отметили снова."""
         await self._session.execute(
             recalc_queue.delete().where(
                 and_(
-                    recalc_queue.c.portfolio_id == claim.portfolio_id,
+                    recalc_queue.c.fund_id == claim.fund_id,
                     recalc_queue.c.marked_at == claim.marked_at,
                 )
             )
         )
-        await self.release(claim.portfolio_id)
+        await self.release(claim.fund_id)
 
-    async def release(self, portfolio_id: UUID) -> None:
+    async def release(self, fund_id: UUID) -> None:
         await self._session.execute(
-            update(recalc_queue)
-            .where(recalc_queue.c.portfolio_id == portfolio_id)
-            .values(claimed_at=None)
+            update(recalc_queue).where(recalc_queue.c.fund_id == fund_id).values(claimed_at=None)
         )
 
-    async def waiting(self, portfolio_ids: Iterable[UUID]) -> dict[UUID, date]:
-        """С какой даты портфели ждут пересчёта."""
+    async def waiting(self, fund_ids: Iterable[UUID | None]) -> dict[UUID, date]:
+        """С какой даты фонды ждут пересчёта."""
         result = await self._session.execute(
-            select(recalc_queue.c.portfolio_id, recalc_queue.c.since).where(
-                recalc_queue.c.portfolio_id.in_(list(portfolio_ids))
+            select(recalc_queue.c.fund_id, recalc_queue.c.since).where(
+                recalc_queue.c.fund_id.in_([f for f in fund_ids if f is not None])
             )
         )
-        return {row.portfolio_id: row.since for row in result}
+        return {row.fund_id: row.since for row in result}
 
     # --- снапшоты -------------------------------------------------------------
 
-    async def snapshot_before(self, portfolio_id: UUID, day: date) -> Snapshot | None:
-        """Последний действующий снапшот раньше ``day``."""
-        return await self._snapshot(portfolio_id, day_snapshot.c.day < day)
+    async def fund_before(self, fund_id: UUID, day: date) -> list[Snapshot]:
+        """Действующие снапшоты портфелей фонда на последний день раньше ``day``."""
+        last = (
+            select(func.max(day_snapshot.c.day))
+            .where(
+                day_snapshot.c.fund_id == fund_id,
+                day_snapshot.c.replaced_at.is_(None),
+                day_snapshot.c.day < day,
+            )
+            .scalar_subquery()
+        )
+        result = await self._session.execute(
+            select(day_snapshot).where(
+                day_snapshot.c.fund_id == fund_id,
+                day_snapshot.c.replaced_at.is_(None),
+                day_snapshot.c.day == last,
+            )
+        )
+        return [Snapshot(r.portfolio_id, r.day, r.state, r.run_id) for r in result]
 
     async def snapshot_on(self, portfolio_id: UUID, day: date) -> Snapshot | None:
-        """Действующий снапшот на ``day`` или последний до него."""
-        return await self._snapshot(portfolio_id, day_snapshot.c.day <= day)
-
-    async def _snapshot(self, portfolio_id: UUID, condition: Any) -> Snapshot | None:
+        """Действующий снапшот портфеля на ``day`` или последний до него."""
         result = await self._session.execute(
             select(day_snapshot)
             .where(
                 day_snapshot.c.portfolio_id == portfolio_id,
                 day_snapshot.c.replaced_at.is_(None),
-                condition,
+                day_snapshot.c.day <= day,
             )
             .order_by(day_snapshot.c.day.desc())
             .limit(1)
@@ -217,26 +275,26 @@ class Repository:
         return None if row is None else Snapshot(row.portfolio_id, row.day, row.state, row.run_id)
 
     async def last_days(self) -> dict[UUID, date]:
-        """Последний рассчитанный день по каждому портфелю."""
+        """Последний рассчитанный день по каждому фонду."""
         result = await self._session.execute(
-            select(day_snapshot.c.portfolio_id, func.max(day_snapshot.c.day).label("day"))
+            select(day_snapshot.c.fund_id, func.max(day_snapshot.c.day).label("day"))
             .where(day_snapshot.c.replaced_at.is_(None))
-            .group_by(day_snapshot.c.portfolio_id)
+            .group_by(day_snapshot.c.fund_id)
         )
-        return {row.portfolio_id: row.day for row in result}
+        return {row.fund_id: row.day for row in result}
 
     async def save_run(
         self,
         run: dict[str, Any],
         replace_from: date,
-        states: Sequence[tuple[date, dict[str, Any]]],
+        states: Sequence[tuple[UUID, date, dict[str, Any]]],
         now: datetime,
     ) -> None:
-        """Замещает снапшоты с ``replace_from`` новыми; старые остаются в истории."""
+        """Замещает снапшоты фонда с ``replace_from`` новыми; старые остаются в истории."""
         await self._session.execute(
             update(day_snapshot)
             .where(
-                day_snapshot.c.portfolio_id == run["portfolio_id"],
+                day_snapshot.c.fund_id == run["fund_id"],
                 day_snapshot.c.day >= replace_from,
                 day_snapshot.c.replaced_at.is_(None),
             )
@@ -248,12 +306,41 @@ class Repository:
                 insert(day_snapshot).values(
                     [
                         {
-                            "portfolio_id": run["portfolio_id"],
+                            "fund_id": run["fund_id"],
+                            "portfolio_id": portfolio_id,
                             "day": day,
                             "run_id": run["id"],
                             "state": state,
                         }
-                        for day, state in states
+                        for portfolio_id, day, state in states
                     ]
                 )
             )
+
+    # --- общее ----------------------------------------------------------------
+
+    async def _versions(
+        self, head: Table, versions: Table, key: str, entity_id: UUID, *, lock: bool
+    ) -> list[Row[Any]]:
+        if lock:
+            await self._session.execute(
+                select(head.c.id).where(head.c.id == entity_id).with_for_update()
+            )
+        result = await self._session.execute(
+            select(versions).where(versions.c[key] == entity_id).order_by(versions.c.number)
+        )
+        rows = list(result)
+        if not rows:
+            raise NotFoundError("trade" if head is trade else "operation", entity_id)
+        return rows
+
+    async def _latest(self, versions: Table, key: str, condition: Any) -> list[Row[Any]]:
+        """Последние версии сущностей, у которых хоть одна версия подходит под условие:
+        портфель или фонд могли смениться в последней версии — фильтр после выбора."""
+        result = await self._session.execute(
+            select(versions)
+            .where(versions.c[key].in_(select(versions.c[key]).where(condition)))
+            .ext(distinct_on(versions.c[key]))
+            .order_by(versions.c[key], versions.c.number.desc())
+        )
+        return list(result)

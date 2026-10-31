@@ -36,7 +36,15 @@ describe('PositionsPage', () => {
           { ...state!, code: 'A', waiting_since: '2026-11-30' },
           { ...state!, code: 'B', as_of: null, movements: [] },
           { ...state!, code: 'C', as_of: '2026-12-01', movements: [] },
-          { ...state!, id: 'x', code: 'D', movements: [{ kind: 'settlement', instrument_id: 'gone', trade_id: 't', quantity: -20000, cash: '11224200.00' }] },
+          {
+            ...state!,
+            id: 'x',
+            code: 'D',
+            movements: [
+              { kind: 'settlement', instrument_id: 'gone', trade_id: 't', operation_id: null, quantity: -20000, cash: '11224200.00' },
+              { kind: 'transfer_in', instrument_id: null, trade_id: null, operation_id: 'o', quantity: 0, cash: '60000000.00' },
+            ],
+          },
         ],
       }),
     );
@@ -48,6 +56,7 @@ describe('PositionsPage', () => {
     expect(screen.getByText('Бумаг нет.')).toBeInTheDocument();
     const moves = within(screen.getByRole('table', { name: 'Движения дня' })).getAllByRole('row');
     expect(moves[2]).toHaveTextContent('Dрасчёты по сделкеgone−20 00011 224 200,00');
+    expect(moves[3]).toHaveTextContent('Dперевод: пришло——60 000 000,00');
   });
 
   it('shows a fund share price in roubles and a day without movements', async () => {
@@ -65,6 +74,18 @@ describe('PositionsPage', () => {
     const table = await screen.findByRole('table', { name: 'Позиции' });
     expect(within(table).getAllByRole('row')[1]).toHaveTextContent('30 000—15 750');
     expect(screen.queryByRole('table', { name: 'Движения дня' })).not.toBeInTheDocument();
+  });
+
+  it('shows units and settlements with unit holders of the treasury portfolio', async () => {
+    const api = fakeApi();
+    api.positions.mockResolvedValue(
+      positions({ units: '100000.50000', claims: '1000.00', obligations: '0', expenses: '20000.00', lines: [] }),
+    );
+    renderBooking(api, '/booking/positions?portfolio=p-treasury&date=2026-11-26');
+
+    const list = await screen.findByLabelText('Паи и расчёты с пайщиками');
+    expect(list).toHaveTextContent('паи фонда100 000,5 шт.требования к пайщикам1 000,00 ₽начисленные расходы20 000,00 ₽');
+    expect(list).not.toHaveTextContent('обязательства');
   });
 
   it('explains when there are no portfolios', async () => {

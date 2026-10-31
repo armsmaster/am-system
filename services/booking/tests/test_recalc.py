@@ -34,8 +34,10 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.integration
 
+FUND = UUID("00000000-0000-0000-0000-00000000f001")
 BONDS = UUID("00000000-0000-0000-0000-00000000b001")
-TREASURY = UUID("00000000-0000-0000-0000-00000000a001")
+OTHER_FUND = UUID("00000000-0000-0000-0000-00000000f002")
+OTHER_BONDS = UUID("00000000-0000-0000-0000-00000000b002")
 OFZ = UUID("00000000-0000-0000-0000-000000026238")
 LQDT = UUID("00000000-0000-0000-0000-0000000001d7")
 NOW = datetime(2026, 12, 3, 12, 0, tzinfo=MOSCOW)
@@ -66,7 +68,7 @@ def enter(client: TestClient, tokens: TokenFactory, **changes: Any) -> dict[str,
 async def queue(resources: Resources) -> dict[UUID, date]:
     async with resources.require_database().session() as session:
         rows = (await session.execute(select(recalc_queue))).all()
-    return {row.portfolio_id: row.since for row in rows}
+    return {row.fund_id: row.since for row in rows}
 
 
 async def run(resources: Resources, now: datetime = NOW) -> UUID | None:
@@ -80,14 +82,14 @@ async def test_failed_recalc_is_retried(
     world.down.add("refdata")
 
     assert await run(resources) is None
-    assert await queue(resources) == {BONDS: date(2026, 11, 27)}  # захват снят, портфель ждёт
+    assert await queue(resources) == {FUND: date(2026, 11, 27)}  # захват снят, фонд ждёт
 
     world.down.clear()
-    assert await run(resources) == BONDS
+    assert await run(resources) == FUND
     assert await queue(resources) == {}
 
 
-async def test_claimed_portfolio_waits_for_the_claim(
+async def test_claimed_fund_waits_for_the_claim(
     client: TestClient, tokens: TokenFactory, resources: Resources
 ) -> None:
     enter(client, tokens)
@@ -95,8 +97,8 @@ async def test_claimed_portfolio_waits_for_the_claim(
         assert await Repository(session).claim(NOW, STALE) is not None
 
     assert await run(resources) is None
-    # Упавший экземпляр: через срок захвата портфель заберёт другой.
-    assert await run(resources, NOW + STALE + timedelta(seconds=1)) == BONDS
+    # Упавший экземпляр: через срок захвата фонд заберёт другой.
+    assert await run(resources, NOW + STALE + timedelta(seconds=1)) == FUND
 
 
 async def test_marked_again_during_recalc_stays_in_queue(
@@ -106,11 +108,11 @@ async def test_marked_again_during_recalc_stays_in_queue(
     async with resources.require_database().session() as session, session.begin():
         claim = await Repository(session).claim(NOW, STALE)
         assert claim is not None
-        await Repository(session).mark_dirty(BONDS, date(2026, 11, 1), NOW + timedelta(seconds=1))
+        await Repository(session).mark_dirty(FUND, date(2026, 11, 1), NOW + timedelta(seconds=1))
     async with resources.require_database().session() as session, session.begin():
         await Repository(session).finish(claim)
 
-    assert await queue(resources) == {BONDS: date(2026, 11, 1)}
+    assert await queue(resources) == {FUND: date(2026, 11, 1)}
 
 
 async def test_all_trades_cancelled_leaves_no_positions(
@@ -141,10 +143,10 @@ async def test_instrument_gone_from_refdata(
     enter(client, tokens)
     del world.instruments[OFZ]
 
-    assert await run(resources) == BONDS  # без условий бумаги — без купонов, но позиция есть
+    assert await run(resources) == FUND  # без условий бумаги — без купонов, но позиция есть
 
 
-async def test_new_day_extends_portfolios(
+async def test_new_day_extends_funds(
     client: TestClient, tokens: TokenFactory, resources: Resources
 ) -> None:
     enter(client, tokens)
@@ -153,17 +155,17 @@ async def test_new_day_extends_portfolios(
     assert await extend_to_today(resources.require_database(), NOW) == 0
     tomorrow = NOW + timedelta(days=1)
     assert await extend_to_today(resources.require_database(), tomorrow) == 1
-    assert await queue(resources) == {BONDS: date(2026, 12, 4)}
+    assert await queue(resources) == {FUND: date(2026, 12, 4)}
 
 
-async def test_refdata_events_mark_portfolios(
+async def test_refdata_events_mark_funds(
     client: TestClient, tokens: TokenFactory, resources: Resources
 ) -> None:
     enter(client, tokens)
     enter(
         client,
         tokens,
-        portfolio_id=str(TREASURY),
+        portfolio_id=str(OTHER_BONDS),
         instrument_id=str(LQDT),
         settle_date="2026-11-27",
     )
@@ -182,11 +184,11 @@ async def test_refdata_events_mark_portfolios(
         )
 
     await events.handle(event("instrument.version_added", str(OFZ), valid_from="2026-12-01"))
-    assert await queue(resources) == {BONDS: date(2026, 12, 1)}
+    assert await queue(resources) == {FUND: date(2026, 12, 1)}
     await events.handle(event("instrument.version_added", str(OFZ), valid_from=None))
-    assert await queue(resources) == {BONDS: date(2000, 1, 1)}
+    assert await queue(resources) == {FUND: date(2000, 1, 1)}
     await events.handle(event("calendar.day_set", "2026-11-30"))
-    assert await queue(resources) == {BONDS: date(2000, 1, 1), TREASURY: date(2026, 11, 30)}
+    assert await queue(resources) == {FUND: date(2000, 1, 1), OTHER_FUND: date(2026, 11, 30)}
     await events.handle(event("instrument.loaded", str(OFZ)))  # не про условия бумаги
     assert len(await queue(resources)) == 2
 
@@ -214,7 +216,7 @@ async def test_workers(
         await asyncio.sleep(0.05)
     assert await queue(resources) == {}
 
-    # Событие справочника через Redis ставит портфель в очередь — воркер его пересчитывает.
+    # Событие справочника через Redis ставит фонд в очередь — воркер его пересчитывает.
     event = Event(
         service="refdata",
         type="instrument.version_added",

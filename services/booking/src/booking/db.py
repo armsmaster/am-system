@@ -50,6 +50,8 @@ trade_version = Table(
     Column("trade_id", Uuid, ForeignKey("trade.id", name="trade_version_trade_fk"), nullable=False),
     Column("number", Integer, nullable=False),
     Column("status", Text, nullable=False),
+    # Фонд портфеля: пересчёт — по фонду целиком (переводы связывают его портфели).
+    Column("fund_id", Uuid, nullable=False),
     Column("portfolio_id", Uuid, nullable=False),
     Column("instrument_id", Uuid, nullable=False),
     # Как бумага называлась при вводе — для списков без похода в справочник.
@@ -83,13 +85,69 @@ trade_version = Table(
     CheckConstraint("settle_date >= trade_date", name="trade_version_dates"),
     Index("trade_version_portfolio", "portfolio_id", "trade_date"),
     Index("trade_version_instrument", "instrument_id"),
+    Index("trade_version_fund", "fund_id"),
 )
 
-# Очередь пересчёта: портфель и дата, с которой его состояние могло измениться.
+# Операции фонда и переводы (design/05, «Операции фонда и переводы»). Как и сделка,
+# операция не меняется: отметка расчёта по паям и отмена — новая версия.
+operation = Table(
+    "operation",
+    metadata,
+    Column("id", Uuid, primary_key=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("created_by", Text, nullable=False),
+)
+
+operation_version = Table(
+    "operation_version",
+    metadata,
+    Column(
+        "operation_id",
+        Uuid,
+        ForeignKey("operation.id", name="operation_version_operation_fk"),
+        nullable=False,
+    ),
+    Column("number", Integer, nullable=False),
+    Column("status", Text, nullable=False),
+    Column("kind", Text, nullable=False),
+    Column("fund_id", Uuid, nullable=False),
+    # Паи и расходы — казначейский портфель фонда; перевод — отправитель.
+    Column("portfolio_id", Uuid, nullable=False),
+    Column("receiver_id", Uuid),  # перевод: получатель
+    Column("op_date", Date, nullable=False),
+    Column("amount", Numeric(20, 2)),  # ₽
+    Column("units", Numeric(20, 5)),  # паи (решение 50)
+    Column("planned_date", Date),  # паи: плановая дата расчёта
+    Column("settled_date", Date),  # паи: расчёт отмечен этой датой (решение 42)
+    Column("expense_kind", Text),
+    Column("instrument_id", Uuid),  # перевод бумаг
+    Column("instrument_kind", Text),
+    Column("secid", Text),
+    Column("short_name", Text),
+    Column("quantity", BigInteger),
+    Column("comment", Text),
+    Column("author", Text, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    PrimaryKeyConstraint("operation_id", "number", name="operation_version_pk"),
+    CheckConstraint("status IN ('active', 'cancelled')", name="operation_version_status"),
+    CheckConstraint(
+        "kind IN ('unit_issue', 'unit_redemption', 'expense_accrual', 'expense_payment', "
+        "'cash_transfer', 'security_transfer')",
+        name="operation_version_kind",
+    ),
+    CheckConstraint(
+        "(amount IS NULL OR amount > 0) AND (units IS NULL OR units > 0) "
+        "AND (quantity IS NULL OR quantity > 0)",
+        name="operation_version_positive",
+    ),
+    Index("operation_version_fund", "fund_id", "op_date"),
+)
+
+# Очередь пересчёта: фонд и дата, с которой его состояние могло измениться.
 recalc_queue = Table(
     "recalc_queue",
     metadata,
-    Column("portfolio_id", Uuid, primary_key=True),
+    Column("fund_id", Uuid, primary_key=True),
     Column("since", Date, nullable=False),
     Column("marked_at", DateTime(timezone=True), nullable=False),
     # Захват: пересчитывает один экземпляр; упавший через срок заберёт другой.
@@ -100,7 +158,7 @@ roll_run = Table(
     "roll_run",
     metadata,
     Column("id", Uuid, primary_key=True),
-    Column("portfolio_id", Uuid, nullable=False),
+    Column("fund_id", Uuid, nullable=False),
     Column("since", Date, nullable=False),
     Column("till", Date, nullable=False),
     Column("started_at", DateTime(timezone=True), nullable=False),
@@ -111,6 +169,7 @@ day_snapshot = Table(
     "day_snapshot",
     metadata,
     Column("id", BigInteger, Identity(), primary_key=True),
+    Column("fund_id", Uuid, nullable=False),
     Column("portfolio_id", Uuid, nullable=False),
     Column("day", Date, nullable=False),
     Column("run_id", Uuid, ForeignKey("roll_run.id", name="day_snapshot_run_fk"), nullable=False),
@@ -123,6 +182,7 @@ day_snapshot = Table(
         unique=True,
         postgresql_where=text("replaced_at IS NULL"),
     ),
+    Index("day_snapshot_fund", "fund_id", "day"),
 )
 
 outbox = outbox_table(metadata)

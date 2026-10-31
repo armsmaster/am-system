@@ -132,10 +132,10 @@ describe('TradePage', () => {
   it.each([
     ['a confirmed trade for trading', 'confirmed', false],
     ['a cancelled trade for anyone', 'cancelled', true],
-  ] as const)('offers no changes to %s', async (_name, status, canConfirm) => {
+  ] as const)('offers no changes to %s', async (_name, status, isOperations) => {
     const api = fakeApi();
     api.trade.mockResolvedValue(trade({ status }));
-    renderBooking(api, '/booking/trades/t-1', canConfirm);
+    renderBooking(api, '/booking/trades/t-1', isOperations);
 
     await screen.findByRole('heading', { name: /SU26238RMFS4/ });
     expect(screen.queryByRole('button', { name: 'Исправить' })).not.toBeInTheDocument();

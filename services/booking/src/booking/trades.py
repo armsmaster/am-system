@@ -1,7 +1,7 @@
 """Сделки: ввод, правка, отмена, подтверждение (design/05, «Сделка»).
 
 Сделка не меняется и не удаляется: каждое изменение — новая версия.
-Изменение, отметка «портфель пересчитать с даты» и событие для журнала
+Изменение, отметка «фонд пересчитать с даты» и событие для журнала
 пишутся одной транзакцией. Запросы к соседним сервисам — до транзакции:
 держать её открытой во время сетевого запроса нельзя.
 """
@@ -12,7 +12,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import Row
@@ -144,7 +144,7 @@ class TradeDesk:
                 trade_id, 1, status=ENTERED, values=values, comment=entry.comment, now=now
             )
             await self._repo.add_version(version)
-            await self._repo.mark_dirty(entry.portfolio_id, values["trade_date"], now)
+            await self._repo.mark_dirty(values["fund_id"], values["trade_date"], now)
             await self._emit(
                 "trade.entered",
                 trade_id,
@@ -177,8 +177,8 @@ class TradeDesk:
             )
             await self._repo.add_version(version)
             since = min(before.trade_date, values["trade_date"])
-            for portfolio_id in {before.portfolio_id, entry.portfolio_id}:
-                await self._repo.mark_dirty(portfolio_id, since, now)
+            for fund_id in {before.fund_id, values["fund_id"]}:
+                await self._repo.mark_dirty(fund_id, since, now)
             await self._emit(
                 "trade.amended",
                 trade_id,
@@ -226,7 +226,7 @@ class TradeDesk:
             )
             await self._repo.add_version(version)
             if status == CANCELLED:
-                await self._repo.mark_dirty(before.portfolio_id, before.trade_date, now)
+                await self._repo.mark_dirty(before.fund_id, before.trade_date, now)
             await self._emit(
                 event, trade_id, before=before, after=version, visible=visible, comment=comment
             )
@@ -312,6 +312,8 @@ class TradeDesk:
                     "НКД на дату расчётов неизвестен — укажите его по подтверждению брокера.",
                 )
         values = {
+            # У physical ровно один фонд — это проверяет сервис портфелей.
+            "fund_id": cast(UUID, portfolio.fund_id),
             "portfolio_id": entry.portfolio_id,
             "instrument_id": entry.instrument_id,
             "instrument_kind": kind.value,

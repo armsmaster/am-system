@@ -1,8 +1,8 @@
 """Сделки и позиции целиком: API → правила → БД → пересчёт; соседние сервисы — подменные.
 
-Сквозной пример — из docs/design/05-booking.md. Перевода 60 млн ₽ из
-казначейского портфеля здесь нет (часть 5.2), поэтому деньги портфеля
-облигаций на 60 млн ₽ меньше, чем в таблицах методики.
+Сквозной пример — из docs/design/05-booking.md: выдача паёв, перевод 60 млн ₽
+в портфель облигаций, покупка, продажа, купон и исправление продажи задним
+числом. Деньги совпадают с таблицами методики до копейки.
 """
 
 from __future__ import annotations
@@ -157,6 +157,31 @@ def test_defaults_for_the_form(trader: Api) -> None:
 
 
 async def test_example_from_the_methodology(trader: Api, ops: Api, resources: Resources) -> None:
+    # 26.11: выдача 100 000 паёв на 100 млн ₽, расчёт в тот же день; перевод 60 млн ₽.
+    issue = ops.ok(
+        "POST",
+        "/operations",
+        {
+            "kind": "unit_issue",
+            "fund_id": str(FUND),
+            "op_date": "2026-11-26",
+            "units": "100000",
+            "amount": "100000000",
+            "planned_date": "2026-11-26",
+        },
+    )
+    ops.ok("POST", f"/operations/{issue['id']}/settle", {"settled_date": "2026-11-26"})
+    ops.ok(
+        "POST",
+        "/operations",
+        {
+            "kind": "cash_transfer",
+            "portfolio_id": str(TREASURY),
+            "receiver_id": str(BONDS),
+            "op_date": "2026-11-26",
+            "amount": "60000000",
+        },
+    )
     bought = trader.ok("POST", "/trades", trade())
     sold = trader.ok("POST", "/trades", trade(**SALE))
 
@@ -170,12 +195,18 @@ async def test_example_from_the_methodology(trader: Api, ops: Api, resources: Re
     assert bought["portfolio_code"] == "OPIF1-BONDS"
     assert [v["number"] for v in bought["versions"]] == [1]
 
-    assert await recalc(resources) == [BONDS]
-    assert line(positions(trader, BONDS, "2026-11-27")) == (50_000, 0, "0")
-    assert line(positions(trader, BONDS, "2026-11-30")) == (30_000, 50_000, "-28000500.00")
-    assert line(positions(trader, BONDS, "2026-12-01")) == (30_000, 30_000, "-16776300.00")
+    assert await recalc(resources) == [FUND]
+    treasury = positions(trader, TREASURY, "2026-11-26")
+    assert (treasury["cash"], treasury["units"], treasury["claims"]) == (
+        "40000000.00",
+        "100000.00000",
+        "0.00",
+    )
+    assert line(positions(trader, BONDS, "2026-11-27")) == (50_000, 0, "60000000.00")
+    assert line(positions(trader, BONDS, "2026-11-30")) == (30_000, 50_000, "31999500.00")
+    assert line(positions(trader, BONDS, "2026-12-01")) == (30_000, 30_000, "43223700.00")
     on_coupon = positions(trader, BONDS, "2026-12-02")
-    assert line(on_coupon) == (30_000, 30_000, "-15714300.00")
+    assert line(on_coupon) == (30_000, 30_000, "44285700.00")
     [coupon] = on_coupon["portfolios"][0]["movements"]
     assert (coupon["kind"], coupon["cash"]) == ("coupon", "1062000.00")
     [lot] = on_coupon["lines"][0]["lots"]
@@ -196,16 +227,16 @@ async def test_example_from_the_methodology(trader: Api, ops: Api, resources: Re
     assert corrected["amount"] == "14030250.00"
     assert positions(trader, BONDS, "2026-12-02")["portfolios"][0]["waiting_since"] == "2026-11-30"
 
-    assert await recalc(resources) == [BONDS]
-    assert line(positions(trader, BONDS, "2026-12-02")) == (25_000, 25_000, "-13085250.00")
-    # Прежние снапшоты 30.11–03.12 не удалены, а замещены (решение 8).
+    assert await recalc(resources) == [FUND]
+    assert line(positions(trader, BONDS, "2026-12-02")) == (25_000, 25_000, "46914750.00")
+    # Прежние снапшоты 30.11–03.12 обоих портфелей фонда не удалены, а замещены (решение 8).
     async with resources.require_database().session() as session:
         replaced = await session.scalar(
             select(func.count())
             .select_from(day_snapshot)
             .where(day_snapshot.c.replaced_at.is_not(None))
         )
-    assert replaced == 4
+    assert replaced == 8
 
 
 async def test_compound_sums_its_physical_portfolios(trader: Api, resources: Resources) -> None:
@@ -296,9 +327,7 @@ async def test_confirmation_and_who_may_change_what(
     assert events == ["trade.entered", "trade.confirmed", "trade.amended", "trade.cancelled"]
 
 
-async def test_moving_a_trade_to_another_portfolio_recalculates_both(
-    trader: Api, resources: Resources
-) -> None:
+async def test_moving_a_trade_to_another_portfolio(trader: Api, resources: Resources) -> None:
     entered = trader.ok("POST", "/trades", trade())
     await recalc(resources)
     trader.ok(
@@ -307,7 +336,7 @@ async def test_moving_a_trade_to_another_portfolio_recalculates_both(
         trade(portfolio_id=str(TREASURY), comment="Не тот портфель"),
     )
 
-    assert sorted(await recalc(resources)) == sorted([BONDS, TREASURY])
+    assert await recalc(resources) == [FUND]
     assert positions(trader, BONDS, "2026-11-30")["lines"] == []
     assert line(positions(trader, TREASURY, "2026-11-30")) == (50_000, 50_000, "-28000500.00")
 

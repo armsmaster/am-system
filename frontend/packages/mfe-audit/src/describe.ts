@@ -26,6 +26,9 @@ const ACTIONS: Readonly<Record<string, string>> = {
   'trade.amended': 'Исправлена сделка',
   'trade.cancelled': 'Отменена сделка',
   'trade.confirmed': 'Подтверждена сделка',
+  'operation.entered': 'Проведена операция фонда',
+  'operation.settled': 'Отмечен расчёт по паям',
+  'operation.cancelled': 'Отменена операция фонда',
 };
 
 const FIELDS: Readonly<Record<string, string>> = {
@@ -79,6 +82,12 @@ const FIELDS: Readonly<Record<string, string>> = {
   fee: 'Комиссия',
   trade_date: 'Дата сделки',
   settle_date: 'Дата расчётов',
+  receiver: 'Получатель',
+  op_date: 'Дата операции',
+  units: 'Паи',
+  planned_date: 'Плановая дата расчёта',
+  settled_date: 'Расчёт отмечен',
+  expense_kind: 'Вид расхода',
 };
 
 /** Значения перечислений — словами. */
@@ -97,6 +106,18 @@ const VALUES: Readonly<Record<string, string>> = {
   cancelled: 'отменена',
   buy: 'покупка',
   sell: 'продажа',
+  active: 'действует',
+  unit_issue: 'выдача паёв',
+  unit_redemption: 'погашение паёв',
+  expense_accrual: 'начисление расхода',
+  expense_payment: 'выплата расхода',
+  cash_transfer: 'перевод денег',
+  security_transfer: 'перевод бумаг',
+  specdep: 'специализированный депозитарий',
+  registrar: 'регистратор',
+  auditor: 'аудитор',
+  exchange_broker: 'биржа и брокер',
+  other: 'прочие',
 };
 
 /** Порядок полей — как в FIELDS: база данных хранит ключи события в своём порядке. */
@@ -133,11 +154,15 @@ export function objectLabel(event: AuditEvent): string {
     portfolio?: Ref;
     instrument?: Ref;
     trade?: { readonly secid: string; readonly portfolio: string | null };
+    operation?: { readonly kind: string; readonly portfolio: string | null };
     version?: number;
     day?: string;
   };
   if (data.trade) {
     return `${data.trade.portfolio ?? '—'}: ${data.trade.secid}`;
+  }
+  if (data.operation) {
+    return `${data.operation.portfolio ?? '—'}: ${show(data.operation.kind)}`;
   }
   if (data.instrument) {
     return data.version ? `${data.instrument.secid}, версия ${data.version}` : `${data.instrument.secid}`;

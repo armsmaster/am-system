@@ -124,10 +124,11 @@ class RefdataClient(_ServiceClient):
         return exceptions
 
     async def calendar_around(self, *days: date) -> dict[date, bool]:
-        """Исключения за годы дат и соседние: даты расчётов уходят через Новый год."""
-        years = {d.year + shift for d in days for shift in (-1, 0, 1)}
+        """Исключения за годы от первой даты до последней и соседние: даты расчётов
+        уходят через Новый год, пересчёт идёт от начала истории фонда."""
+        years = range(min(d.year for d in days) - 1, max(d.year for d in days) + 2)
         exceptions: dict[date, bool] = {}
-        for year in sorted(years):
+        for year in years:
             exceptions |= await self.calendar(year)
         return exceptions
 
