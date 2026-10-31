@@ -6,6 +6,7 @@ import { Microfrontend } from './components/Microfrontend';
 import {
   loadAdmin,
   loadAudit,
+  loadBooking,
   loadMarketdata,
   loadRefdata,
   type MicrofrontendLoader,
@@ -17,6 +18,7 @@ export interface Loaders {
   readonly audit: MicrofrontendLoader;
   readonly refdata: MicrofrontendLoader;
   readonly marketdata: MicrofrontendLoader;
+  readonly booking: MicrofrontendLoader;
 }
 
 interface AppProps {
@@ -29,6 +31,7 @@ const LOADERS: Loaders = {
   audit: loadAudit,
   refdata: loadRefdata,
   marketdata: loadMarketdata,
+  booking: loadBooking,
 };
 
 export function App({ session, loaders = LOADERS }: AppProps) {
@@ -43,9 +46,11 @@ export function AppRoutes({ session, loaders }: Required<AppProps>) {
   const isAdmin = hasRole(session, 'admin');
   const adminOnly = (page: ReactNode) =>
     isAdmin ? page : <p role="alert">Раздел доступен только администратору.</p>;
+  // Сделки вводят все авторизованные пользователи (решение 25): трейдинг, сопровождение, админ.
+  const books = hasRole(session, 'trading') || hasRole(session, 'operations');
 
   return (
-    <Layout session={session} isAdmin={isAdmin}>
+    <Layout session={session} isAdmin={isAdmin} books={books}>
       <Routes>
         <Route path="/" element={<Home session={session} />} />
         <Route
@@ -56,6 +61,16 @@ export function AppRoutes({ session, loaders }: Required<AppProps>) {
           path="/marketdata/*"
           element={
             <Microfrontend load={loaders.marketdata} session={session} basePath="/marketdata" />
+          }
+        />
+        <Route
+          path="/booking/*"
+          element={
+            books ? (
+              <Microfrontend load={loaders.booking} session={session} basePath="/booking" />
+            ) : (
+              <p role="alert">Раздел доступен трейдингу и сопровождению.</p>
+            )
           }
         />
         <Route
@@ -79,10 +94,12 @@ export function AppRoutes({ session, loaders }: Required<AppProps>) {
 function Layout({
   session,
   isAdmin,
+  books,
   children,
 }: {
   readonly session: Session;
   readonly isAdmin: boolean;
+  readonly books: boolean;
   readonly children: ReactNode;
 }) {
   const roles = [...session.roles].map((role) => ROLE_LABELS[role]).join(', ');
@@ -97,6 +114,7 @@ function Layout({
           </NavLink>
           <NavLink to="/refdata">Справочник</NavLink>
           <NavLink to="/marketdata">Цены</NavLink>
+          {books && <NavLink to="/booking">Сделки</NavLink>}
           {isAdmin && <NavLink to="/admin">Администрирование</NavLink>}
           {isAdmin && <NavLink to="/audit">Журнал</NavLink>}
         </nav>

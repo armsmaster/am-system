@@ -8,7 +8,7 @@ from am_common.events import stream_name
 from am_common.settings import ServiceSettings
 
 # Сервисы, чьи события попадают в журнал. Новый сервис — новая строка.
-AUDITED_SERVICES = ("portfolio", "refdata", "marketdata")
+AUDITED_SERVICES = ("portfolio", "refdata", "marketdata", "booking")
 
 
 class AuditSettings(ServiceSettings):

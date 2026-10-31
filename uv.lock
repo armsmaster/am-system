@@ -8,6 +8,7 @@ members = [
     "am-quant",
     "am-system",
     "audit",
+    "booking",
     "marketdata",
     "portfolio",
     "refdata",
@@ -71,6 +72,7 @@ dependencies = [
     { name = "am-common" },
     { name = "am-quant" },
     { name = "audit" },
+    { name = "booking" },
     { name = "marketdata" },
     { name = "portfolio" },
     { name = "refdata" },
@@ -93,6 +95,7 @@ requires-dist = [
     { name = "am-common", editable = "libs/am-common" },
     { name = "am-quant", editable = "libs/am-quant" },
     { name = "audit", editable = "services/audit" },
+    { name = "booking", editable = "services/booking" },
     { name = "marketdata", editable = "services/marketdata" },
     { name = "portfolio", editable = "services/portfolio" },
     { name = "refdata", editable = "services/refdata" },
@@ -215,6 +218,21 @@ wheels = [
 name = "audit"
 version = "0.1.0"
 source = { editable = "services/audit" }
+dependencies = [
+    { name = "am-common" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "am-common", editable = "libs/am-common" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.54" },
+]
+
+[[package]]
+name = "booking"
+version = "0.1.0"
+source = { editable = "services/booking" }
 dependencies = [
     { name = "am-common" },
     { name = "uvicorn", extra = ["standard"] },

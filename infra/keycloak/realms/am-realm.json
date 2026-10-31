@@ -157,6 +157,34 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "am-booking",
+      "name": "Сервис booking: чтение справочника и рыночных данных",
+      "description": "Служебная учётная запись: booking читает из refdata условия бумаг и календарь, из marketdata — НКД и номинал на дату.",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "booking-dev-secret",
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocolMappers": [
+        {
+          "name": "audience am-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "am-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
     }
   ],
   "users": [
@@ -237,6 +265,11 @@
       "username": "service-account-am-marketdata",
       "enabled": true,
       "serviceAccountClientId": "am-marketdata"
+    },
+    {
+      "username": "service-account-am-booking",
+      "enabled": true,
+      "serviceAccountClientId": "am-booking"
     }
   ]
 }

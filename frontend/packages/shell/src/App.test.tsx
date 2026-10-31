@@ -26,6 +26,7 @@ const loaders: Loaders = {
   audit: remote('audit'),
   refdata: remote('refdata'),
   marketdata: remote('marketdata'),
+  booking: remote('booking'),
 };
 
 function renderAt(path: string, session = fakeSession('admin')) {
@@ -91,6 +92,23 @@ describe('App', () => {
       expect(screen.getByRole('link', { name: 'Цены' })).toBeInTheDocument();
     },
   );
+
+  it.each([['trading'], ['operations'], ['admin']] as const)(
+    'opens trades for %s',
+    async (...roles) => {
+      renderAt('/booking/trades/t-1', fakeSession(...roles));
+
+      expect(await screen.findByText('booking remote at /booking')).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: 'Сделки' })).toBeInTheDocument();
+    },
+  );
+
+  it('hides trades from a user without a role', () => {
+    renderAt('/booking', fakeSession());
+
+    expect(screen.queryByRole('link', { name: 'Сделки' })).not.toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('трейдингу и сопровождению');
+  });
 
   it.each(['/admin', '/audit'])('hides %s from everyone else', (path) => {
     renderAt(path, fakeSession('trading'));

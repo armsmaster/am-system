@@ -54,6 +54,7 @@ npm run dev:admin   # администрирование на :3001
 npm run dev:audit   # журнал на :3002
 npm run dev:refdata # справочник на :3003
 npm run dev:marketdata # цены на :3004
+npm run dev:booking    # сделки на :3005
 npm run dev:shell   # shell на :3000
 ```
 
@@ -81,6 +82,7 @@ services/Dockerfile общий образ Python-сервисов
 services/portfolio/ портфели, фонды, счета, доступы
 services/audit/     журнал действий пользователей
 services/refdata/   справочник: бумаги из MOEX ISS, версии, торговый календарь
+services/booking/   сделки с версиями, позиции по двум датам с лотами FIFO, деньги, пересчёт задним числом
 services/marketdata/ цены от скрипта и из ISS, OHLC и DEMA, ручные цены, НКД и номинал на дату,
                     ставки, доходность и спред на момент цены
 frontend/
@@ -91,5 +93,6 @@ frontend/
   packages/mfe-audit/ журнал действий
   packages/mfe-refdata/ справочник: поиск и загрузка бумаг, карточка, календарь
   packages/mfe-marketdata/ цены: обзор с разбросом, карточка с графиком и расчётом, правило, лента скрипта
+  packages/mfe-booking/ сделки: ввод с подсказкой НКД, карточка с версиями, позиции по двум датам
 docs/               архитектура, решения, вопросы, дизайн шагов, блог
 ```

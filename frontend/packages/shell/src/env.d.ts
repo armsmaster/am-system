@@ -6,4 +6,5 @@ interface ImportMetaEnv {
   readonly PUBLIC_MFE_AUDIT_URL?: string;
   readonly PUBLIC_MFE_REFDATA_URL?: string;
   readonly PUBLIC_MFE_MARKETDATA_URL?: string;
+  readonly PUBLIC_MFE_BOOKING_URL?: string;
 }

@@ -22,6 +22,10 @@ const ACTIONS: Readonly<Record<string, string>> = {
   'calendar.day_cleared': 'Удалено исключение календаря',
   'manual_price.set': 'Введена ручная цена',
   'price_rule.changed': 'Изменено правило оценки',
+  'trade.entered': 'Введена сделка',
+  'trade.amended': 'Исправлена сделка',
+  'trade.cancelled': 'Отменена сделка',
+  'trade.confirmed': 'Подтверждена сделка',
 };
 
 const FIELDS: Readonly<Record<string, string>> = {
@@ -64,6 +68,17 @@ const FIELDS: Readonly<Record<string, string>> = {
   dema_timeframe: 'Таймфрейм DEMA, мин',
   dema_half_life: 'Период полураспада DEMA, мин',
   spread_threshold_bp: 'Порог разброса, бп',
+  portfolio: 'Портфель',
+  secid: 'Бумага',
+  status: 'Статус',
+  side: 'Направление',
+  quantity: 'Количество',
+  price: 'Цена, % или ₽',
+  accrued: 'НКД на бумагу',
+  amount: 'Сумма',
+  fee: 'Комиссия',
+  trade_date: 'Дата сделки',
+  settle_date: 'Дата расчётов',
 };
 
 /** Значения перечислений — словами. */
@@ -77,6 +92,11 @@ const VALUES: Readonly<Record<string, string>> = {
   key_rate: 'ключевая ставка ЦБ',
   ruonia: 'RUONIA',
   rusfar: 'RUSFAR',
+  entered: 'введена',
+  confirmed: 'подтверждена',
+  cancelled: 'отменена',
+  buy: 'покупка',
+  sell: 'продажа',
 };
 
 /** Порядок полей — как в FIELDS: база данных хранит ключи события в своём порядке. */
@@ -112,9 +132,13 @@ export function objectLabel(event: AuditEvent): string {
     user?: Ref;
     portfolio?: Ref;
     instrument?: Ref;
+    trade?: { readonly secid: string; readonly portfolio: string | null };
     version?: number;
     day?: string;
   };
+  if (data.trade) {
+    return `${data.trade.portfolio ?? '—'}: ${data.trade.secid}`;
+  }
   if (data.instrument) {
     return data.version ? `${data.instrument.secid}, версия ${data.version}` : `${data.instrument.secid}`;
   }

@@ -11,6 +11,7 @@ const {
   loadAdmin,
   loadAudit,
   loadMarketdata,
+  loadBooking,
   loadRefdata,
   microfrontendRemotes,
   registerMicrofrontends,
@@ -23,16 +24,18 @@ describe('microfrontendRemotes', () => {
       { name: 'mfe_audit', entry: 'https://am.example/mfe/audit/mf-manifest.json' },
       { name: 'mfe_refdata', entry: 'https://am.example/mfe/refdata/mf-manifest.json' },
       { name: 'mfe_marketdata', entry: 'https://am.example/mfe/marketdata/mf-manifest.json' },
+      { name: 'mfe_booking', entry: 'https://am.example/mfe/booking/mf-manifest.json' },
     ]);
   });
 
   it('can point a remote to its dev server', () => {
-    const [admin, audit, refdata, marketdata] = microfrontendRemotes(
+    const [admin, audit, refdata, marketdata, booking] = microfrontendRemotes(
       {
         PUBLIC_MFE_ADMIN_URL: 'http://localhost:3001/',
         PUBLIC_MFE_AUDIT_URL: 'http://localhost:3002/',
         PUBLIC_MFE_REFDATA_URL: 'http://localhost:3003/',
         PUBLIC_MFE_MARKETDATA_URL: 'http://localhost:3004/',
+        PUBLIC_MFE_BOOKING_URL: 'http://localhost:3005/',
       },
       'http://localhost:3000',
     );
@@ -41,6 +44,7 @@ describe('microfrontendRemotes', () => {
     expect(audit?.entry).toBe('http://localhost:3002/mf-manifest.json');
     expect(refdata?.entry).toBe('http://localhost:3003/mf-manifest.json');
     expect(marketdata?.entry).toBe('http://localhost:3004/mf-manifest.json');
+    expect(booking?.entry).toBe('http://localhost:3005/mf-manifest.json');
   });
 });
 
@@ -64,11 +68,13 @@ describe('loading', () => {
     expect(await loadAudit()).toBe(module);
     expect(await loadRefdata()).toBe(module);
     expect(await loadMarketdata()).toBe(module);
+    expect(await loadBooking()).toBe(module);
     expect(runtime.loadRemote.mock.calls).toEqual([
       ['mfe_admin/App'],
       ['mfe_audit/App'],
       ['mfe_refdata/App'],
       ['mfe_marketdata/App'],
+      ['mfe_booking/App'],
     ]);
   });
 

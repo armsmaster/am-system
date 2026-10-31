@@ -38,7 +38,9 @@ class StreamConsumer:
         consumer: str,
         handler: Handler,
         batch_size: int = 100,
-        block_ms: int = 5_000,
+        # Меньше таймаута сокета клиента Redis (5 с по умолчанию в redis-py 8): иначе
+        # ожидание новых сообщений обрывается ошибкой чтения и паузой перед повтором.
+        block_ms: int = 2_000,
         claim_idle_ms: int = 30_000,
         retry_interval: float = 5.0,
     ) -> None:

@@ -5,7 +5,7 @@
 name = "am-system"
 version = "0.0.0"
 requires-python = ">=3.13,<3.14"
-dependencies = ["am-common", "am-quant", "audit", "marketdata", "portfolio", "refdata"]
+dependencies = ["am-common", "am-quant", "audit", "booking", "marketdata", "portfolio", "refdata"]
 
 [dependency-groups]
 dev = [
@@ -29,6 +29,7 @@ members = ["libs/*", "services/*"]
 am-common = { workspace = true }
 am-quant = { workspace = true }
 audit = { workspace = true }
+booking = { workspace = true }
 marketdata = { workspace = true }
 portfolio = { workspace = true }
 refdata = { workspace = true }
@@ -71,7 +72,7 @@ branch = true
 # Асинхронный SQLAlchemy переключает контексты через greenlet — без этого
 # coverage теряет строки после await.
 concurrency = ["greenlet", "thread"]
-source = ["am_common", "am_quant", "audit", "marketdata", "portfolio", "refdata"]
+source = ["am_common", "am_quant", "audit", "booking", "marketdata", "portfolio", "refdata"]
 
 [tool.coverage.report]
 fail_under = 100

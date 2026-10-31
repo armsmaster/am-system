@@ -168,6 +168,25 @@ describe('changes', () => {
     ]);
   });
 
+  it('describes trades', () => {
+    const amended = event('trade.amended', {
+      trade: { secid: 'SU26238RMFS4', portfolio: 'OPIF1-BONDS' },
+      before: { portfolio: 'OPIF1-BONDS', status: 'confirmed', side: 'sell', quantity: '20000', amount: '11224200.00', settle_date: '2026-12-01' },
+      after: { portfolio: 'OPIF1-BONDS', status: 'entered', side: 'sell', quantity: '25000', amount: '14030250.00', settle_date: '2026-12-01' },
+    });
+    const hidden = event('trade.entered', { trade: { secid: 'LQDT', portfolio: null }, before: null, after: { side: 'buy' } });
+
+    expect([actionLabel(amended.type), objectLabel(amended)]).toEqual(['Исправлена сделка', 'OPIF1-BONDS: SU26238RMFS4']);
+    expect(changes(amended)).toEqual([
+      { field: 'Статус', before: 'подтверждена', after: 'введена' },
+      { field: 'Количество', before: '20000', after: '25000' },
+      { field: 'Сумма', before: '11224200.00', after: '14030250.00' },
+    ]);
+    expect(objectLabel(hidden)).toBe('—: LQDT');
+    expect(changes(hidden)).toEqual([{ field: 'Направление', before: '—', after: 'покупка' }]);
+    expect(['trade.cancelled', 'trade.confirmed'].map(actionLabel)).toEqual(['Отменена сделка', 'Подтверждена сделка']);
+  });
+
   it('spells out floater terms', () => {
     const item = event('instrument.version_added', {
       before: { floater: null },

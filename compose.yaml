@@ -150,6 +150,22 @@ services:
     depends_on: *service-depends
     healthcheck: *service-healthcheck
 
+  booking:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE: booking
+    environment:
+      <<: *service-env
+      AM_DATABASE_URL: postgresql+asyncpg://svc_booking:${SERVICES_DB_PASSWORD:-services-dev}@postgres:5432/am
+      # Справочник и рыночные данные читаем под служебной учётной записью am-booking.
+      AM_KEYCLOAK_URL: http://keycloak:8080/auth
+      AM_KEYCLOAK_CLIENT_SECRET: ${BOOKING_KEYCLOAK_SECRET:-booking-dev-secret}
+    depends_on: *service-depends
+    healthcheck: *service-healthcheck
+
   audit:
     restart: unless-stopped
     build:
@@ -192,6 +208,12 @@ services:
     build:
       context: frontend
       dockerfile: packages/mfe-marketdata/Dockerfile
+
+  mfe-booking:
+    restart: unless-stopped
+    build:
+      context: frontend
+      dockerfile: packages/mfe-booking/Dockerfile
 
 volumes:
   postgres-data:
