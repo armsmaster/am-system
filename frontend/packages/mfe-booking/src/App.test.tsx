@@ -47,6 +47,7 @@ describe('BookingApp', () => {
     expect(screen.getByRole('link', { name: 'Позиции' })).toHaveAttribute('href', '/booking/positions');
     expect(screen.getByRole('link', { name: 'Лестница' })).toHaveAttribute('href', '/booking/ladder');
     expect(screen.getByRole('link', { name: 'Результат' })).toHaveAttribute('href', '/booking/results');
+    expect(screen.getByRole('link', { name: 'СЧА' })).toHaveAttribute('href', '/booking/nav');
     expect(screen.getByRole('link', { name: 'Операции фонда' })).toHaveAttribute('href', '/booking/operations');
     expect(screen.getByRole('link', { name: 'Импорт' })).toHaveAttribute('href', '/booking/import');
   });

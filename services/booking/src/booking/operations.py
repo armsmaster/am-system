@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID, uuid4
@@ -33,6 +33,10 @@ from booking.trades import SERVICE, RuleViolationError
 ACTIVE = "active"
 UNITS = frozenset({OperationKind.UNIT_ISSUE, OperationKind.UNIT_REDEMPTION})
 EXPENSES = frozenset({OperationKind.EXPENSE_ACCRUAL, OperationKind.EXPENSE_PAYMENT})
+# Операции уровня фонда — в казначейский портфель (решение 35).
+FUND_LEVEL = UNITS | EXPENSES | {OperationKind.FEE_PAYMENT}
+# Виды комиссий от СЧА (решение 21).
+FEE_KINDS: Sequence[str] = ("management", "specdep", "registrar", "other")
 # Виды расходов — короткий список (вопрос 94).
 EXPENSE_KINDS: Sequence[str] = ("specdep", "registrar", "auditor", "exchange_broker", "other")
 
@@ -52,6 +56,8 @@ class OperationInput:
     expense_kind: str | None = None
     instrument_id: UUID | None = None
     quantity: int | None = None
+    fee_kind: str | None = None  # выплата вознаграждения
+    period_end: date | None = None
     comment: str | None = None
 
 
@@ -193,23 +199,15 @@ class OperationDesk:
     ) -> tuple[dict[str, Any], list[str]]:
         if entry.op_date > self._clock().astimezone(MOSCOW).date():
             raise RuleViolationError("future_operation", "Дата операции позже сегодняшней.")
-        if entry.kind in UNITS | EXPENSES:
+        if entry.kind in FUND_LEVEL:
             return await self._fund_operation(entry, visible), []
         return await self._transfer(entry, visible)
 
     async def _fund_operation(
         self, entry: OperationInput, visible: Mapping[UUID, PortfolioRef]
     ) -> dict[str, Any]:
-        """Паи и расходы — в казначейский портфель фонда (решение 35)."""
-        fund = None if entry.fund_id is None else visible.get(entry.fund_id)
-        if fund is None or not fund.is_fund:
-            raise RuleViolationError("fund_unavailable", "Нет такого фонда или к нему нет доступа.")
-        if fund.treasury_id is None:
-            raise RuleViolationError(
-                "no_treasury",
-                f"У фонда {fund.code} не назначен казначейский портфель — "
-                "операции фонда проводятся в него.",
-            )
+        """Паи, расходы, вознаграждение — в казначейский портфель фонда (решение 35)."""
+        fund = _treasury_fund(entry.fund_id, visible)
         values: dict[str, Any] = {
             "kind": entry.kind.value,
             "fund_id": fund.id,
@@ -222,11 +220,78 @@ class OperationDesk:
             exceptions = await self._refdata.calendar_around(planned)
             self._check_money_day(planned, entry.op_date, exceptions, "Плановая дата расчёта")
             return values | {"units": entry.units, "planned_date": planned}
-        if entry.kind is OperationKind.EXPENSE_PAYMENT:
+        if entry.kind in {OperationKind.EXPENSE_PAYMENT, OperationKind.FEE_PAYMENT}:
             # Начисление — без движения денег, в любой день; выплата — в торговый.
             exceptions = await self._refdata.calendar_around(entry.op_date)
             self._check_money_day(entry.op_date, entry.op_date, exceptions, "Дата выплаты")
+        if entry.kind is OperationKind.FEE_PAYMENT:
+            last = cast(date, entry.period_end)
+            if (last + timedelta(days=1)).day != 1:
+                raise RuleViolationError(
+                    "period_not_month_end",
+                    "Вознаграждение платят за месяц: период заканчивается последним днём месяца.",
+                )
+            if last > entry.op_date:
+                raise RuleViolationError(
+                    "period_after_payment", "Конец оплаченного периода позже даты выплаты."
+                )
+            return values | {"fee_kind": entry.fee_kind, "period_end": last}
         return values | {"expense_kind": entry.expense_kind}
+
+    # --- ставки комиссий от СЧА -----------------------------------------------
+
+    async def rates(self, fund_id: UUID) -> list[Row[Any]]:
+        visible = await self._portfolios.visible(self._authorization)
+        fund = visible.get(fund_id)
+        if fund is None or not fund.is_fund:
+            raise RuleViolationError(
+                "fund_unavailable", "Нет такого фонда или к нему нет доступа.", 404
+            )
+        async with self._session.begin():
+            return await self._repo.fee_rates(fund.id)
+
+    async def set_rate(
+        self, fund_id: UUID, *, kind: str, rate: Decimal, valid_from: date, comment: str | None
+    ) -> list[Row[Any]]:
+        """Новая ставка с даты начала; прежние остаются в истории. Начисление — в казначейский
+        портфель, назначенный фонду сейчас."""
+        visible = await self._portfolios.visible(self._authorization)
+        fund = _treasury_fund(fund_id, visible)
+        now = self._clock()
+        async with self._session.begin():
+            await self._repo.add_fee_rate(
+                {
+                    "fund_id": fund.id,
+                    "portfolio_id": fund.treasury_id,
+                    "kind": kind,
+                    "rate": rate,
+                    "valid_from": valid_from,
+                    "comment": comment,
+                    "author": self._actor.username,
+                    "created_at": now,
+                }
+            )
+            await self._repo.mark_dirty(fund.id, valid_from, now)
+            await self._outbox.add(
+                self._session,
+                Event(
+                    service=SERVICE,
+                    type="fee_rate.set",
+                    actor=self._actor,
+                    entity_type="fund",
+                    entity_id=str(fund.id),
+                    data={
+                        "fund": {"code": fund.code},
+                        "after": {
+                            "kind": kind,
+                            "rate": str(rate),
+                            "valid_from": valid_from.isoformat(),
+                        },
+                    },
+                    comment=comment,
+                ),
+            )
+            return await self._repo.fee_rates(fund.id)
 
     async def _transfer(
         self, entry: OperationInput, visible: Mapping[UUID, PortfolioRef]
@@ -383,9 +448,25 @@ JOURNAL_FIELDS: Sequence[str] = (
     "planned_date",
     "settled_date",
     "expense_kind",
+    "fee_kind",
+    "period_end",
     "secid",
     "quantity",
 )
+
+
+def _treasury_fund(fund_id: UUID | None, visible: Mapping[UUID, PortfolioRef]) -> PortfolioRef:
+    """Фонд, у которого есть казначейский портфель: туда идут операции уровня фонда."""
+    fund = None if fund_id is None else visible.get(fund_id)
+    if fund is None or not fund.is_fund:
+        raise RuleViolationError("fund_unavailable", "Нет такого фонда или к нему нет доступа.")
+    if fund.treasury_id is None:
+        raise RuleViolationError(
+            "no_treasury",
+            f"У фонда {fund.code} не назначен казначейский портфель — "
+            "операции фонда проводятся в него.",
+        )
+    return fund
 
 
 def _values(row: Row[Any]) -> dict[str, Any]:

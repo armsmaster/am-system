@@ -159,6 +159,10 @@ export interface DayResult {
   readonly coupon: Decimal;
   readonly fees: Decimal;
   readonly expenses: Decimal;
+  /** Начисленные вознаграждение и комиссии от СЧА. */
+  readonly charges: Decimal;
+  /** Корректировка комиссий от СЧА при выплате: факт минус начисленное за период. */
+  readonly correction: Decimal;
   readonly total: Decimal;
   readonly receivable: Decimal;
   readonly payable: Decimal;
@@ -175,6 +179,7 @@ export type MovementKind =
   | 'unit_issue'
   | 'unit_redemption'
   | 'unit_settlement'
+  | 'fee_payment'
   | 'expense_accrual'
   | 'expense_payment'
   | 'transfer_out'
@@ -238,6 +243,8 @@ export interface ResultDay {
   readonly coupon: Decimal;
   readonly fees: Decimal;
   readonly expenses: Decimal;
+  readonly charges: Decimal;
+  readonly correction: Decimal;
   readonly total: Decimal;
   readonly flags: readonly ValuationFlag[];
 }
@@ -272,7 +279,58 @@ export type OperationKind =
   | 'expense_accrual'
   | 'expense_payment'
   | 'cash_transfer'
-  | 'security_transfer';
+  | 'security_transfer'
+  | 'fee_payment';
+
+/** Виды комиссий от СЧА (решение 21). */
+export type FeeKind = 'management' | 'specdep' | 'registrar' | 'other';
+
+export interface FeeRate {
+  readonly kind: FeeKind;
+  /** % годовых. */
+  readonly rate: Decimal;
+  readonly valid_from: string;
+  readonly portfolio_id: string;
+  readonly comment: string | null;
+  readonly author: string;
+  readonly created_at: string;
+}
+
+export interface FeeRateInput {
+  readonly kind: FeeKind;
+  readonly rate: string;
+  readonly valid_from: string;
+  readonly comment: string | null;
+}
+
+/** СЧА фонда на конец дня и её состав (design/06). */
+export interface NavDay {
+  readonly date: string;
+  readonly nav: Decimal;
+  readonly units: Decimal;
+  readonly unit_price: Decimal | null;
+  readonly cash: Decimal;
+  readonly clean: Decimal;
+  readonly accrued: Decimal;
+  readonly receivable: Decimal;
+  readonly payable: Decimal;
+  readonly claims: Decimal;
+  readonly obligations: Decimal;
+  readonly expenses: Decimal;
+  readonly fees_owed: Decimal;
+  readonly fees_today: Readonly<Partial<Record<FeeKind, Decimal>>>;
+  readonly flags: readonly ValuationFlag[];
+}
+
+export interface Nav {
+  readonly fund_id: string;
+  readonly code: string;
+  readonly name: string;
+  readonly first: string;
+  readonly last: string;
+  readonly waiting_since: string | null;
+  readonly days: readonly NavDay[];
+}
 
 /** Виды расходов — короткий список (вопрос 94). */
 export type ExpenseKind = 'specdep' | 'registrar' | 'auditor' | 'exchange_broker' | 'other';
@@ -298,6 +356,9 @@ export interface Operation {
   /** Паи: расчёт отмечен этой датой (решение 42). */
   readonly settled_date: string | null;
   readonly expense_kind: ExpenseKind | null;
+  readonly fee_kind: FeeKind | null;
+  /** Выплата вознаграждения: последний день оплаченного месяца. */
+  readonly period_end: string | null;
   readonly instrument_id: string | null;
   readonly secid: string | null;
   readonly short_name: string | null;
@@ -332,6 +393,13 @@ export type OperationInput =
       readonly kind: 'cash_transfer';
       readonly portfolio_id: string;
       readonly receiver_id: string;
+      readonly amount: string;
+    })
+  | (OperationBase & {
+      readonly kind: 'fee_payment';
+      readonly fund_id: string;
+      readonly fee_kind: FeeKind;
+      readonly period_end: string;
       readonly amount: string;
     })
   | (OperationBase & {
@@ -414,6 +482,11 @@ export function bookingApi(client: ApiClient) {
       client.get<Positions>(`${BASE}/positions${query({ portfolio_id: portfolioId, date })}`),
     results: (portfolioId: string, first: string, last: string) =>
       client.get<Results>(`${BASE}/results${query({ portfolio_id: portfolioId, from: first, till: last })}`),
+    nav: (fundId: string, first: string, last: string) =>
+      client.get<Nav>(`${BASE}/nav${query({ fund_id: fundId, from: first, till: last })}`),
+    feeRates: (fundId: string) => client.get<FeeRate[]>(`${BASE}/funds/${fundId}/fee-rates`),
+    setFeeRate: (fundId: string, body: FeeRateInput) =>
+      client.post<FeeRate[]>(`${BASE}/funds/${fundId}/fee-rates`, body),
     operations: (portfolioId: string) =>
       client.get<Operation[]>(`${BASE}/operations${query({ portfolio_id: portfolioId })}`),
     enterOperation: (body: OperationInput) => client.post<Operation>(`${BASE}/operations`, body),

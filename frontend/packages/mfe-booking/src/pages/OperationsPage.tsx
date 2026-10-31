@@ -7,6 +7,7 @@ import { useSelection } from '../components/Selection';
 import { OperationForm } from '../components/OperationForm';
 import {
   EXPENSE_LABELS,
+  FEE_LABELS,
   formatDate,
   formatMoney,
   formatPrice,
@@ -117,6 +118,7 @@ function OperationRow({
   const what = [
     OPERATION_LABELS[o.kind],
     o.expense_kind && EXPENSE_LABELS[o.expense_kind],
+    o.fee_kind && `${FEE_LABELS[o.fee_kind]} по ${formatDate(o.period_end)}`,
     o.secid,
   ].filter(Boolean);
   const settlement = !isUnits

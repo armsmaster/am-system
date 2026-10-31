@@ -8,9 +8,12 @@ import type {
   Account,
   BookingApi,
   DayResult,
+  FeeRate,
   ImportReport,
   Instrument,
   Ladder,
+  Nav,
+  NavDay,
   Operation,
   Portfolio,
   Positions,
@@ -192,6 +195,8 @@ export function dayResult(fields: Partial<DayResult> = {}): DayResult {
     coupon: '5700.00',
     fees: '0.00',
     expenses: '0.00',
+    charges: '0.00',
+    correction: '0.00',
     total: '41700.00',
     receivable: '0.00',
     payable: '0.00',
@@ -211,6 +216,8 @@ export function results(fields: Partial<Results> = {}): Results {
     coupon,
     fees: '0.00',
     expenses: '0.00',
+    charges: '0.00',
+    correction: '0.00',
     total,
     flags: [],
   });
@@ -242,6 +249,52 @@ export function results(fields: Partial<Results> = {}): Results {
   };
 }
 
+/** СЧА «ОПИФ 1» за 29.11–30.11 (design/06): вознаграждение УК 1,5%. */
+export function nav(fields: Partial<Nav> = {}): Nav {
+  const day = (date: string, value: string, price: string, fee: string, owed: string): NavDay => ({
+    date,
+    nav: value,
+    units: '100000.00000',
+    unit_price: price,
+    cash: '71999500.00',
+    clean: '15786000.00',
+    accrued: '1056300.00',
+    receivable: '11224200.00',
+    payable: '0.00',
+    claims: '0.00',
+    obligations: '0.00',
+    expenses: '0.00',
+    fees_owed: owed,
+    fees_today: { management: fee },
+    flags: [],
+  });
+  return {
+    fund_id: 'p-fund',
+    code: 'OPIF1',
+    name: 'ОПИФ 1',
+    first: '2026-11-29',
+    last: '2026-11-30',
+    waiting_since: null,
+    days: [
+      day('2026-11-29', '100008559.57', '1000.09', '4110.11', '16440.43'),
+      day('2026-11-30', '100045447.94', '1000.45', '4111.63', '20552.06'),
+    ],
+    ...fields,
+  };
+}
+
+export const FEE_RATES: FeeRate[] = [
+  {
+    kind: 'management',
+    rate: '1.500000',
+    valid_from: '2026-11-26',
+    portfolio_id: 'p-treasury',
+    comment: 'ПДУ п. 92',
+    author: 'ops',
+    created_at: '2026-11-26T09:00:00Z',
+  },
+];
+
 /** Выдача 100 000 паёв на 100 млн ₽ 26.11, расчёт ещё не отмечен. */
 export function operation(fields: Partial<Operation> = {}): Operation {
   return {
@@ -260,6 +313,8 @@ export function operation(fields: Partial<Operation> = {}): Operation {
     planned_date: '2026-11-27',
     settled_date: null,
     expense_kind: null,
+    fee_kind: null,
+    period_end: null,
     instrument_id: null,
     secid: null,
     short_name: null,
@@ -369,6 +424,9 @@ export function fakeApi() {
     cancelOperation: answer(operation({ status: 'cancelled' })),
     ladder: answer(ladder()),
     results: answer<Results>(results()),
+    nav: answer<Nav>(nav()),
+    feeRates: answer<FeeRate[]>(FEE_RATES),
+    setFeeRate: answer<FeeRate[]>(FEE_RATES),
     importTrades: answer<ImportReport>({
       created: 1,
       amended: 0,

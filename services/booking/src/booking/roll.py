@@ -21,10 +21,16 @@
 сделки до расчётов — задолженностью, купоны после даты фиксации — к получению.
 Результат дня раскладывается на части, сумма которых точно равна изменению
 стоимости портфеля за вычетом притоков: паёв и переводов.
+
+Комиссии от СЧА (решение 21) начисляются в конце дня фонда, когда оценены все
+его портфели: ставка × СЧА до сегодняшних комиссий / дней в году — в казначейский
+портфель, по месяцам. Выплата за период закрывает месяцы этого периода, разница
+с начисленным — корректировка в день выплаты (решения 43, 106).
 """
 
 from __future__ import annotations
 
+from calendar import isleap
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
@@ -171,6 +177,7 @@ class MovementKind(StrEnum):
     UNIT_ISSUE = "unit_issue"  # паи выданы: паёв больше, требование к пайщикам
     UNIT_REDEMPTION = "unit_redemption"  # паи погашены: паёв меньше, обязательство
     UNIT_SETTLEMENT = "unit_settlement"  # расчёт по паям: деньги
+    FEE_PAYMENT = "fee_payment"  # выплата вознаграждения или комиссии от СЧА
     EXPENSE_ACCRUAL = "expense_accrual"
     EXPENSE_PAYMENT = "expense_payment"
     TRANSFER_OUT = "transfer_out"
@@ -257,13 +264,33 @@ class DayResult:
     coupon: Decimal = ZERO
     fees: Decimal = ZERO  # комиссии по сделкам
     expenses: Decimal = ZERO  # начисленные расходы фонда
+    charges: Decimal = ZERO  # начисленные вознаграждение и комиссии от СЧА
+    correction: Decimal = ZERO  # корректировка комиссий от СЧА при выплате
     receivable: Decimal = ZERO  # к получению по сделкам до расчётов
     payable: Decimal = ZERO  # к уплате по сделкам до расчётов, с комиссией
     flags: tuple[Flag, ...] = ()
 
     @property
     def total(self) -> Decimal:
-        return self.revaluation + self.realized + self.coupon + self.fees + self.expenses
+        return (
+            self.revaluation
+            + self.realized
+            + self.coupon
+            + self.fees
+            + self.expenses
+            + self.charges
+            + self.correction
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class FeeRate:
+    """Ставка комиссии от СЧА фонда: действует с ``valid_from`` до следующей того же вида."""
+
+    kind: str  # management | specdep | registrar | other
+    rate: Decimal  # % годовых
+    valid_from: date
+    portfolio_id: UUID  # казначейский портфель: сюда начисление
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,6 +308,13 @@ class State:
     # Оценка на конец дня; без рыночных данных (ролл позиций шага 5) — пусто.
     valuations: Mapping[UUID, Valuation] = field(default_factory=dict)
     result: DayResult | None = None
+    # Комиссии от СЧА к выплате: вид → месяц «ГГГГ-ММ» → сумма; начислено сегодня по видам.
+    fees_due: Mapping[str, Mapping[str, Decimal]] = field(default_factory=dict)
+    fees_today: Mapping[str, Decimal] = field(default_factory=dict)
+
+    @property
+    def fees_owed(self) -> Decimal:
+        return sum((a for months in self.fees_due.values() for a in months.values()), ZERO)
 
 
 class OperationKind(StrEnum):
@@ -290,6 +324,7 @@ class OperationKind(StrEnum):
     EXPENSE_PAYMENT = "expense_payment"
     CASH_TRANSFER = "cash_transfer"
     SECURITY_TRANSFER = "security_transfer"
+    FEE_PAYMENT = "fee_payment"
 
 
 @dataclass(frozen=True, slots=True)
@@ -308,6 +343,8 @@ class Operation:
     instrument_id: UUID | None = None
     instrument_kind: InstrumentKind | None = None
     quantity: int = 0
+    fee_kind: str | None = None  # выплата вознаграждения: вид комиссии
+    period_end: date | None = None  # выплата вознаграждения: последний день периода
 
 
 def start(first_day: date) -> State:
@@ -338,6 +375,8 @@ class _Day:
     )  # перевод: штуки, стоимость
     flows: Decimal = ZERO  # паи, переводы денег
     expensed: Decimal = ZERO  # начисленные расходы
+    fees_due: dict[str, dict[str, Decimal]] = field(default_factory=dict)
+    charged: Decimal = ZERO  # корректировки вознаграждения при выплате
 
 
 def roll(
@@ -355,11 +394,13 @@ def roll_fund(
     terms_on: TermsOn,
     *,
     marks_on: MarksOn | None = None,
+    rates: Sequence[FeeRate] = (),
     projected: bool = False,
 ) -> dict[UUID, State]:
     """Состояния всех портфелей фонда на конец ``day`` по состояниям на конец предыдущего дня.
 
     ``marks_on`` — рыночные данные для оценки; без них ролл ведёт только позиции.
+    ``rates`` — ставки комиссий от СЧА фонда; начисляются только вместе с оценкой.
     ``projected`` — прогноз для лестницы: расчёт по паям, который ещё не отмечен,
     проходит в плановую дату.
     """
@@ -373,7 +414,8 @@ def roll_fund(
     works = {p: _open(previous.get(p) or State(day=before), trades.get(p, ())) for p in portfolios}
     for operation in sorted(operations, key=lambda o: str(o.id)):
         _OPERATIONS[operation.kind](operation, works, day, projected)
-    return {p: _close(work, terms_on, marks_on) for p, work in works.items()}
+    states = {p: _close(work, terms_on, marks_on) for p, work in works.items()}
+    return states if marks_on is None else _accrue(states, day, rates)
 
 
 def roll_fund_days(
@@ -385,6 +427,7 @@ def roll_fund_days(
     operations: Sequence[Operation],
     terms_on: TermsOn,
     marks_on: MarksOn | None = None,
+    rates: Sequence[FeeRate] = (),
     projected: bool = False,
 ) -> list[dict[UUID, State]]:
     """Состояния фонда на каждый календарный день с ``first_day`` по ``till``."""
@@ -393,7 +436,14 @@ def roll_fund_days(
     day = first_day
     while day <= till:
         current = roll_fund(
-            current, day, trades, operations, terms_on, marks_on=marks_on, projected=projected
+            current,
+            day,
+            trades,
+            operations,
+            terms_on,
+            marks_on=marks_on,
+            rates=rates,
+            projected=projected,
         )
         days.append(current)
         day += timedelta(days=1)
@@ -415,6 +465,7 @@ def _open(previous: State, trades: Iterable[Trade]) -> _Day:
         obligations=previous.obligations,
         expenses=previous.expenses,
         previous=previous,
+        fees_due={kind: dict(months) for kind, months in previous.fees_due.items()},
         traded=[t for t in todays if t.trade_date == day],
         unsettled=[t for t in todays if t.trade_date <= day < t.settle_date],
     )
@@ -440,6 +491,7 @@ def _close(work: _Day, terms_on: TermsOn, marks_on: MarksOn | None) -> State:
         claims=work.claims,
         obligations=work.obligations,
         expenses=work.expenses,
+        fees_due={kind: months for kind, months in work.fees_due.items() if months},
     )
     if marks_on is None:
         return state
@@ -510,13 +562,15 @@ def _appraise(
         - payable
         + state.claims
         - state.obligations
-        - state.expenses,
+        - state.expenses
+        - state.fees_owed,
         flows=work.flows + moved_in,
         revaluation=sum((v.revaluation for v in values), ZERO),
         realized=sum((v.realized for v in values), ZERO),
         coupon=sum((v.coupon for v in values), ZERO),
         fees=sum((v.fees for v in values), ZERO),
         expenses=ZERO - work.expensed,
+        correction=ZERO - work.charged,
         receivable=receivable,
         payable=payable,
         flags=tuple(sorted({f for v in values for f in v.flags})),
@@ -710,6 +764,65 @@ def _traded(trades: Iterable[Trade], instrument_id: UUID) -> tuple[Decimal, Deci
     return clean, accrued, fees
 
 
+def _rates_on(rates: Iterable[FeeRate], day: date) -> dict[str, FeeRate]:
+    """Действующая ставка каждого вида: последняя с датой начала не позже дня."""
+    active: dict[str, FeeRate] = {}
+    for rate in sorted(rates, key=lambda r: r.valid_from):
+        if rate.valid_from <= day:
+            active[rate.kind] = rate
+    return active
+
+
+def _accrue(states: dict[UUID, State], day: date, rates: Sequence[FeeRate]) -> dict[UUID, State]:
+    """Начисление комиссий от СЧА за день: ставка × СЧА до сегодняшних комиссий / дней в году.
+
+    СЧА — стоимость всех портфелей фонда на конец дня. Все виды считаются от одной
+    и той же СЧА: комиссия не зависит ни от себя, ни от соседней.
+    """
+    active = _rates_on(rates, day)
+    nav = sum((s.result.value for s in states.values() if s.result is not None), ZERO)
+    year = 366 if isleap(day.year) else 365
+    month = day.strftime("%Y-%m")
+    for kind, rate in sorted(active.items()):
+        amount = _kopecks(rate.rate / HUNDRED * nav / year)
+        if not amount:
+            continue
+        state = states.get(rate.portfolio_id) or State(
+            day=day, result=DayResult(value=ZERO, flows=ZERO)
+        )
+        result = state.result or DayResult(value=ZERO, flows=ZERO)
+        due = {k: dict(v) for k, v in state.fees_due.items()}
+        months = due.setdefault(kind, {})
+        months[month] = months.get(month, ZERO) + amount
+        states[rate.portfolio_id] = replace(
+            state,
+            fees_due=due,
+            fees_today={**state.fees_today, kind: amount},
+            result=replace(result, value=result.value - amount, charges=result.charges - amount),
+        )
+    return states
+
+
+def _fee_payment(
+    operation: Operation, works: dict[UUID, _Day], day: date, _projected: bool
+) -> None:
+    """Выплата за период: закрывает начисления по месяц конца периода включительно,
+    разница с фактической суммой — корректировка в день выплаты (решения 43, 106)."""
+    if operation.day != day:
+        return
+    work = works[operation.portfolio_id]
+    # Вид комиссии и конец периода у выплаты есть всегда — проверено при вводе.
+    kind, last = cast(str, operation.fee_kind), cast(date, operation.period_end)
+    months = work.fees_due.get(kind, {})
+    paid_for = [m for m in months if m <= last.strftime("%Y-%m")]
+    closed = sum((months.pop(m) for m in paid_for), ZERO)
+    work.charged += operation.amount - closed
+    work.cash -= operation.amount
+    work.movements.append(
+        Movement(MovementKind.FEE_PAYMENT, None, None, 0, -operation.amount, operation.id)
+    )
+
+
 def _units(operation: Operation, works: dict[UUID, _Day], day: date, projected: bool) -> None:
     """Выдача и погашение паёв: паи и требование (обязательство) — в дату операции,
     деньги — в дату расчёта, которую отмечает сопровождение (решение 42)."""
@@ -814,6 +927,7 @@ _OPERATIONS: Mapping[OperationKind, Callable[[Operation, dict[UUID, _Day], date,
     OperationKind.EXPENSE_PAYMENT: _expense,
     OperationKind.CASH_TRANSFER: _transfer,
     OperationKind.SECURITY_TRANSFER: _transfer,
+    OperationKind.FEE_PAYMENT: _fee_payment,
 }
 
 
@@ -1108,6 +1222,11 @@ def to_json(state: State) -> dict[str, Any]:
             for v in state.valuations.values()
         ],
         "result": None if state.result is None else _result_json(state.result),
+        "fees_due": {
+            kind: {month: str(amount) for month, amount in months.items()}
+            for kind, months in state.fees_due.items()
+        },
+        "fees_today": {kind: str(amount) for kind, amount in state.fees_today.items()},
     }
 
 
@@ -1120,6 +1239,8 @@ def _result_json(result: DayResult) -> dict[str, Any]:
         "coupon": str(result.coupon),
         "fees": str(result.fees),
         "expenses": str(result.expenses),
+        "charges": str(result.charges),
+        "correction": str(result.correction),
         "receivable": str(result.receivable),
         "payable": str(result.payable),
         "flags": [f.value for f in result.flags],
@@ -1195,6 +1316,11 @@ def from_json(data: Mapping[str, Any]) -> State:
             for v in data.get("valuations", [])
         },
         result=_result(data.get("result")),
+        fees_due={
+            kind: {month: Decimal(amount) for month, amount in months.items()}
+            for kind, months in data.get("fees_due", {}).items()
+        },
+        fees_today={kind: Decimal(a) for kind, a in data.get("fees_today", {}).items()},
     )
 
 
@@ -1209,6 +1335,8 @@ def _result(data: Mapping[str, Any] | None) -> DayResult | None:
         coupon=Decimal(data["coupon"]),
         fees=Decimal(data["fees"]),
         expenses=Decimal(data["expenses"]),
+        charges=Decimal(data.get("charges", "0")),
+        correction=Decimal(data.get("correction", "0")),
         receivable=Decimal(data["receivable"]),
         payable=Decimal(data["payable"]),
         flags=tuple(Flag(f) for f in data["flags"]),

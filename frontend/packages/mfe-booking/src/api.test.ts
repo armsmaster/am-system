@@ -15,6 +15,7 @@ describe('bookingApi', () => {
   const api = bookingApi(client as unknown as ApiClient);
   const body = { portfolio_id: 'p' } as unknown as TradeInput;
   const operation = { kind: 'cash_transfer' } as unknown as OperationInput;
+  const rate = { kind: 'management', rate: '1.5', valid_from: '2026-11-26', comment: null } as const;
 
   it.each([
     ['portfolios', () => api.portfolios(), 'get', ['/api/portfolio/portfolios']],
@@ -54,6 +55,9 @@ describe('bookingApi', () => {
       ['/api/booking/operations/o-1/cancel', { comment: 'ошибка' }],
     ],
     ['ladder', () => api.ladder('a-1'), 'get', ['/api/booking/ladder?account_id=a-1']],
+    ['nav', () => api.nav('f-1', '2026-11-01', '2026-11-30'), 'get', ['/api/booking/nav?fund_id=f-1&from=2026-11-01&till=2026-11-30']],
+    ['feeRates', () => api.feeRates('f-1'), 'get', ['/api/booking/funds/f-1/fee-rates']],
+    ['setFeeRate', () => api.setFeeRate('f-1', rate), 'post', ['/api/booking/funds/f-1/fee-rates', rate]],
     [
       'results',
       () => api.results('p-1', '2026-11-01', '2026-11-30'),

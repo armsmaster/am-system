@@ -107,6 +107,8 @@ function ResultNote({ result }: { readonly result: DayResult }) {
     ['купонный доход', result.coupon],
     ['комиссии по сделкам', result.fees],
     ['расходы фонда', result.expenses],
+    ['вознаграждение и комиссии от СЧА', result.charges],
+    ['корректировка комиссий при выплате', result.correction],
   ] as const;
   return (
     <>

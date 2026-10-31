@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from booking.db import (
     day_snapshot,
+    fee_rate,
     operation,
     operation_version,
     recalc_queue,
@@ -168,6 +169,20 @@ class Repository:
             operation_version, "operation_id", operation_version.c.fund_id == fund_id
         )
         return [r for r in rows if r.status != CANCELLED]
+
+    # --- ставки комиссий от СЧА -------------------------------------------------
+
+    async def add_fee_rate(self, values: dict[str, Any]) -> None:
+        await self._session.execute(insert(fee_rate).values(**values))
+
+    async def fee_rates(self, fund_id: UUID) -> list[Row[Any]]:
+        """Ставки фонда в порядке ввода: последняя по дате начала главнее."""
+        result = await self._session.execute(
+            select(fee_rate)
+            .where(fee_rate.c.fund_id == fund_id)
+            .order_by(fee_rate.c.valid_from, fee_rate.c.id)
+        )
+        return list(result)
 
     # --- что затрагивают изменения справочника ----------------------------------
 

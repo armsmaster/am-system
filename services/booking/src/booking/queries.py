@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import cast
 from uuid import UUID
 
@@ -269,11 +269,21 @@ class ResultDay:
     coupon: Decimal
     fees: Decimal
     expenses: Decimal
+    charges: Decimal
+    correction: Decimal
     flags: list[Flag]
 
     @property
     def total(self) -> Decimal:
-        return self.revaluation + self.realized + self.coupon + self.fees + self.expenses
+        return (
+            self.revaluation
+            + self.realized
+            + self.coupon
+            + self.fees
+            + self.expenses
+            + self.charges
+            + self.correction
+        )
 
 
 @dataclass(slots=True)
@@ -370,7 +380,116 @@ def _days(states: Iterable[tuple[Snapshot, State]]) -> list[ResultDay]:
             coupon=sum((r.coupon for r in found), ZERO),
             fees=sum((r.fees for r in found), ZERO),
             expenses=sum((r.expenses for r in found), ZERO),
+            charges=sum((r.charges for r in found), ZERO),
+            correction=sum((r.correction for r in found), ZERO),
             flags=sorted({f for r in found for f in r.flags}),
         )
         for day, found in sorted(by_day.items())
     ]
+
+
+# --- СЧА фонда ----------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class NavDay:
+    """СЧА фонда на конец дня и её состав (design/06)."""
+
+    day: date
+    nav: Decimal
+    units: Decimal
+    cash: Decimal
+    clean: Decimal  # бумаги по чистой цене
+    accrued: Decimal  # НКД в оценке и купоны к получению
+    receivable: Decimal
+    payable: Decimal
+    claims: Decimal
+    obligations: Decimal
+    expenses: Decimal  # начисленные и не выплаченные расходы
+    fees_owed: Decimal  # начисленные и не выплаченные комиссии от СЧА
+    fees_today: dict[str, Decimal]  # начислено за день по видам
+    flags: list[Flag]
+
+    @property
+    def unit_price(self) -> Decimal | None:
+        """Стоимость пая до копейки (решение 104)."""
+        return None if not self.units else _kopecks(self.nav / self.units)
+
+
+@dataclass(frozen=True, slots=True)
+class NavView:
+    fund: PortfolioRef
+    first: date
+    last: date
+    waiting_since: date | None
+    days: list[NavDay]
+
+
+async def nav(
+    session: AsyncSession,
+    visible: Mapping[UUID, PortfolioRef],
+    fund_id: UUID,
+    period: tuple[date, date],
+    *,
+    now: datetime,
+    marketdata: MarketdataClient | None = None,
+) -> NavView | None:
+    """СЧА фонда по дням: сумма оценённых портфелей фонда; сегодня — по текущим ценам."""
+    fund = visible.get(fund_id)
+    if fund is None or not fund.is_fund:
+        return None
+    first, last = period
+    physical = physical_under(fund_id, visible)
+    repo = Repository(session)
+    snapshots = await repo.snapshots_between([p.id for p in physical], first, last)
+    today = now.astimezone(MOSCOW).date()
+    states = [(s, from_json(s.state)) for s in snapshots]
+    if marketdata is not None and any(s.day == today for s, _ in states):
+        refs = {p.id: p for p in physical}
+        remarked = await _remarked(
+            [(refs[s.portfolio_id], state) for s, state in states], marketdata, today
+        )
+        states = [
+            (s, cast(State, state)) for (s, _), (_, state) in zip(states, remarked, strict=True)
+        ]
+    by_day: dict[date, list[State]] = {}
+    for snapshot, state in states:
+        if state.result is not None:
+            by_day.setdefault(snapshot.day, []).append(state)
+    waiting = await repo.waiting([fund.id])
+    return NavView(
+        fund=fund,
+        first=first,
+        last=last,
+        waiting_since=waiting.get(fund.id),
+        days=[_nav_day(day, found) for day, found in sorted(by_day.items())],
+    )
+
+
+def _nav_day(day: date, states: list[State]) -> NavDay:
+    results = [cast(DayResult, s.result) for s in states]
+    values = [v for s in states for v in s.valuations.values()]
+    fees_today: dict[str, Decimal] = {}
+    for state in states:
+        for kind, amount in state.fees_today.items():
+            fees_today[kind] = fees_today.get(kind, ZERO) + amount
+    return NavDay(
+        day=day,
+        nav=sum((r.value for r in results), ZERO),
+        units=sum((s.units for s in states), ZERO),
+        cash=sum((s.cash for s in states), ZERO),
+        clean=sum((v.clean for v in values), ZERO),
+        accrued=sum((v.accrued_value + v.coupon_due for v in values), ZERO),
+        receivable=sum((r.receivable for r in results), ZERO),
+        payable=sum((r.payable for r in results), ZERO),
+        claims=sum((s.claims for s in states), ZERO),
+        obligations=sum((s.obligations for s in states), ZERO),
+        expenses=sum((s.expenses for s in states), ZERO),
+        fees_owed=sum((s.fees_owed for s in states), ZERO),
+        fees_today=fees_today,
+        flags=sorted({f for r in results for f in r.flags}),
+    )
+
+
+def _kopecks(value: Decimal) -> Decimal:
+    return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)

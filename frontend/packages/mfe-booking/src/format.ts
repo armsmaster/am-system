@@ -1,4 +1,13 @@
-import type { Decimal, ExpenseKind, MovementKind, OperationKind, Side, Status, ValuationFlag } from './api';
+import type {
+  Decimal,
+  ExpenseKind,
+  FeeKind,
+  MovementKind,
+  OperationKind,
+  Side,
+  Status,
+  ValuationFlag,
+} from './api';
 
 export const SIDE_LABELS: Readonly<Record<Side, string>> = { buy: 'покупка', sell: 'продажа' };
 
@@ -24,6 +33,7 @@ export const MOVEMENT_LABELS: Readonly<Record<MovementKind, string>> = {
   expense_payment: 'выплата расхода',
   transfer_out: 'перевод: ушло',
   transfer_in: 'перевод: пришло',
+  fee_payment: 'выплата вознаграждения',
 };
 
 export const OPERATION_LABELS: Readonly<Record<OperationKind, string>> = {
@@ -33,6 +43,15 @@ export const OPERATION_LABELS: Readonly<Record<OperationKind, string>> = {
   expense_payment: 'выплата расхода',
   cash_transfer: 'перевод денег',
   security_transfer: 'перевод бумаг',
+  fee_payment: 'выплата вознаграждения',
+};
+
+/** Комиссии от СЧА (решение 21). */
+export const FEE_LABELS: Readonly<Record<FeeKind, string>> = {
+  management: 'вознаграждение УК',
+  specdep: 'спецдепозитарий',
+  registrar: 'регистратор',
+  other: 'прочие',
 };
 
 export const EXPENSE_LABELS: Readonly<Record<ExpenseKind, string>> = {

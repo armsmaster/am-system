@@ -120,6 +120,8 @@ operation_version = Table(
     Column("planned_date", Date),  # паи: плановая дата расчёта
     Column("settled_date", Date),  # паи: расчёт отмечен этой датой (решение 42)
     Column("expense_kind", Text),
+    Column("fee_kind", Text),  # выплата вознаграждения: вид комиссии от СЧА
+    Column("period_end", Date),  # выплата вознаграждения: конец оплаченного периода
     Column("instrument_id", Uuid),  # перевод бумаг
     Column("instrument_kind", Text),
     Column("secid", Text),
@@ -132,7 +134,7 @@ operation_version = Table(
     CheckConstraint("status IN ('active', 'cancelled')", name="operation_version_status"),
     CheckConstraint(
         "kind IN ('unit_issue', 'unit_redemption', 'expense_accrual', 'expense_payment', "
-        "'cash_transfer', 'security_transfer')",
+        "'cash_transfer', 'security_transfer', 'fee_payment')",
         name="operation_version_kind",
     ),
     CheckConstraint(
@@ -141,6 +143,28 @@ operation_version = Table(
         name="operation_version_positive",
     ),
     Index("operation_version_fund", "fund_id", "op_date"),
+)
+
+# Ставки комиссий от СЧА (design/06, решение 21): строки только дописываются.
+# Ставка на день — последняя строка с датой начала не позже дня. Начисление идёт
+# в казначейский портфель, назначенный фонду, когда ставку ввели.
+fee_rate = Table(
+    "fee_rate",
+    metadata,
+    Column("id", BigInteger, Identity(), primary_key=True),
+    Column("fund_id", Uuid, nullable=False),
+    Column("portfolio_id", Uuid, nullable=False),
+    Column("kind", Text, nullable=False),
+    Column("rate", Numeric(9, 6), nullable=False),  # % годовых
+    Column("valid_from", Date, nullable=False),
+    Column("comment", Text),
+    Column("author", Text, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint(
+        "kind IN ('management', 'specdep', 'registrar', 'other')", name="fee_rate_kind"
+    ),
+    CheckConstraint("rate >= 0", name="fee_rate_not_negative"),
+    Index("fee_rate_fund", "fund_id", "valid_from"),
 )
 
 # Очередь пересчёта: фонд и дата, с которой его состояние могло измениться.

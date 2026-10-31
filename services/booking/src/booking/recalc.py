@@ -19,7 +19,7 @@ import asyncio
 import logging
 from collections import defaultdict
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, cast
@@ -40,6 +40,7 @@ from booking.clients import (
 )
 from booking.repository import Claim, Repository, Snapshot
 from booking.roll import (
+    FeeRate,
     InstrumentKind,
     Mark,
     MarksOn,
@@ -108,6 +109,7 @@ class FundInputs:
     operations: list[Operation]
     previous: list[Snapshot]
     first_day: date
+    rates: list[FeeRate] = field(default_factory=list)
 
     @property
     def states(self) -> dict[UUID, State]:
@@ -130,7 +132,10 @@ async def load_inputs(repo: Repository, fund_id: UUID, since: date, today: date)
     else:
         # Ни сделок, ни операций — прежние снапшоты замещаются пустым запуском.
         first_day = today + timedelta(days=1)
-    return FundInputs(dict(trades), operations, previous, first_day)
+    rates = [
+        FeeRate(r.kind, r.rate, r.valid_from, r.portfolio_id) for r in await repo.fee_rates(fund_id)
+    ]
+    return FundInputs(dict(trades), operations, previous, first_day, rates)
 
 
 def fund_instruments(inputs: FundInputs) -> list[UUID]:
@@ -197,6 +202,7 @@ async def recompute(
         trades=inputs.trades,
         operations=inputs.operations,
         marks_on=marks,
+        rates=inputs.rates,
         terms_on=book,
     )
     replace_from = inputs.first_day if inputs.previous else min(claim.since, inputs.first_day)
@@ -254,6 +260,8 @@ def _operation(row: Any) -> Operation:
         if row.instrument_kind is None
         else InstrumentKind(row.instrument_kind),
         quantity=row.quantity or 0,
+        fee_kind=row.fee_kind,
+        period_end=row.period_end,
     )
 
 

@@ -28,10 +28,12 @@ from booking.imports import ImportItem, Result, TradeImport
 from booking.ladder import Ladder, ladder
 from booking.operations import OperationDesk, OperationInput, OperationView
 from booking.queries import (
+    NavDay,
     PortfolioState,
     PositionLine,
     ResultDay,
     ResultLine,
+    nav,
     positions,
     results,
 )
@@ -281,6 +283,8 @@ class DayResultOut(BaseModel):
     coupon: Decimal
     fees: Decimal
     expenses: Decimal
+    charges: Decimal  # начисленные вознаграждение и комиссии от СЧА
+    correction: Decimal  # корректировка комиссий от СЧА при выплате
     total: Decimal
     receivable: Decimal  # к получению по сделкам до расчётов
     payable: Decimal  # к уплате по сделкам до расчётов
@@ -320,6 +324,8 @@ class ResultDayOut(BaseModel):
     coupon: Decimal
     fees: Decimal
     expenses: Decimal
+    charges: Decimal
+    correction: Decimal
     total: Decimal
     flags: list[str]
 
@@ -384,9 +390,68 @@ class SecurityTransferIn(_OperationBase):
     quantity: Annotated[int, Field(gt=0, le=10**12)]
 
 
+FeeKind = Literal["management", "specdep", "registrar", "other"]
+
+
+class FeePaymentIn(_OperationBase):
+    """Выплата вознаграждения или комиссии от СЧА за период (решения 43, 106)."""
+
+    kind: Literal["fee_payment"]
+    fund_id: UUID
+    fee_kind: FeeKind
+    period_end: date  # последний день оплаченного месяца
+    amount: Money
+
+
 OperationIn = Annotated[
-    UnitsIn | ExpenseIn | CashTransferIn | SecurityTransferIn, Field(discriminator="kind")
+    UnitsIn | ExpenseIn | CashTransferIn | SecurityTransferIn | FeePaymentIn,
+    Field(discriminator="kind"),
 ]
+
+
+class FeeRateIn(BaseModel):
+    kind: FeeKind
+    rate: Annotated[Decimal, Field(ge=0, le=100, max_digits=9, decimal_places=6)]  # % годовых
+    valid_from: date
+    comment: OptionalComment = None
+
+
+class FeeRateOut(BaseModel):
+    kind: FeeKind
+    rate: Decimal
+    valid_from: date
+    portfolio_id: UUID  # казначейский портфель: сюда начисление
+    comment: str | None
+    author: str
+    created_at: datetime
+
+
+class NavDayOut(BaseModel):
+    date: date
+    nav: Decimal
+    units: Decimal
+    unit_price: Decimal | None
+    cash: Decimal
+    clean: Decimal
+    accrued: Decimal
+    receivable: Decimal
+    payable: Decimal
+    claims: Decimal
+    obligations: Decimal
+    expenses: Decimal
+    fees_owed: Decimal
+    fees_today: dict[str, Decimal]
+    flags: list[str]
+
+
+class NavOut(BaseModel):
+    fund_id: UUID
+    code: str
+    name: str
+    first: date
+    last: date
+    waiting_since: date | None
+    days: list[NavDayOut]
 
 
 class SettleIn(BaseModel):
@@ -410,6 +475,8 @@ class OperationOut(BaseModel):
     planned_date: date | None
     settled_date: date | None
     expense_kind: str | None
+    fee_kind: str | None = None
+    period_end: date | None = None
     instrument_id: UUID | None
     secid: str | None
     short_name: str | None
@@ -822,6 +889,82 @@ async def cancel_operation(
     return _operation_out(await desk_.cancel(operation_id, body.comment))
 
 
+# --- СЧА и комиссии от СЧА ---------------------------------------------------------
+
+
+@router.get("/funds/{fund_id}/fee-rates", tags=["nav"])
+async def fee_rates(
+    fund_id: UUID,
+    *,
+    user: Staff,
+    session: DbSession,
+    authorization: Authorization,
+    services: Services,
+    now: Now,
+) -> list[FeeRateOut]:
+    """Ставки комиссий от СЧА фонда — вся история, по дате начала."""
+    desk_ = operation_desk(session, user, authorization, services, now)
+    return [FeeRateOut.model_validate(r, from_attributes=True) for r in await desk_.rates(fund_id)]
+
+
+@router.post("/funds/{fund_id}/fee-rates", status_code=201, tags=["nav"])
+async def set_fee_rate(
+    fund_id: UUID,
+    *,
+    body: FeeRateIn,
+    user: Operations,
+    session: DbSession,
+    authorization: Authorization,
+    services: Services,
+    now: Now,
+) -> list[FeeRateOut]:
+    """Новая ставка с даты начала (решение 21); фонд пересчитывается с этой даты."""
+    desk_ = operation_desk(session, user, authorization, services, now)
+    rows = await desk_.set_rate(
+        fund_id,
+        kind=body.kind,
+        rate=body.rate,
+        valid_from=body.valid_from,
+        comment=body.comment,
+    )
+    return [FeeRateOut.model_validate(r, from_attributes=True) for r in rows]
+
+
+@router.get("/nav", tags=["nav"])
+async def get_nav(
+    _user: Staff,
+    *,
+    session: DbSession,
+    authorization: Authorization,
+    services: Services,
+    now: Now,
+    fund_id: UUID,
+    first: Annotated[date, Query(alias="from")],
+    last: Annotated[date, Query(alias="till")],
+) -> NavOut:
+    """СЧА фонда, паи и стоимость пая по дням, состав СЧА и начисленные комиссии."""
+    if last < first or (last - first).days > MAX_RESULT_DAYS:
+        raise RuleViolationError(
+            "bad_period",
+            f"Период — от одного дня до {MAX_RESULT_DAYS} дней, конец не раньше начала.",
+        )
+    visible = await services.portfolios.visible(authorization)
+    view = await nav(
+        session, visible, fund_id, (first, last), now=now, marketdata=services.marketdata
+    )
+    if view is None:
+        raise NotFoundError("fund", fund_id)
+    return NavOut(
+        fund_id=view.fund.id,
+        code=view.fund.code,
+        name=view.fund.name,
+        first=view.first,
+        last=view.last,
+        waiting_since=view.waiting_since,
+        days=[_nav_day_out(d) for d in view.days],
+    )
+
+
 # --- лестница расчётов ----------------------------------------------------------
 
 
@@ -950,10 +1093,32 @@ def _result_out(result: DayResult) -> DayResultOut:
         coupon=result.coupon,
         fees=result.fees,
         expenses=result.expenses,
+        charges=result.charges,
+        correction=result.correction,
         total=result.total,
         receivable=result.receivable,
         payable=result.payable,
         flags=[f.value for f in result.flags],
+    )
+
+
+def _nav_day_out(day: NavDay) -> NavDayOut:
+    return NavDayOut(
+        date=day.day,
+        nav=day.nav,
+        units=day.units,
+        unit_price=day.unit_price,
+        cash=day.cash,
+        clean=day.clean,
+        accrued=day.accrued,
+        receivable=day.receivable,
+        payable=day.payable,
+        claims=day.claims,
+        obligations=day.obligations,
+        expenses=day.expenses,
+        fees_owed=day.fees_owed,
+        fees_today=day.fees_today,
+        flags=[f.value for f in day.flags],
     )
 
 
@@ -967,6 +1132,8 @@ def _result_day_out(day: ResultDay) -> ResultDayOut:
         coupon=day.coupon,
         fees=day.fees,
         expenses=day.expenses,
+        charges=day.charges,
+        correction=day.correction,
         total=day.total,
         flags=[f.value for f in day.flags],
     )

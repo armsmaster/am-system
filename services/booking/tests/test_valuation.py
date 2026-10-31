@@ -15,6 +15,7 @@ import pytest
 from am_common.clock import MOSCOW
 from booking.roll import (
     Entitlement,
+    FeeRate,
     Flag,
     Holding,
     InstrumentKind,
@@ -498,3 +499,96 @@ def test_two_bonds_traded_the_same_day() -> None:
     days = week(trades={BONDS: [BUY, SELL, share]})
     balanced(days)
     assert set(days[1][BONDS].valuations) == {OFZ, SHARE}
+
+
+MANAGEMENT = FeeRate("management", Decimal("1.5"), date(2026, 11, 26), TREASURY)
+
+
+def nav(day: dict[UUID, State]) -> Decimal:
+    return sum((s.result.value for s in day.values() if s.result is not None), Decimal(0))
+
+
+def test_nav_and_management_fee_from_the_methodology() -> None:
+    days = week(rates=[MANAGEMENT])
+    balanced(days)
+
+    # СЧА и вознаграждение УК 1,5% годовых по дням — таблицы методики (design/06).
+    assert [nav(d) for d in days] == [
+        Decimal(v)
+        for v in (
+            "99995890.41",
+            "100016779.96",
+            "100012669.68",
+            "100008559.57",
+            "100045447.94",
+            "100035036.74",
+            "100072624.00",
+            "100062511.67",
+        )
+    ]
+    assert [d[TREASURY].fees_today["management"] for d in days] == [
+        Decimal(v)
+        for v in (
+            "4109.59",
+            "4110.45",
+            "4110.28",
+            "4110.11",
+            "4111.63",
+            "4111.20",
+            "4112.74",
+            "4112.33",
+        )
+    ]
+    last = days[-1][TREASURY]
+    assert last.fees_due == {
+        "management": {"2026-11": Decimal("20552.06"), "2026-12": Decimal("12336.27")}
+    }
+    # Стоимость пая: СЧА / паи — 1 000,63 ₽ на 03.12.
+    assert (nav(days[-1]) / last.units).quantize(Decimal("0.01")) == Decimal("1000.63")
+
+
+def test_fee_payment_closes_the_period_with_a_correction() -> None:
+    paid = Operation(
+        id=UUID(int=207),
+        kind=OperationKind.FEE_PAYMENT,
+        portfolio_id=TREASURY,
+        day=date(2026, 12, 3),
+        amount=Decimal("20550.00"),
+        fee_kind="management",
+        period_end=date(2026, 11, 30),
+    )
+    days = week(rates=[MANAGEMENT], operations=[ISSUE, TO_BONDS, paid])
+    balanced(days)
+    treasury = days[-1][TREASURY]
+    assert treasury.result is not None
+    # Начислено за ноябрь 20 552,06 ₽, заплатили 20 550,00 ₽: корректировка −2,06 ₽ расхода.
+    assert (treasury.result.charges, treasury.result.correction) == (
+        Decimal("-4112.33"),
+        Decimal("2.06"),
+    )
+    assert treasury.fees_due == {"management": {"2026-12": Decimal("12336.27")}}
+    assert treasury.cash == Decimal("40000000") - Decimal("20550.00")
+
+
+def test_rate_change_and_a_zero_rate() -> None:
+    lower = FeeRate("management", Decimal("0"), date(2026, 11, 28), TREASURY)
+    specdep = FeeRate("specdep", Decimal("0.1"), date(2026, 12, 1), BONDS)
+    days = week(rates=[MANAGEMENT, lower, specdep])
+    balanced(days)
+    # С 28.11 ставка 0 — вознаграждение не начисляется; спецдепозитарий — с 01.12.
+    assert [dict(d[TREASURY].fees_today) for d in days[1:3]] == [
+        {"management": Decimal("4110.45")},
+        {},
+    ]
+    # 0,1% × (100 059 700 − 8 220,04 вознаграждения за 26–27.11) / 365.
+    assert days[5][BONDS].fees_today == {"specdep": Decimal("274.11")}
+
+
+def test_fee_goes_to_a_treasury_without_its_own_activity() -> None:
+    # Начисление в портфель, которого в ролле ещё нет: он появляется с обязательством.
+    elsewhere = FeeRate("other", Decimal("1"), date(2026, 11, 26), UUID(int=13))
+    days = week(rates=[elsewhere])
+    balanced([{k: v for k, v in d.items() if k != UUID(int=13)} for d in days])
+    first = days[0][UUID(int=13)]
+    assert first.result is not None
+    assert (first.fees_owed, first.result.value) == (Decimal("2739.73"), Decimal("-2739.73"))

@@ -80,8 +80,9 @@ async def test_history_worker_loads_rates_too(
 ) -> None:
     quick = settings.model_copy(update={"history_check_seconds": 0.05})
     task = asyncio.ensure_future(history_worker(quick, clock=lambda: NOW)(resources))
+    # Ждём все десять: под нагрузкой воркер может успеть записать только часть.
     for _ in range(100):
-        if await stored(resources):
+        if len(await stored(resources)) == 10:
             break
         await asyncio.sleep(0.05)
     task.cancel()

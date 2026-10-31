@@ -2,8 +2,8 @@ import { ErrorNote, useAction } from '@am/ui';
 import { useState, type FormEvent } from 'react';
 
 import type { Context } from '../App';
-import type { ExpenseKind, Operation, OperationInput, OperationKind } from '../api';
-import { decimalInput, EXPENSE_LABELS, moscowToday, OPERATION_LABELS } from '../format';
+import type { ExpenseKind, FeeKind, Operation, OperationInput, OperationKind } from '../api';
+import { decimalInput, EXPENSE_LABELS, FEE_LABELS, moscowToday, OPERATION_LABELS } from '../format';
 
 interface Draft {
   kind: OperationKind;
@@ -15,6 +15,8 @@ interface Draft {
   amount: string;
   planned_date: string;
   expense_kind: ExpenseKind;
+  fee_kind: FeeKind;
+  period_end: string;
   instrument_id: string;
   quantity: string;
   comment: string;
@@ -22,10 +24,21 @@ interface Draft {
 
 const KINDS = Object.keys(OPERATION_LABELS) as OperationKind[];
 const EXPENSE_KINDS = Object.keys(EXPENSE_LABELS) as ExpenseKind[];
+const FEE_KINDS = Object.keys(FEE_LABELS) as FeeKind[];
 
-function group(kind: OperationKind): 'units' | 'expense' | 'cash' | 'security' {
+/** Последний день прошлого месяца: вознаграждение обычно платят за прошлый месяц. */
+function lastMonthEnd(today: string): string {
+  const first = new Date(`${today.slice(0, 8)}01T00:00:00Z`);
+  first.setUTCDate(0);
+  return first.toISOString().slice(0, 10);
+}
+
+function group(kind: OperationKind): 'units' | 'expense' | 'fee' | 'cash' | 'security' {
   if (kind === 'unit_issue' || kind === 'unit_redemption') {
     return 'units';
+  }
+  if (kind === 'fee_payment') {
+    return 'fee';
   }
   if (kind === 'expense_accrual' || kind === 'expense_payment') {
     return 'expense';
@@ -48,6 +61,16 @@ function body(draft: Draft): OperationInput {
   }
   if (kind === 'expense_accrual' || kind === 'expense_payment') {
     return { ...common, kind, fund_id: draft.fund_id, expense_kind: draft.expense_kind, amount: decimalInput(draft.amount) };
+  }
+  if (kind === 'fee_payment') {
+    return {
+      ...common,
+      kind,
+      fund_id: draft.fund_id,
+      fee_kind: draft.fee_kind,
+      period_end: draft.period_end,
+      amount: decimalInput(draft.amount),
+    };
   }
   if (kind === 'cash_transfer') {
     return {
@@ -94,6 +117,8 @@ export function OperationForm({
     amount: '',
     planned_date: today,
     expense_kind: 'specdep',
+    fee_kind: 'management',
+    period_end: lastMonthEnd(today),
     instrument_id: '',
     quantity: '',
     comment: '',
@@ -144,7 +169,7 @@ export function OperationForm({
             ))}
           </select>
         </label>
-        {(kind === 'units' || kind === 'expense') && (
+        {(kind === 'units' || kind === 'expense' || kind === 'fee') && (
           <label>
             Фонд
             <select value={draft.fund_id} required onChange={(e) => set('fund_id', e.target.value)}>
@@ -194,6 +219,29 @@ export function OperationForm({
               ))}
             </select>
           </label>
+        )}
+        {kind === 'fee' && (
+          <>
+            <label>
+              Вид комиссии
+              <select value={draft.fee_kind} onChange={(e) => set('fee_kind', e.target.value as FeeKind)}>
+                {FEE_KINDS.map((k) => (
+                  <option key={k} value={k}>
+                    {FEE_LABELS[k]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Оплачено по
+              <input
+                type="date"
+                value={draft.period_end}
+                required
+                onChange={(e) => set('period_end', e.target.value)}
+              />
+            </label>
+          </>
         )}
         {kind === 'security' ? (
           <>

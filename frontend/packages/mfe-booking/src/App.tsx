@@ -6,6 +6,7 @@ import { NavLink, Route, Routes, useParams } from 'react-router';
 import { bookingApi, type BookingApi, type Instrument, type Portfolio } from './api';
 import { ImportPage } from './pages/ImportPage';
 import { LadderPage } from './pages/LadderPage';
+import { NavPage } from './pages/NavPage';
 import { OperationsPage } from './pages/OperationsPage';
 import { PositionsPage } from './pages/PositionsPage';
 import { ResultsPage } from './pages/ResultsPage';
@@ -52,6 +53,7 @@ export function Booking({
         </NavLink>
         <NavLink to={`${basePath}/positions`}>Позиции</NavLink>
         <NavLink to={`${basePath}/results`}>Результат</NavLink>
+        <NavLink to={`${basePath}/nav`}>СЧА</NavLink>
         <NavLink to={`${basePath}/ladder`}>Лестница</NavLink>
         <NavLink to={`${basePath}/operations`}>Операции фонда</NavLink>
         <NavLink to={`${basePath}/import`}>Импорт</NavLink>
@@ -65,6 +67,7 @@ export function Booking({
               <Route path="trades/:id" element={<TradeRoute context={context} />} />
               <Route path="positions" element={<PositionsPage context={context} />} />
               <Route path="results" element={<ResultsPage context={context} />} />
+              <Route path="nav" element={<NavPage context={context} />} />
               <Route path="ladder" element={<LadderPage context={context} />} />
               <Route path="operations" element={<OperationsPage context={context} />} />
               <Route path="import" element={<ImportPage context={context} />} />

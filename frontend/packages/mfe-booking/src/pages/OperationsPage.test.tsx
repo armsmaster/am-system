@@ -21,6 +21,15 @@ describe('OperationsPage', () => {
         planned_date: null,
       }),
       operation({
+        id: 'o-5',
+        kind: 'fee_payment',
+        units: null,
+        amount: '20550.00',
+        planned_date: null,
+        fee_kind: 'management',
+        period_end: '2026-11-30',
+      }),
+      operation({
         id: 'o-4',
         kind: 'security_transfer',
         portfolio_code: 'OPIF1-BONDS',
@@ -40,7 +49,8 @@ describe('OperationsPage', () => {
     expect(rows[2]).toHaveTextContent('отмечен 27.11.2026отменена');
     expect(rows[3]).toHaveTextContent('начисление расхода, специализированный депозитарий');
     expect(rows[3]).toHaveTextContent('—50 000,00—');
-    expect(rows[4]).toHaveTextContent('перевод бумаг, SU26238RMFS4OPIF1-BONDS → OPIF1-TREASURY10 000—');
+    expect(rows[4]).toHaveTextContent('выплата вознаграждения, вознаграждение УК по 30.11.2026');
+    expect(rows[5]).toHaveTextContent('перевод бумаг, SU26238RMFS4OPIF1-BONDS → OPIF1-TREASURY10 000—');
     // Трейдинг видит операции, но не проводит их.
     expect(screen.queryByRole('button', { name: 'Новая операция' })).not.toBeInTheDocument();
     expect(screen.queryByText('Изменить')).not.toBeInTheDocument();
@@ -114,6 +124,15 @@ describe('OperationsPage', () => {
         await user.type(within(form).getByLabelText('Сумма, ₽'), '30000');
       },
       { kind: 'expense_payment', fund_id: 'p-fund', expense_kind: 'auditor', amount: '30000' },
+    ],
+    [
+      'выплата вознаграждения',
+      async (form: HTMLElement, user: ReturnType<typeof userEvent.setup>) => {
+        await user.selectOptions(within(form).getByLabelText('Вид комиссии'), 'specdep');
+        fireEvent.change(within(form).getByLabelText('Оплачено по'), { target: { value: '2026-10-31' } });
+        await user.type(within(form).getByLabelText('Сумма, ₽'), '20550');
+      },
+      { kind: 'fee_payment', fund_id: 'p-fund', fee_kind: 'specdep', period_end: '2026-10-31', amount: '20550' },
     ],
     [
       'перевод денег',

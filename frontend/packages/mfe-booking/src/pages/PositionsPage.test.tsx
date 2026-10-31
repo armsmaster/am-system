@@ -20,6 +20,8 @@ describe('PositionsPage', () => {
     // Стоимость и результат дня по частям — части в сумме дают результат.
     const result = screen.getByLabelText('Стоимость и результат дня');
     expect(result).toHaveTextContent('стоимость портфеля60 103 400,00 ₽результат дня41 700,00 ₽переоценка36 000,00 ₽');
+    expect(result).toHaveTextContent('вознаграждение и комиссии от СЧА0,00 ₽');
+    expect(result).toHaveTextContent('корректировка комиссий при выплате0,00 ₽');
     expect(result).not.toHaveTextContent('приток');
     expect(screen.getByText(/DV01 портфеля/)).toHaveTextContent('по доходности — 9 780,00 ₽');
     await user.click(screen.getByText('Подробнее и лоты FIFO: 1'));

@@ -187,6 +187,31 @@ describe('changes', () => {
     expect(['trade.cancelled', 'trade.confirmed'].map(actionLabel)).toEqual(['Отменена сделка', 'Подтверждена сделка']);
   });
 
+  it('describes fee rates and fee payments', () => {
+    const rate = event('fee_rate.set', {
+      fund: { code: 'OPIF1' },
+      after: { kind: 'management', rate: '1.5', valid_from: '2026-11-26' },
+    });
+    const payment = event('operation.entered', {
+      operation: { kind: 'fee_payment', portfolio: 'OPIF1-TREASURY' },
+      before: null,
+      after: { fee_kind: 'management', period_end: '2026-11-30' },
+    });
+
+    expect([actionLabel(rate.type), objectLabel(rate)]).toEqual(['Изменена ставка комиссии от СЧА', 'OPIF1']);
+    expect(changes(rate)).toEqual([
+      { field: 'Тип', before: '—', after: 'вознаграждение УК' },
+      { field: 'ставка', before: '—', after: '1.5' },
+      { field: 'Действует с', before: '—', after: '26.11.2026' },
+    ]);
+    expect(objectLabel(payment)).toBe('OPIF1-TREASURY: выплата вознаграждения');
+    expect(changes(payment)).toEqual([
+      { field: 'Вид комиссии', before: '—', after: 'вознаграждение УК' },
+      { field: 'Оплачено по', before: '—', after: '30.11.2026' },
+    ]);
+    expect(objectLabel(event('fee_rate.set', { fund: {} }))).toBe('');
+  });
+
   it('describes prices for past days', () => {
     const backfilled = event('prices.backfilled', {
       since: '2026-10-22',

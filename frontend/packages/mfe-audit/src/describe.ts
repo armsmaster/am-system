@@ -30,6 +30,7 @@ const ACTIONS: Readonly<Record<string, string>> = {
   'operation.entered': 'Проведена операция фонда',
   'operation.settled': 'Отмечен расчёт по паям',
   'operation.cancelled': 'Отменена операция фонда',
+  'fee_rate.set': 'Изменена ставка комиссии от СЧА',
 };
 
 const FIELDS: Readonly<Record<string, string>> = {
@@ -89,6 +90,9 @@ const FIELDS: Readonly<Record<string, string>> = {
   planned_date: 'Плановая дата расчёта',
   settled_date: 'Расчёт отмечен',
   expense_kind: 'Вид расхода',
+  fee_kind: 'Вид комиссии',
+  period_end: 'Оплачено по',
+  valid_from: 'Действует с',
 };
 
 /** Значения перечислений — словами. */
@@ -114,6 +118,8 @@ const VALUES: Readonly<Record<string, string>> = {
   expense_payment: 'выплата расхода',
   cash_transfer: 'перевод денег',
   security_transfer: 'перевод бумаг',
+  fee_payment: 'выплата вознаграждения',
+  management: 'вознаграждение УК',
   specdep: 'специализированный депозитарий',
   registrar: 'регистратор',
   auditor: 'аудитор',
@@ -157,12 +163,16 @@ export function objectLabel(event: AuditEvent): string {
     trade?: { readonly secid: string; readonly portfolio: string | null };
     operation?: { readonly kind: string; readonly portfolio: string | null };
     instruments?: readonly { readonly secid: string }[];
+    fund?: Ref;
     since?: string;
     version?: number;
     day?: string;
   };
   if (data.trade) {
     return `${data.trade.portfolio ?? '—'}: ${data.trade.secid}`;
+  }
+  if (data.fund) {
+    return `${data.fund.code ?? ''}`;
   }
   if (data.instruments && data.since) {
     // Цены за прошлые дни: по ним сервис сделок пересчитывает оценку позиций.

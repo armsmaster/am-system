@@ -1,6 +1,6 @@
 import { LoadedView, useLoad } from '@am/ui';
 import { useCallback } from 'react';
-import { useSearchParams } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 
 import type { Context } from '../App';
 import type { ResultDay, Results } from '../api';
@@ -12,6 +12,8 @@ const PARTS = [
   ['coupon', 'Купонный доход'],
   ['fees', 'Комиссии'],
   ['expenses', 'Расходы'],
+  ['charges', 'Комиссии от СЧА'],
+  ['correction', 'Корректировка комиссий'],
 ] as const;
 
 /**
@@ -58,12 +60,15 @@ export function ResultsPage({ context }: { readonly context: Context }) {
           <input type="date" value={till} required onChange={(e) => e.target.value && update({ till: e.target.value })} />
         </label>
       </form>
-      <LoadedView state={state}>{(results) => <ResultsView results={results} />}</LoadedView>
+      <LoadedView state={state}>
+        {(results) => <ResultsView results={results} trades={`${context.basePath}?portfolio=${portfolioId}&date=`} />}
+      </LoadedView>
     </>
   );
 }
 
-function ResultsView({ results }: { readonly results: Results }) {
+/** `trades` — ссылка на сделки портфеля без даты: дата дня дописывается в конец. */
+function ResultsView({ results, trades }: { readonly results: Results; readonly trades: string }) {
   const { days, lines } = results;
   const incomplete = [...new Set(days.flatMap((d) => d.flags))];
   return (
@@ -99,7 +104,7 @@ function ResultsView({ results }: { readonly results: Results }) {
             </thead>
             <tbody>
               {days.map((d) => (
-                <DayRow key={d.date} day={d} />
+                <DayRow key={d.date} day={d} trades={trades} />
               ))}
             </tbody>
             <tfoot>
@@ -154,11 +159,13 @@ function ResultsView({ results }: { readonly results: Results }) {
   );
 }
 
-function DayRow({ day }: { readonly day: ResultDay }) {
+function DayRow({ day, trades }: { readonly day: ResultDay; readonly trades: string }) {
   return (
     <tr>
       <td>
-        {formatDate(day.date)}
+        <Link to={`${trades}${day.date}`} title="Сделки дня">
+          {formatDate(day.date)}
+        </Link>
         {day.flags.length > 0 && <span className="danger"> *</span>}
       </td>
       <td className="num">{formatMoney(day.value)}</td>
