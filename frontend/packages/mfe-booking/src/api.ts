@@ -203,7 +203,8 @@ export type MovementKind =
   | 'transfer_in'
   | 'repo_first'
   | 'repo_second'
-  | 'repo_contribution';
+  | 'repo_contribution'
+  | 'coupon_forecast';
 
 export interface Movement {
   readonly kind: MovementKind;
@@ -491,6 +492,20 @@ export interface Ladder {
   readonly waiting_since: string | null;
   readonly instruments: readonly { readonly instrument_id: string; readonly secid: string; readonly short_name: string }[];
   readonly days: readonly LadderDay[];
+  /** Купоны флоатеров по прогнозу: из какой ставки посчитаны (решение 14). */
+  readonly forecasts: readonly CouponForecast[];
+}
+
+export interface CouponForecast {
+  readonly instrument_id: string;
+  readonly date: string;
+  /** На бумагу, ₽. */
+  readonly coupon: Decimal;
+  readonly index: 'key_rate' | 'ruonia' | 'rusfar';
+  /** % годовых. */
+  readonly index_value: Decimal;
+  readonly margin_bp: Decimal;
+  readonly capitalized: boolean;
 }
 
 export type ImportResult = 'created' | 'amended' | 'cancelled' | 'unchanged';

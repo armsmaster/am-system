@@ -1,4 +1,5 @@
 import type {
+  CouponForecast,
   Decimal,
   ExpenseKind,
   FeeKind,
@@ -50,7 +51,26 @@ export const MOVEMENT_LABELS: Readonly<Record<MovementKind, string>> = {
   repo_first: 'РЕПО: первая часть',
   repo_second: 'РЕПО: вторая часть',
   repo_contribution: 'РЕПО: компенсационный взнос',
+  coupon_forecast: 'купон, прогноз',
 };
+
+const INDEX_LABELS: Readonly<Record<CouponForecast['index'], string>> = {
+  key_rate: 'КС',
+  ruonia: 'RUONIA',
+  rusfar: 'RUSFAR',
+};
+
+/** Из чего прогноз купона: «КС 14% + 1,3%», с капитализацией — так и пишем. */
+export function forecastBasis(forecast: CouponForecast): string {
+  const margin = Number(forecast.margin_bp) / 100;
+  const sign = margin < 0 ? '−' : '+';
+  const percent = (value: number) => `${formatPrice(String(value))}%`;
+  return [
+    `${INDEX_LABELS[forecast.index]} ${percent(Number(forecast.index_value))} ${sign} ${percent(Math.abs(margin))}`,
+    forecast.capitalized ? ', с капитализацией' : '',
+    `, ${formatMoney(forecast.coupon)} ₽ на бумагу`,
+  ].join('');
+}
 
 /** Движение словами; выплата со ссылкой на сделку — передача дохода по РЕПО (решение 112). */
 export function movementLabel(movement: Pick<Movement, 'kind' | 'trade_id'>): string {

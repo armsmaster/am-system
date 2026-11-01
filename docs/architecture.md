@@ -198,9 +198,7 @@ audience (`am-api`) и срок; роли берёт из `realm_access.roles`. 
 6. Оценка, P&L, СЧА, комиссии. Методика —
    [design/06-valuation-nav.md](design/06-valuation-nav.md). *(сделано)*
 7. РЕПО, флоатеры (с плоским прогнозом ставки), БПИФ — **это MVP**. Методика —
-   [design/07-repo-floaters-etf.md](design/07-repo-floaters-etf.md). *(часть 7.1 сделана:
-   РЕПО с НКЦ и компенсационные взносы; часть 7.2 — прогноз купонов флоатеров
-   и паи БПИФ — впереди)*
+   [design/07-repo-floaters-etf.md](design/07-repo-floaters-etf.md). *(сделано)*
 8. `reconciliation`: приёмник остатков, сверка, закрытие дня.
 9. `limits`.
 10. Второй этап: фьючерсы RUONIA и OIS, кривая RUONIA.

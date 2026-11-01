@@ -57,6 +57,7 @@ describe('LadderPage', () => {
     expect(alert).toHaveTextContent('Не хватает 2 000,00 ₽ к расчётам 07.12.2026.');
     expect(within(alert).getAllByText(/Не хватает/)).toHaveLength(3);
     expect(screen.getByText(/Фонд пересчитывается с 30.11.2026/)).toBeInTheDocument();
+    expect(screen.getByText(/Сумма купона не объявлена — в лестнице её нет/)).toBeInTheDocument();
     const rows = within(screen.getByRole('table', { name: 'Лестница расчётов' })).getAllByRole('row');
     expect(rows[1]).toHaveTextContent('05.12.2026 (выходной)OPIF1-BONDS: выплата: сумма не объявлена i-gone');
     const cells = within(rows[1]!).getAllByRole('cell');
@@ -82,5 +83,54 @@ describe('LadderPage', () => {
     renderBooking(api, '/booking/ladder');
 
     expect(await screen.findByText(/Нет доступных счетов/)).toBeInTheDocument();
+  });
+
+  it('shows a floater coupon forecast with its rate', async () => {
+    const api = fakeApi();
+    const base = ladder();
+    const [first] = base.days;
+    const coupon = { ...first!.movements[0]!, kind: 'coupon_forecast' as const, instrument_id: 'i-flt', quantity: 0 };
+    api.ladder.mockResolvedValue(
+      ladder({
+        instruments: [...base.instruments, { instrument_id: 'i-flt', secid: 'RU000A107HG1', short_name: 'Газпнф3P8R' }],
+        forecasts: [
+          {
+            instrument_id: 'i-flt',
+            date: '2026-12-14',
+            coupon: '12.58',
+            index: 'key_rate',
+            index_value: '14.0000',
+            margin_bp: '130',
+            capitalized: false,
+          },
+          {
+            instrument_id: 'i-flt',
+            date: '2026-12-15',
+            coupon: '8.49',
+            index: 'ruonia',
+            index_value: '13.9000',
+            margin_bp: '-20',
+            capitalized: true,
+          },
+        ],
+        days: [
+          { ...first!, date: '2026-12-14', movements: [{ ...coupon, cash: '62900.00' }] },
+          { ...first!, date: '2026-12-15', movements: [{ ...coupon, cash: '42450.00' }] },
+        ],
+      }),
+    );
+    renderBooking(api, '/booking/ladder');
+
+    expect(
+      await screen.findByText(
+        'OPIF1-BONDS: купон, прогноз RU000A107HG1 +62 900,00 ₽ (КС 14% + 1,3%, 12,58 ₽ на бумагу)',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'OPIF1-BONDS: купон, прогноз RU000A107HG1 +42 450,00 ₽ (RUONIA 13,9% − 0,2%, с капитализацией, 8,49 ₽ на бумагу)',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Сумма купона не объявлена/)).not.toBeInTheDocument();
   });
 });

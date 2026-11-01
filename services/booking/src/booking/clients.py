@@ -172,6 +172,11 @@ class MarketdataClient(_ServiceClient):
             for item in found or []
         }
 
+    async def rates(self, day: date) -> dict[str, Decimal]:
+        """Последние известные ставки индексов на дату, % годовых: ключевая, RUONIA, RUSFAR."""
+        found = await self._service_get("/rates", date=day.isoformat())
+        return {item["rate"]: Decimal(item["value"]) for item in found if item["value"] is not None}
+
     async def metrics(self, instrument_id: UUID, at: datetime) -> Metrics | None:
         """DV01 и модифицированная дюрация бумаги по цене для оценки на момент (design/04):
         облигация с фиксированным купоном — по доходности, флоатер и линкер — по спреду."""

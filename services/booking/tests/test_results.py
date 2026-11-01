@@ -668,3 +668,60 @@ def test_repo_warnings_and_a_security_without_quantity(trader: Api) -> None:
     assert "в прямое РЕПО отдаётся 10000" in position
     lacking = trader.call("POST", "/trades", OFZ_REPO | {"quantity": 0})
     assert lacking.status_code == 422
+
+
+# --- прогноз купона флоатера в лестнице (design/07, решение 14) ---------------------
+
+FLOATER = UUID("00000000-0000-0000-0000-0000000a07b1")
+
+
+@pytest.mark.usefixtures("week")
+async def test_floater_coupon_forecast_in_the_ladder(
+    trader: Api, resources: Resources, world: World
+) -> None:
+    trader.ok(
+        "POST",
+        "/trades",
+        trade(
+            instrument_id=str(FLOATER),
+            quantity=5_000,
+            price="100.1",
+            accrued="5.00",
+            face_value="1000",
+            trade_at="2026-12-01T12:00:00+03:00",
+            settle_date="2026-12-02",
+        ),
+    )
+    await recalc(resources)
+    ladder = trader.ok("GET", "/ladder", account_id=str(BONDS_ACCOUNT))
+    coupon = [
+        (d["date"], m["kind"], m["cash"])
+        for d in ladder["days"]
+        for m in d["movements"]
+        if m["instrument_id"] == str(FLOATER) and m["kind"] != "settlement"
+    ]
+    # 5 000 × 12,58 ₽ — по ключевой ставке 14,00% + 1,30% за 30 дней.
+    assert coupon == [("2026-12-14", "coupon_forecast", "62900.00")]
+    assert ladder["forecasts"] == [
+        {
+            "instrument_id": str(FLOATER),
+            "date": "2026-12-14",
+            "coupon": "12.58",
+            "index": "key_rate",
+            "index_value": "14.0000",
+            "margin_bp": "130",
+            "capitalized": False,
+        }
+    ]
+
+    # Сервис цен недоступен — лестница без прогноза: «сумма не объявлена».
+    world.rates = None
+    plain = trader.ok("GET", "/ladder", account_id=str(BONDS_ACCOUNT))
+    kinds = [
+        m["kind"]
+        for d in plain["days"]
+        for m in d["movements"]
+        if m["instrument_id"] == str(FLOATER)
+    ]
+    assert "payment_unknown" in kinds
+    assert plain["forecasts"] == []

@@ -3,8 +3,8 @@ import { useCallback } from 'react';
 import { useSearchParams } from 'react-router';
 
 import type { Context } from '../App';
-import type { Account, Ladder, LadderMovement } from '../api';
-import { formatDate, formatMoney, formatQuantity, movementLabel } from '../format';
+import type { Account, CouponForecast, Ladder, LadderMovement } from '../api';
+import { forecastBasis, formatDate, formatMoney, formatQuantity, movementLabel } from '../format';
 
 /**
  * Лестница расчётов по счёту (design/05): деньги и бумаги на счёте на конец
@@ -88,6 +88,12 @@ function LadderView({ ladder }: { readonly ladder: Ladder }) {
           Фонд пересчитывается с {formatDate(ladder.waiting_since)} — лестница по прежнему расчёту.
         </p>
       )}
+      {ladder.days.some((d) => d.movements.some((m) => m.kind === 'payment_unknown')) && (
+        <p className="muted">
+          Сумма купона не объявлена — в лестнице её нет. Купон флоатера получит прогноз по текущей ставке, если
+          в справочнике заполнены параметры флоатера: индекс, маржа, капитализация.
+        </p>
+      )}
       {deficits.length > 0 && (
         <div role="alert" className="notice notice-error">
           {deficits.map((text) => (
@@ -118,7 +124,16 @@ function LadderView({ ladder }: { readonly ladder: Ladder }) {
               <td>
                 {d.movements.length === 0
                   ? '—'
-                  : d.movements.map((m, index) => <MovementLine key={index} movement={m} secid={secid} />)}
+                  : d.movements.map((m, index) => (
+                      <MovementLine
+                        key={index}
+                        movement={m}
+                        secid={secid}
+                        forecast={ladder.forecasts.find(
+                          (f) => f.instrument_id === m.instrument_id && f.date === d.date,
+                        )}
+                      />
+                    ))}
               </td>
               <td className={`num${d.cash.startsWith('-') ? ' danger' : ''}`}>{formatMoney(d.cash)}</td>
               {ladder.instruments.map((i) => {
@@ -140,15 +155,18 @@ function LadderView({ ladder }: { readonly ladder: Ladder }) {
 function MovementLine({
   movement: m,
   secid,
+  forecast,
 }: {
   readonly movement: LadderMovement;
   readonly secid: (id: string | null) => string | null;
+  readonly forecast: CouponForecast | undefined;
 }) {
   const parts = [
     `${m.portfolio_code}: ${movementLabel(m)}`,
     secid(m.instrument_id),
     m.quantity ? `${m.quantity > 0 ? '+' : ''}${formatQuantity(m.quantity)} шт.` : null,
     m.cash.replace(/[-0.]/g, '') ? `${m.cash.startsWith('-') ? '' : '+'}${formatMoney(m.cash)} ₽` : null,
+    m.kind === 'coupon_forecast' && forecast ? `(${forecastBasis(forecast)})` : null,
   ];
   return <div>{parts.filter(Boolean).join(' ')}</div>;
 }

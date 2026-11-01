@@ -647,6 +647,18 @@ class LadderPortfolioOut(BaseModel):
     name: str
 
 
+class ForecastOut(BaseModel):
+    """Купон флоатера в лестнице по прогнозу (решение 14): на бумагу и из какой ставки."""
+
+    instrument_id: UUID
+    date: date
+    coupon: Decimal  # на бумагу, ₽
+    index: str  # key_rate | ruonia | rusfar
+    index_value: Decimal  # % годовых
+    margin_bp: Decimal
+    capitalized: bool
+
+
 class LadderOut(BaseModel):
     account_id: UUID
     portfolios: list[LadderPortfolioOut]
@@ -654,6 +666,7 @@ class LadderOut(BaseModel):
     waiting_since: date | None
     instruments: list[InstrumentOut]
     days: list[LadderDayOut]
+    forecasts: list[ForecastOut] = []
 
 
 # --- сделки ---------------------------------------------------------------------
@@ -1076,7 +1089,12 @@ async def get_ladder(
     """Деньги и бумаги на счёте на каждую дату расчётов от сегодня, дефициты."""
     visible = await services.portfolios.visible(authorization)
     found = await ladder(
-        session, services.refdata, visible, account_id, now.astimezone(MOSCOW).date()
+        session,
+        services.refdata,
+        visible,
+        account_id,
+        now.astimezone(MOSCOW).date(),
+        marketdata=services.marketdata,
     )
     if found is None:
         raise NotFoundError("account", account_id)
@@ -1331,6 +1349,18 @@ def _ladder_out(found: Ladder) -> LadderOut:
                 ],
             )
             for d in found.days
+        ],
+        forecasts=[
+            ForecastOut(
+                instrument_id=f.instrument_id,
+                date=f.pay_date,
+                coupon=f.coupon,
+                index=f.forecast.index,
+                index_value=f.forecast.value,
+                margin_bp=f.forecast.margin_bp,
+                capitalized=f.forecast.capitalized,
+            )
+            for f in found.forecasts
         ],
     )
 

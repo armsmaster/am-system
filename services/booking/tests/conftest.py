@@ -42,6 +42,8 @@ LQDT = UUID("00000000-0000-0000-0000-0000000001d7")
 LINKER = UUID("00000000-0000-0000-0000-00000010f504")
 MATURED = UUID("00000000-0000-0000-0000-000000000666")
 FUTURE = UUID("00000000-0000-0000-0000-000000000777")
+# Флоатер на ключевую ставку + 1,30%, как Газпром нефть 003P-08R: купон 14.12 не объявлен.
+FLOATER = UUID("00000000-0000-0000-0000-0000000a07b1")
 
 # Четверг 03.12.2026, 12:00 по Москве — «сейчас» в тестах: пример методики уже в прошлом.
 NOW = datetime(2026, 12, 3, 12, 0, tzinfo=MOSCOW)
@@ -117,6 +119,36 @@ class World:
             FUTURE: _instrument(
                 FUTURE, "SU27000RMFS0", "ОФЗ выпуск 2027", "bond", [(date(2027, 1, 1), ofz)]
             ),
+            FLOATER: _instrument(
+                FLOATER,
+                "RU000A107HG1",
+                "Газпнф3P8R",
+                "bond",
+                [
+                    (
+                        None,
+                        {
+                            "initial_face_value": "1000",
+                            "maturity_date": "2028-12-01",
+                            "nominal_indexation": "none",
+                            "floater": {
+                                "rate": "key_rate",
+                                "margin_bp": "130",
+                                "capitalized": False,
+                            },
+                            "coupons": [
+                                {
+                                    "date": "2026-12-14",
+                                    "start_date": "2026-11-14",
+                                    "record_date": "2026-12-11",
+                                    "amount": None,
+                                }
+                            ],
+                            "amortizations": [],
+                        },
+                    )
+                ],
+            ),
         }
         # НКД и номинал на дату расчётов — как их отдаёт сервис рыночных данных.
         self.accrued: dict[tuple[UUID, str], str] = {
@@ -134,6 +166,12 @@ class World:
             (OFZ, "2026-12-03"): "0.19",
         }
         self.metrics: dict[UUID, dict[str, Any]] = {}
+        # Ставки индексов, как их отдаёт сервис цен; None — сервис недоступен.
+        self.rates: list[dict[str, Any]] | None = [
+            {"rate": "key_rate", "value": "14.0000"},
+            {"rate": "ruonia", "value": None},
+            {"rate": "rusfar", "value": "14.1700"},
+        ]
         self.calendar: dict[int, list[dict[str, Any]]] = {
             2026: [{"day": "2026-11-04", "is_trading": False, "comment": "праздник"}]
         }
@@ -202,6 +240,8 @@ class World:
 
     def _marketdata(self, request: httpx2.Request, path: str) -> httpx2.Response:
         assert request.headers["Authorization"] == "Bearer service-token"
+        if path == "/rates":
+            return self._rates()
         if match := re.fullmatch(r"/instruments/([^/]+)/marks", path):
             return self._marks(UUID(match[1]), request)
         if match := re.fullmatch(r"/instruments/([^/]+)/analytics", path):
@@ -217,6 +257,11 @@ class World:
         if value is None:
             return httpx2.Response(404, json={"detail": {"code": "not_found"}})
         return httpx2.Response(200, json={"date": day, "value": value, "method": "iss"})
+
+    def _rates(self) -> httpx2.Response:
+        if self.rates is None:
+            return httpx2.Response(503, json={"detail": {"code": "unavailable"}})
+        return httpx2.Response(200, json=self.rates)
 
     def _marks(self, instrument_id: UUID, request: httpx2.Request) -> httpx2.Response:
         """Отметки как в сервисе цен: цена — последняя известная к концу дня,

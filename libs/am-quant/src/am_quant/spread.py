@@ -64,26 +64,31 @@ def funding_rate(ruonia: Decimal) -> Decimal:
         return (ONE + ruonia / DAYS) ** 365 - ONE
 
 
-def floater_flows(
-    bond: Bond, settle: date, horizon: Horizon, terms: FloaterTerms
-) -> tuple[CashFlow, ...]:
-    """Потоки флоатера: объявленный купон как есть, будущие — по текущей ставке индекса.
+def floater_coupon(outstanding: Decimal, days: int, terms: FloaterTerms) -> Decimal:
+    """Купон флоатера на бумагу по текущей ставке индекса — плоский прогноз, без округления.
 
     Без капитализации: N · (I + m) · d/365; с капитализацией:
     N · ((1 + I/365)^d − 1 + m · d/365). N — непогашенный номинал в начале периода.
     """
+    with localcontext() as context:
+        context.prec = PRECISION
+        tau = Decimal(days) / DAYS
+        if terms.capitalized:
+            index_part = (ONE + terms.index / DAYS) ** days - ONE
+        else:
+            index_part = terms.index * tau
+        return outstanding * (index_part + terms.margin * tau)
+
+
+def floater_flows(
+    bond: Bond, settle: date, horizon: Horizon, terms: FloaterTerms
+) -> tuple[CashFlow, ...]:
+    """Потоки флоатера: объявленный купон как есть, будущие — по текущей ставке индекса."""
 
     def coupon(c: Coupon) -> Decimal:
         if c.amount is not None:
             return c.amount
-        with localcontext() as context:
-            context.prec = PRECISION
-            tau = Decimal(c.days) / DAYS
-            if terms.capitalized:
-                index_part = (ONE + terms.index / DAYS) ** c.days - ONE
-            else:
-                index_part = terms.index * tau
-            return bond.outstanding(c.start) * (index_part + terms.margin * tau)
+        return floater_coupon(bond.outstanding(c.start), c.days, terms)
 
     return cash_flows(bond, settle, horizon, coupon)
 

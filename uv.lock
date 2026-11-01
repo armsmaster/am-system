@@ -235,12 +235,14 @@ version = "0.1.0"
 source = { editable = "services/booking" }
 dependencies = [
     { name = "am-common" },
+    { name = "am-quant" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "am-common", editable = "libs/am-common" },
+    { name = "am-quant", editable = "libs/am-quant" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.54" },
 ]
 

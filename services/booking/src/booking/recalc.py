@@ -169,16 +169,20 @@ def fund_instruments(inputs: FundInputs) -> list[UUID]:
 
 
 async def terms_book(
-    refdata: RefdataClient, inputs: FundInputs, till: date
+    refdata: RefdataClient,
+    inputs: FundInputs,
+    till: date,
+    rates: dict[str, Decimal] | None = None,
 ) -> tuple[TermsBook, dict[date, bool]]:
-    """Условия бумаг фонда и торговый календарь от начала ролла до ``till``."""
+    """Условия бумаг фонда и торговый календарь от начала ролла до ``till``.
+    ``rates`` — ставки индексов для прогноза купонов флоатеров (только лестница)."""
     histories: dict[UUID, InstrumentHistory] = {}
     for instrument_id in fund_instruments(inputs):
         history = await refdata.history(instrument_id)
         if history is not None:
             histories[instrument_id] = history
     exceptions = await refdata.calendar_around(inputs.first_day - timedelta(days=1), till)
-    return TermsBook(histories, exceptions), exceptions
+    return TermsBook(histories, exceptions, rates), exceptions
 
 
 async def marks_book(

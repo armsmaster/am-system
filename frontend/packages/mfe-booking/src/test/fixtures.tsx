@@ -369,6 +369,7 @@ export function ladder(fields: Partial<Ladder> = {}): Ladder {
     as_of: '2026-11-29',
     waiting_since: null,
     instruments: [{ instrument_id: 'i-ofz', secid: 'SU26238RMFS4', short_name: 'ОФЗ 26238' }],
+    forecasts: [],
     days: [
       {
         date: '2026-11-30',

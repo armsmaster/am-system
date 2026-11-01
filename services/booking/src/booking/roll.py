@@ -100,6 +100,16 @@ def trade_amount(
 
 
 @dataclass(frozen=True, slots=True)
+class Forecast:
+    """Прогноз купона флоатера по текущей ставке индекса (решение 14)."""
+
+    index: str  # key_rate | ruonia | rusfar
+    value: Decimal  # ставка индекса, % годовых
+    margin_bp: Decimal
+    capitalized: bool
+
+
+@dataclass(frozen=True, slots=True)
 class Payment:
     """Выплата по бумаге в одну дату: купон и (или) погашение номинала."""
 
@@ -110,6 +120,9 @@ class Payment:
     principal: Decimal | None  # погашение номинала на бумагу: 0 — нет, None — не объявлено
     outstanding: Decimal | None  # непогашенный номинал после выплаты
     final: bool  # погашение: позиция закрывается
+    # Купон не объявлен, сумма — прогноз. Только в лестнице: в деньги и оценку прогноз
+    # не идёт, ролл фонда видит такие купоны необъявленными.
+    forecast: Forecast | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,6 +306,7 @@ class MovementKind(StrEnum):
     REPO_FIRST = "repo_first"  # первая часть РЕПО
     REPO_SECOND = "repo_second"  # вторая часть РЕПО
     REPO_CONTRIBUTION = "repo_contribution"  # компенсационный взнос
+    COUPON_FORECAST = "coupon_forecast"  # купон флоатера по прогнозу — только в лестнице
 
 
 @dataclass(frozen=True, slots=True)
@@ -1356,7 +1370,7 @@ def _pay(entitlement: Entitlement, payment: Payment) -> list[Movement] | None:
     if payment.coupon is not None:
         movements.append(
             Movement(
-                MovementKind.COUPON,
+                MovementKind.COUPON if payment.forecast is None else MovementKind.COUPON_FORECAST,
                 entitlement.instrument_id,
                 repo,
                 0,
