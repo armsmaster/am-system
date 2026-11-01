@@ -664,7 +664,10 @@ def test_repo_warnings_and_a_security_without_quantity(trader: Api) -> None:
     # Отдают в прямое РЕПО бумаги, которых нет, и ошибаются во второй части на 100 ₽.
     found = trader.ok("POST", "/trades", OFZ_REPO | {"second_amount": "5616886.01"})
     second, position = found["warnings"]
-    assert second.startswith("Сумма второй части 5616886.01 ₽ отличается от расчётной")
+    assert second.startswith(
+        "Сумма второй части 5 616 886,01 ₽ отличается от расчётной 5 616 786,01 ₽ "
+        "по ставке 14,5% и сроку 3 дн."
+    )
     assert "в прямое РЕПО отдаётся 10000" in position
     lacking = trader.call("POST", "/trades", OFZ_REPO | {"quantity": 0})
     assert lacking.status_code == 422

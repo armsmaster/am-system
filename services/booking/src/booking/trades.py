@@ -487,9 +487,9 @@ class TradeDesk:
         if abs(values["second_amount"] - expected) <= SECOND_AMOUNT_TOLERANCE:
             return []
         return [
-            f"Сумма второй части {values['second_amount']} ₽ отличается от расчётной "
-            f"{expected} ₽ по ставке {values['repo_rate']}% и сроку {term} дн. больше чем "
-            "на рубль — проверьте ставку, срок и сумму по отчёту брокера."
+            f"Сумма второй части {_rubles(values['second_amount'])} ₽ отличается от расчётной "
+            f"{_rubles(expected)} ₽ по ставке {_number(values['repo_rate'])}% и сроку {term} дн. "
+            "больше чем на рубль — проверьте ставку, срок и сумму по отчёту брокера."
         ]
 
     async def _warnings(
@@ -607,6 +607,16 @@ class TradeDesk:
                 comment=comment,
             ),
         )
+
+
+def _rubles(value: Decimal) -> str:
+    """5616886.01 → «5 616 886,01»: в сообщении — как в интерфейсе."""
+    return f"{value:,.2f}".replace(",", " ").replace(".", ",")
+
+
+def _number(value: Decimal) -> str:
+    """14.500000 → «14,5»."""
+    return f"{value.normalize():f}".replace(".", ",")
 
 
 JOURNAL_FIELDS: Sequence[str] = (
