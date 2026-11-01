@@ -40,12 +40,14 @@ from booking.clients import (
 )
 from booking.repository import Claim, Repository, Snapshot
 from booking.roll import (
+    Contribution,
     FeeRate,
     InstrumentKind,
     Mark,
     MarksOn,
     Operation,
     OperationKind,
+    Repo,
     Side,
     State,
     Trade,
@@ -110,6 +112,7 @@ class FundInputs:
     previous: list[Snapshot]
     first_day: date
     rates: list[FeeRate] = field(default_factory=list)
+    repos: dict[UUID, list[Repo]] = field(default_factory=dict)
 
     @property
     def states(self) -> dict[UUID, State]:
@@ -120,11 +123,21 @@ async def load_inputs(repo: Repository, fund_id: UUID, since: date, today: date)
     """Ролл начинается после последнего снапшота до ``since``; снапшотов нет —
     с первой сделки или операции фонда."""
     trade_rows = await repo.fund_trades(fund_id)
-    operations = [_operation(row) for row in await repo.fund_operations(fund_id)]
+    operation_rows = await repo.fund_operations(fund_id)
+    # Компенсационные взносы — не операции фонда, а часть своей сделки РЕПО.
+    operations = [_operation(r) for r in operation_rows if r.kind != "repo_contribution"]
+    contributions: dict[UUID, list[Contribution]] = defaultdict(list)
+    for row in operation_rows:
+        if row.kind == "repo_contribution":
+            contributions[row.trade_id].append(_contribution(row))
     previous = await repo.fund_before(fund_id, since)
     trades: dict[UUID, list[Trade]] = defaultdict(list)
+    repos: dict[UUID, list[Repo]] = defaultdict(list)
     for row in trade_rows:
-        trades[row.portfolio_id].append(_trade(row))
+        if row.kind == "repo":
+            repos[row.portfolio_id].append(_repo(row, contributions.get(row.trade_id, [])))
+        else:
+            trades[row.portfolio_id].append(_trade(row))
     if previous:
         first_day = previous[0].day + timedelta(days=1)
     elif trade_rows or operations:
@@ -135,13 +148,19 @@ async def load_inputs(repo: Repository, fund_id: UUID, since: date, today: date)
     rates = [
         FeeRate(r.kind, r.rate, r.valid_from, r.portfolio_id) for r in await repo.fee_rates(fund_id)
     ]
-    return FundInputs(dict(trades), operations, previous, first_day, rates)
+    return FundInputs(dict(trades), operations, previous, first_day, rates, dict(repos))
 
 
 def fund_instruments(inputs: FundInputs) -> list[UUID]:
     """Бумаги фонда: из сделок, переводов и позиций на начало ролла."""
     instruments = (
         {t.instrument_id for trades in inputs.trades.values() for t in trades}
+        | {
+            r.instrument_id
+            for repos in inputs.repos.values()
+            for r in repos
+            if r.instrument_id is not None
+        }
         | {o.instrument_id for o in inputs.operations if o.instrument_id is not None}
         | {i for state in inputs.states.values() for i in state.holdings}
         | {e.instrument_id for state in inputs.states.values() for e in state.pending}
@@ -204,6 +223,7 @@ async def recompute(
         marks_on=marks,
         rates=inputs.rates,
         terms_on=book,
+        repos=inputs.repos,
     )
     replace_from = inputs.first_day if inputs.previous else min(claim.since, inputs.first_day)
     async with database.session() as session, session.begin():
@@ -241,6 +261,36 @@ def _trade(row: Any) -> Trade:
         trade_at=row.trade_at,
         trade_date=row.trade_date,
         settle_date=row.settle_date,
+    )
+
+
+def _repo(row: Any, contributions: list[Contribution]) -> Repo:
+    """Сделка РЕПО: сторона первой части — продажа у прямого (design/07)."""
+    return Repo(
+        id=row.trade_id,
+        instrument_id=row.instrument_id,
+        kind=None if row.instrument_id is None else InstrumentKind(row.instrument_kind),
+        direct=row.side == Side.SELL,
+        quantity=row.quantity,
+        trade_at=row.trade_at,
+        trade_date=row.trade_date,
+        first_date=row.settle_date,
+        first_amount=row.amount,
+        second_date=row.second_date,
+        second_amount=row.second_amount,
+        fee=row.fee,
+        contributions=tuple(sorted(contributions, key=lambda c: (c.day, str(c.id)))),
+    )
+
+
+def _contribution(row: Any) -> Contribution:
+    """Взнос со знаком для фонда: ``in`` — фонду, ``out`` — от фонда."""
+    sign = 1 if row.direction == "in" else -1
+    return Contribution(
+        id=row.operation_id,
+        day=row.op_date,
+        cash=sign * (row.amount or Decimal(0)),
+        quantity=sign * (row.quantity or 0),
     )
 
 

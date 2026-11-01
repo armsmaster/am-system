@@ -32,7 +32,7 @@
     },
     "trade": {
       "type": "object",
-      "required": ["external_id", "portfolio", "code", "side", "quantity", "price", "trade_at", "settle_date"],
+      "required": ["external_id", "portfolio", "code", "side", "trade_at", "settle_date"],
       "additionalProperties": false,
       "properties": {
         "external_id": {
@@ -48,23 +48,23 @@
           "maxLength": 50
         },
         "code": {
-          "description": "Код бумаги на бирже (SECID) или ISIN. Бумага должна быть в справочнике.",
+          "description": "Код бумаги на бирже (SECID) или ISIN. Бумага должна быть в справочнике. KSU — обеспечение РЕПО клиринговыми сертификатами участия.",
           "type": "string",
           "minLength": 2,
           "maxLength": 20
         },
         "side": {
-          "description": "buy — покупка, sell — продажа.",
+          "description": "buy — покупка, sell — продажа. У РЕПО — сторона первой части: sell — прямое РЕПО, buy — обратное.",
           "enum": ["buy", "sell"]
         },
         "quantity": {
-          "description": "Количество бумаг, штук.",
+          "description": "Количество бумаг, штук. У РЕПО с КСУ — нет.",
           "type": "integer",
           "minimum": 1,
           "maximum": 1000000000000
         },
         "price": {
-          "description": "Облигация — чистая цена в % от номинала; пай — цена в рублях за пай. До 6 знаков после запятой.",
+          "description": "Облигация — чистая цена в % от номинала; пай — цена в рублях за пай. У РЕПО — цена первой части. До 6 знаков после запятой. У РЕПО с КСУ — нет.",
           "type": "number",
           "exclusiveMinimum": 0
         },
@@ -75,7 +75,7 @@
           "pattern": "(Z|[+-]\\d{2}:\\d{2})$"
         },
         "settle_date": {
-          "description": "Дата расчётов: 2026-11-30.",
+          "description": "Дата расчётов: 2026-11-30. У РЕПО — дата первой части.",
           "type": "string",
           "format": "date"
         },
@@ -96,7 +96,10 @@
           "description": "exchange — биржа (по умолчанию), otc — внебиржевая сделка.",
           "enum": ["exchange", "otc"]
         },
-        "counterparty": { "$ref": "#/$defs/text", "description": "Контрагент внебиржевой сделки." },
+        "counterparty": {
+          "$ref": "#/$defs/text",
+          "description": "Контрагент внебиржевой сделки."
+        },
         "comment": {
           "description": "Комментарий: попадёт в версию сделки и в журнал.",
           "type": "string",
@@ -105,8 +108,61 @@
         "cancelled": {
           "description": "true — сделка отменена в источнике. Присылается целиком, как и раньше.",
           "type": "boolean"
+        },
+        "kind": {
+          "description": "outright — покупка или продажа (по умолчанию), repo — сделка РЕПО с НКЦ.",
+          "enum": ["outright", "repo"]
+        },
+        "amount": {
+          "$ref": "#/$defs/money",
+          "description": "РЕПО с КСУ: сумма первой части, рубли. У других сделок сумму считает система."
+        },
+        "repo_rate": {
+          "description": "РЕПО: ставка, % годовых: 14.5.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "second_date": {
+          "description": "РЕПО: дата второй части, торговый день позже первой.",
+          "type": "string",
+          "format": "date"
+        },
+        "second_amount": {
+          "$ref": "#/$defs/money",
+          "description": "РЕПО: сумма второй части по отчёту брокера, рубли."
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "repo"
+              }
+            },
+            "required": ["kind"]
+          },
+          "then": {
+            "required": ["repo_rate", "second_date", "second_amount"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "enum": ["KSU", "КСУ"]
+              }
+            }
+          },
+          "then": {
+            "required": ["amount"]
+          },
+          "else": {
+            "required": ["quantity", "price"]
+          }
+        }
+      ]
     }
   }
 }

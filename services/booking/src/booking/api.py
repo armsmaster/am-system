@@ -10,7 +10,14 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request, Response
 from fastapi.responses import JSONResponse
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    model_validator,
+)
 
 from am_common.app import AppResources, DbSession
 from am_common.auth import Principal, Role, require_any_role
@@ -66,6 +73,7 @@ Money = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=2)]
 Price = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)]
 Kopecks = Annotated[Decimal, Field(ge=0, max_digits=18, decimal_places=2)]
 Quantity = Annotated[int, Field(gt=0, le=10**12)]
+Rate = Annotated[Decimal, Field(ge=0, le=100, max_digits=9, decimal_places=6)]  # % годовых
 
 router = APIRouter()
 
@@ -135,11 +143,15 @@ def operation_desk(
 
 
 class TradeIn(BaseModel):
+    """Сделка; ``kind: repo`` — РЕПО с НКЦ (design/07): сторона, дата расчётов и сумма —
+    первой части, продажа — прямое РЕПО. Без бумаги — РЕПО с КСУ: только сумма."""
+
+    kind: Literal["outright", "repo"] = "outright"
     portfolio_id: UUID
-    instrument_id: UUID
+    instrument_id: UUID | None = None
     side: Side
-    quantity: Quantity
-    price: Price
+    quantity: Annotated[int, Field(ge=0, le=10**12)] = 0
+    price: Annotated[Decimal, Field(ge=0, max_digits=18, decimal_places=6)] = Decimal(0)
     trade_at: AwareDatetime
     settle_date: date
     face_value: Price | None = None
@@ -149,6 +161,17 @@ class TradeIn(BaseModel):
     counterparty: Text | None = None
     external_id: Text | None = None
     comment: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] | None = None
+    amount: Money | None = None  # РЕПО с КСУ: сумма первой части
+    repo_rate: Rate | None = None
+    second_date: date | None = None
+    second_amount: Money | None = None
+
+    @model_validator(mode="after")
+    def _security(self) -> TradeIn:
+        """С бумагой — количество и цена; без бумаги — только РЕПО с КСУ."""
+        if self.instrument_id is not None and not (self.quantity and self.price):
+            raise ValueError("у сделки с бумагой нужны количество и цена")
+        return self
 
     def entry(self) -> TradeInput:
         return TradeInput(**self.model_dump())
@@ -181,7 +204,7 @@ class TradeOut(BaseModel):
     status: str
     portfolio_id: UUID
     portfolio_code: str | None
-    instrument_id: UUID
+    instrument_id: UUID | None  # у РЕПО с КСУ бумаги нет
     instrument_kind: str
     secid: str
     short_name: str
@@ -198,6 +221,10 @@ class TradeOut(BaseModel):
     venue: str
     counterparty: str | None
     external_id: str | None
+    kind: str = "outright"
+    repo_rate: Decimal | None = None
+    second_date: date | None = None
+    second_amount: Decimal | None = None
     comment: str | None
     author: str
     created_at: datetime
@@ -285,6 +312,7 @@ class DayResultOut(BaseModel):
     expenses: Decimal
     charges: Decimal  # начисленные вознаграждение и комиссии от СЧА
     correction: Decimal  # корректировка комиссий от СЧА при выплате
+    repo: Decimal = Decimal(0)  # проценты по РЕПО
     total: Decimal
     receivable: Decimal  # к получению по сделкам до расчётов
     payable: Decimal  # к уплате по сделкам до расчётов
@@ -302,6 +330,26 @@ class PortfolioStateOut(FundFigures):
     result: DayResultOut | None = None
 
 
+class RepoOut(BaseModel):
+    """Открытая сделка РЕПО на дату: долг и начисленные проценты (design/07)."""
+
+    id: UUID
+    portfolio_id: UUID
+    portfolio_code: str
+    direct: bool  # прямое: фонд привлёк деньги под бумаги
+    instrument_id: UUID | None  # None — КСУ
+    secid: str
+    short_name: str
+    quantity: int  # бумаги в РЕПО
+    rate: Decimal
+    first_date: date
+    second_date: date
+    second_amount: Decimal
+    principal: Decimal
+    accrued: Decimal
+    value: Decimal  # в стоимости портфеля: требование +, обязательство −
+
+
 class PositionsOut(FundFigures):
     portfolio_id: UUID
     code: str
@@ -313,6 +361,7 @@ class PositionsOut(FundFigures):
     result: DayResultOut | None = None  # сумма по портфелям, посчитанным на этот день
     dv01_yield: Decimal = Decimal(0)  # облигации с фиксированным купоном
     dv01_spread: Decimal = Decimal(0)  # все облигации: по спреду
+    repos: list[RepoOut] = []
 
 
 class ResultDayOut(BaseModel):
@@ -326,6 +375,7 @@ class ResultDayOut(BaseModel):
     expenses: Decimal
     charges: Decimal
     correction: Decimal
+    repo: Decimal
     total: Decimal
     flags: list[str]
 
@@ -403,8 +453,24 @@ class FeePaymentIn(_OperationBase):
     amount: Money
 
 
+class RepoContributionIn(_OperationBase):
+    """Компенсационный взнос по РЕПО по отчёту брокера (решение 113): деньгами или бумагами."""
+
+    kind: Literal["repo_contribution"]
+    trade_id: UUID
+    direction: Literal["in", "out"]  # in — фонду, out — от фонда
+    amount: Money | None = None
+    quantity: Quantity | None = None
+
+    @model_validator(mode="after")
+    def _one_form(self) -> RepoContributionIn:
+        if (self.amount is None) == (self.quantity is None):
+            raise ValueError("взнос — деньгами или бумагами: укажите одно из двух")
+        return self
+
+
 OperationIn = Annotated[
-    UnitsIn | ExpenseIn | CashTransferIn | SecurityTransferIn | FeePaymentIn,
+    UnitsIn | ExpenseIn | CashTransferIn | SecurityTransferIn | FeePaymentIn | RepoContributionIn,
     Field(discriminator="kind"),
 ]
 
@@ -441,6 +507,8 @@ class NavDayOut(BaseModel):
     expenses: Decimal
     fees_owed: Decimal
     fees_today: dict[str, Decimal]
+    repo_placed: Decimal  # размещено в обратное РЕПО, с процентами
+    repo_borrowed: Decimal  # привлечено в прямое РЕПО, с процентами
     flags: list[str]
 
 
@@ -477,6 +545,8 @@ class OperationOut(BaseModel):
     expense_kind: str | None
     fee_kind: str | None = None
     period_end: date | None = None
+    trade_id: UUID | None = None  # компенсационный взнос: сделка РЕПО
+    direction: str | None = None
     instrument_id: UUID | None
     secid: str | None
     short_name: str | None
@@ -499,8 +569,8 @@ class ImportTradeIn(BaseModel):
     portfolio: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]
     code: Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=20)]
     side: Side
-    quantity: Quantity
-    price: Price
+    quantity: Annotated[int, Field(ge=0, le=10**12)] = 0
+    price: Annotated[Decimal, Field(ge=0, max_digits=18, decimal_places=6)] = Decimal(0)
     trade_at: AwareDatetime
     settle_date: date
     accrued: Kopecks | None = None
@@ -510,6 +580,11 @@ class ImportTradeIn(BaseModel):
     counterparty: Text | None = None
     comment: OptionalComment = None
     cancelled: bool = False
+    kind: Literal["outright", "repo"] = "outright"
+    amount: Money | None = None
+    repo_rate: Rate | None = None
+    second_date: date | None = None
+    second_amount: Money | None = None
 
 
 class TradeBatchIn(BaseModel):
@@ -768,6 +843,26 @@ async def get_positions(
         ),
         dv01_yield=view.dv01("yield").quantize(Decimal("0.01")),
         dv01_spread=view.dv01().quantize(Decimal("0.01")),
+        repos=[
+            RepoOut(
+                id=line.position.id,
+                portfolio_id=line.portfolio.id,
+                portfolio_code=line.portfolio.code,
+                direct=line.position.direct,
+                instrument_id=line.position.instrument_id,
+                secid=line.trade.secid,
+                short_name=line.trade.short_name,
+                quantity=line.position.quantity,
+                rate=line.trade.repo_rate,
+                first_date=line.position.first_date,
+                second_date=line.position.second_date,
+                second_amount=line.position.second_amount,
+                principal=line.position.principal,
+                accrued=line.position.accrued,
+                value=line.position.value,
+            )
+            for line in view.repos
+        ],
     )
 
 
@@ -1040,7 +1135,13 @@ def _trade_out(view: TradeView) -> TradeOut:
         changed = (
             []
             if previous is None
-            else [name for name in TRACKED if getattr(row, name) != getattr(previous, name)]
+            else [
+                name
+                for name in TRACKED
+                # Сумму сделки с бумагой считает система — меняется она вслед за полями.
+                if (name != "amount" or row.instrument_id is None)
+                and getattr(row, name) != getattr(previous, name)
+            ]
         )
         versions.append(
             VersionOut(
@@ -1095,6 +1196,7 @@ def _result_out(result: DayResult) -> DayResultOut:
         expenses=result.expenses,
         charges=result.charges,
         correction=result.correction,
+        repo=result.repo,
         total=result.total,
         receivable=result.receivable,
         payable=result.payable,
@@ -1117,6 +1219,8 @@ def _nav_day_out(day: NavDay) -> NavDayOut:
         obligations=day.obligations,
         expenses=day.expenses,
         fees_owed=day.fees_owed,
+        repo_placed=day.repo_placed,
+        repo_borrowed=day.repo_borrowed,
         fees_today=day.fees_today,
         flags=[f.value for f in day.flags],
     )
@@ -1134,6 +1238,7 @@ def _result_day_out(day: ResultDay) -> ResultDayOut:
         expenses=day.expenses,
         charges=day.charges,
         correction=day.correction,
+        repo=day.repo,
         total=day.total,
         flags=[f.value for f in day.flags],
     )

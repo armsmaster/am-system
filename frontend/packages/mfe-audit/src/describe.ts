@@ -93,6 +93,10 @@ const FIELDS: Readonly<Record<string, string>> = {
   fee_kind: 'Вид комиссии',
   period_end: 'Оплачено по',
   valid_from: 'Действует с',
+  repo_rate: 'Ставка РЕПО',
+  second_date: 'Вторая часть: дата',
+  second_amount: 'Вторая часть: сумма',
+  direction: 'Кто платит',
 };
 
 /** Значения перечислений — словами. */
@@ -125,6 +129,11 @@ const VALUES: Readonly<Record<string, string>> = {
   auditor: 'аудитор',
   exchange_broker: 'биржа и брокер',
   other: 'прочие',
+  outright: 'покупка или продажа',
+  repo: 'РЕПО с НКЦ',
+  repo_contribution: 'компенсационный взнос по РЕПО',
+  in: 'НКЦ — фонду',
+  out: 'фонд — НКЦ',
 };
 
 /** Порядок полей — как в FIELDS: база данных хранит ключи события в своём порядке. */

@@ -2,14 +2,27 @@ import type {
   Decimal,
   ExpenseKind,
   FeeKind,
+  Movement,
   MovementKind,
   OperationKind,
   Side,
   Status,
+  Trade,
   ValuationFlag,
 } from './api';
 
 export const SIDE_LABELS: Readonly<Record<Side, string>> = { buy: 'покупка', sell: 'продажа' };
+
+/** Сторона первой части РЕПО: продажа — прямое, покупка — обратное (design/07). */
+export const REPO_LABELS: Readonly<Record<Side, string>> = {
+  sell: 'прямое РЕПО',
+  buy: 'обратное РЕПО',
+};
+
+/** Что за сделка — словами: «покупка» или «прямое РЕПО». */
+export function tradeLabel(trade: Pick<Trade, 'kind' | 'side'>): string {
+  return trade.kind === 'repo' ? REPO_LABELS[trade.side] : SIDE_LABELS[trade.side];
+}
 
 export const STATUS_LABELS: Readonly<Record<Status, string>> = {
   entered: 'введена',
@@ -34,7 +47,17 @@ export const MOVEMENT_LABELS: Readonly<Record<MovementKind, string>> = {
   transfer_out: 'перевод: ушло',
   transfer_in: 'перевод: пришло',
   fee_payment: 'выплата вознаграждения',
+  repo_first: 'РЕПО: первая часть',
+  repo_second: 'РЕПО: вторая часть',
+  repo_contribution: 'РЕПО: компенсационный взнос',
 };
+
+/** Движение словами; выплата со ссылкой на сделку — передача дохода по РЕПО (решение 112). */
+export function movementLabel(movement: Pick<Movement, 'kind' | 'trade_id'>): string {
+  const label = MOVEMENT_LABELS[movement.kind];
+  const paid = movement.kind === 'coupon' || movement.kind === 'amortization' || movement.kind === 'redemption';
+  return paid && movement.trade_id !== null ? `${label}: передача дохода по РЕПО` : label;
+}
 
 export const OPERATION_LABELS: Readonly<Record<OperationKind, string>> = {
   unit_issue: 'выдача паёв',
@@ -44,6 +67,7 @@ export const OPERATION_LABELS: Readonly<Record<OperationKind, string>> = {
   cash_transfer: 'перевод денег',
   security_transfer: 'перевод бумаг',
   fee_payment: 'выплата вознаграждения',
+  repo_contribution: 'компенсационный взнос по РЕПО',
 };
 
 /** Комиссии от СЧА (решение 21). */
@@ -77,6 +101,11 @@ export const FIELD_LABELS: Readonly<Record<string, string>> = {
   venue: 'место',
   counterparty: 'контрагент',
   external_id: 'номер сделки',
+  kind: 'вид сделки',
+  amount: 'сумма',
+  repo_rate: 'ставка РЕПО',
+  second_date: 'дата второй части',
+  second_amount: 'сумма второй части',
 };
 
 /** Почему оценка неполная — словами (design/06). */
@@ -162,6 +191,20 @@ export function fromMoscowInput(value: string): string {
 /** Дата по Москве для поля date: 2026-12-03. */
 export function moscowToday(date: Date = new Date()): string {
   return moscowInput(date).slice(0, 10);
+}
+
+/**
+ * Сумма второй части РЕПО по ставке и сроку — только для проверки введённой
+ * по отчёту брокера (решение 110): первая × (1 + ставка × дни / 365), до копейки.
+ */
+export function secondAmount(first: string, rate: string, firstDate: string, secondDate: string): string | null {
+  const days = (Date.parse(secondDate) - Date.parse(firstDate)) / 86_400_000;
+  const amount = Number(decimalInput(first));
+  const percent = Number(decimalInput(rate));
+  if (!(days > 0) || !(amount > 0) || !first.trim() || !rate.trim() || Number.isNaN(percent)) {
+    return null;
+  }
+  return (Math.round(amount * (1 + (percent / 100) * (days / 365)) * 100) / 100).toFixed(2);
 }
 
 /** «99,5» → «99.5»: число, как его вводят по-русски, → для API. */

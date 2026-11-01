@@ -4,7 +4,7 @@ import { useSearchParams } from 'react-router';
 
 import type { Context } from '../App';
 import type { Account, Ladder, LadderMovement } from '../api';
-import { formatDate, formatMoney, formatQuantity, MOVEMENT_LABELS } from '../format';
+import { formatDate, formatMoney, formatQuantity, movementLabel } from '../format';
 
 /**
  * Лестница расчётов по счёту (design/05): деньги и бумаги на счёте на конец
@@ -145,7 +145,7 @@ function MovementLine({
   readonly secid: (id: string | null) => string | null;
 }) {
   const parts = [
-    `${m.portfolio_code}: ${MOVEMENT_LABELS[m.kind]}`,
+    `${m.portfolio_code}: ${movementLabel(m)}`,
     secid(m.instrument_id),
     m.quantity ? `${m.quantity > 0 ? '+' : ''}${formatQuantity(m.quantity)} шт.` : null,
     m.cash.replace(/[-0.]/g, '') ? `${m.cash.startsWith('-') ? '' : '+'}${formatMoney(m.cash)} ₽` : null,

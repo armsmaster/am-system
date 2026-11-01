@@ -5,8 +5,11 @@ import type { Context } from '../App';
 import type { ExpenseKind, FeeKind, Operation, OperationInput, OperationKind } from '../api';
 import { decimalInput, EXPENSE_LABELS, FEE_LABELS, moscowToday, OPERATION_LABELS } from '../format';
 
+/** Взнос по РЕПО вводят из карточки сделки — в этой форме его нет. */
+type FormKind = Exclude<OperationKind, 'repo_contribution'>;
+
 interface Draft {
-  kind: OperationKind;
+  kind: FormKind;
   fund_id: string;
   portfolio_id: string;
   receiver_id: string;
@@ -22,7 +25,9 @@ interface Draft {
   comment: string;
 }
 
-const KINDS = Object.keys(OPERATION_LABELS) as OperationKind[];
+const KINDS = (Object.keys(OPERATION_LABELS) as OperationKind[]).filter(
+  (kind): kind is FormKind => kind !== 'repo_contribution',
+);
 const EXPENSE_KINDS = Object.keys(EXPENSE_LABELS) as ExpenseKind[];
 const FEE_KINDS = Object.keys(FEE_LABELS) as FeeKind[];
 
@@ -33,7 +38,7 @@ function lastMonthEnd(today: string): string {
   return first.toISOString().slice(0, 10);
 }
 
-function group(kind: OperationKind): 'units' | 'expense' | 'fee' | 'cash' | 'security' {
+function group(kind: FormKind): 'units' | 'expense' | 'fee' | 'cash' | 'security' {
   if (kind === 'unit_issue' || kind === 'unit_redemption') {
     return 'units';
   }
@@ -161,7 +166,7 @@ export function OperationForm({
       <div className="fields">
         <label>
           Операция
-          <select value={draft.kind} onChange={(e) => set('kind', e.target.value as OperationKind)}>
+          <select value={draft.kind} onChange={(e) => set('kind', e.target.value as FormKind)}>
             {KINDS.map((k) => (
               <option key={k} value={k}>
                 {OPERATION_LABELS[k]}

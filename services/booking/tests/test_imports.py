@@ -104,6 +104,21 @@ def test_example_matches_the_schema() -> None:
     assert all(list(validator.iter_errors(b)) for b in broken)
 
 
+def test_repo_example_matches_the_schema() -> None:
+    schema = load("trades.schema.json")
+    validator = Draft202012Validator(schema, format_checker=Draft202012Validator.FORMAT_CHECKER)
+    example = load("repo.example.json")
+    assert list(validator.iter_errors(example)) == []
+    ksu, bonds = example["trades"]
+    broken = [
+        batch(bonds | {"second_amount": None} | {"kind": "repo"}),
+        batch({k: v for k, v in bonds.items() if k != "repo_rate"}),
+        batch({k: v for k, v in ksu.items() if k != "amount"}),
+        batch({k: v for k, v in bonds.items() if k != "quantity"}),
+    ]
+    assert all(list(validator.iter_errors(b)) for b in broken)
+
+
 @pytest.mark.parametrize(
     "body",
     [
@@ -266,3 +281,41 @@ def test_refdata_down_fails_the_batch(trader: Api, world: World) -> None:
     world.down.add("refdata")
     response = trader.call("POST", PATH, batch(bought()))
     assert (response.status_code, response.json()["detail"]["code"]) == (503, "refdata_unavailable")
+
+
+# --- РЕПО (design/07) ----------------------------------------------------------------
+
+
+async def test_repo_example_from_the_spec(trader: Api, resources: Resources) -> None:
+    example = load("repo.example.json")
+    first = trader.ok("POST", PATH, example)
+    assert counts(first) == (2, 0, 0, 0, 0)
+    ksu = trader.ok("GET", f"/trades/{first['trades'][0]['trade_id']}")
+    assert (ksu["kind"], ksu["secid"], ksu["amount"], ksu["second_amount"]) == (
+        "repo",
+        "КСУ",
+        "30000000.00",
+        "30035013.70",
+    )
+    # Повтор — без изменений; досрочное исполнение — новая версия с новой второй частью.
+    assert counts(trader.ok("POST", PATH, example)) == (0, 0, 0, 2, 0)
+    early = copy.deepcopy(example)
+    early["trades"][1] |= {"second_date": "2026-12-02", "second_amount": 5614557.34}
+    assert counts(trader.ok("POST", PATH, early)) == (0, 1, 0, 1, 0)
+    bonds = trader.ok("GET", f"/trades/{first['trades'][1]['trade_id']}")
+    assert bonds["versions"][-1]["changed"] == ["second_date", "second_amount"]
+    assert "trade.amended" in await journal(resources)
+
+
+def test_repo_import_checks(trader: Api) -> None:
+    ksu, bonds = load("repo.example.json")["trades"]
+    report = trader.ok(
+        "POST",
+        PATH,
+        batch(
+            ksu | {"external_id": "R-1", "kind": "outright"},
+            {k: v for k, v in bonds.items() if k not in {"quantity", "price"}}
+            | {"external_id": "R-2"},
+        ),
+    )
+    assert [r["error"] for r in report["rejected"]] == ["instrument_required", "quantity_required"]

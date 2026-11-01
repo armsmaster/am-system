@@ -12,8 +12,8 @@ import {
   formatPrice,
   formatQuantity,
   formatTime,
-  SIDE_LABELS,
   STATUS_LABELS,
+  tradeLabel,
 } from '../format';
 
 /** Сделки портфеля за день: список и ввод новой сделки. */
@@ -68,8 +68,10 @@ function SavedNote({ trade, basePath }: { readonly trade: Trade; readonly basePa
     <div role="status">
       <p className="notice">
         Сделка введена: <Link to={`${basePath}/trades/${trade.id}`}>{trade.secid}</Link>,{' '}
-        {SIDE_LABELS[trade.side]} {formatQuantity(trade.quantity)} шт., сумма{' '}
-        {formatMoney(trade.amount)} ₽, расчёты {formatDate(trade.settle_date)}.
+        {tradeLabel(trade)}
+        {trade.quantity ? ` ${formatQuantity(trade.quantity)} шт.` : ''}, сумма {formatMoney(trade.amount)} ₽,
+        расчёты {formatDate(trade.settle_date)}
+        {trade.second_date && `, вторая часть ${formatDate(trade.second_date)}`}.
       </p>
       {trade.warnings.map((warning) => (
         <p key={warning} className="notice notice-warning">
@@ -108,12 +110,15 @@ function TradesTable({ trades, basePath }: { readonly trades: readonly Trade[]; 
             <td>
               <Link to={`${basePath}/trades/${t.id}`}>{t.secid}</Link>
             </td>
-            <td>{SIDE_LABELS[t.side]}</td>
-            <td className="num">{formatQuantity(t.quantity)}</td>
-            <td className="num">{formatPrice(t.price)}</td>
+            <td>{tradeLabel(t)}</td>
+            <td className="num">{t.quantity ? formatQuantity(t.quantity) : '—'}</td>
+            <td className="num">{t.quantity ? formatPrice(t.price) : '—'}</td>
             <td className="num">{formatPrice(t.accrued)}</td>
             <td className="num">{formatMoney(t.amount)}</td>
-            <td>{formatDate(t.settle_date)}</td>
+            <td>
+              {formatDate(t.settle_date)}
+              {t.second_date && ` → ${formatDate(t.second_date)}`}
+            </td>
             <td>{STATUS_LABELS[t.status]}</td>
           </tr>
         ))}

@@ -1,10 +1,13 @@
 """Операции фонда и переводы (design/05, «Операции фонда и переводы»).
 
 Операция, как и сделка, не меняется и не удаляется: отметка расчёта по паям
-и отмена — новые версии. Паи и расходы проводятся в казначейский портфель
-фонда (решение 35), переводы — только между портфелями одного фонда
-(решение 37). Изменение, отметка «фонд пересчитать с даты» и событие для
-журнала пишутся одной транзакцией; запросы к соседям — до неё.
+и отмена — новые версии. Компенсационный взнос по РЕПО (решение 113) —
+операция портфеля сделки: деньги или бумаги между частями РЕПО; фонд
+пересчитывается с первой части, потому что проценты делятся по всему сроку.
+Паи и расходы проводятся в казначейский портфель фонда (решение 35), переводы —
+только между портфелями одного фонда (решение 37). Изменение, отметка «фонд
+пересчитать с даты» и событие для журнала пишутся одной транзакцией; запросы
+к соседям — до неё.
 """
 
 from __future__ import annotations
@@ -58,6 +61,8 @@ class OperationInput:
     quantity: int | None = None
     fee_kind: str | None = None  # выплата вознаграждения
     period_end: date | None = None
+    trade_id: UUID | None = None  # компенсационный взнос: сделка РЕПО
+    direction: str | None = None  # компенсационный взнос: in — фонду, out — от фонда
     comment: str | None = None
 
 
@@ -105,7 +110,7 @@ class OperationDesk:
                 operation_id, 1, status=ACTIVE, values=values, comment=entry.comment, now=now
             )
             await self._repo.add_operation_version(version)
-            await self._repo.mark_dirty(values["fund_id"], values["op_date"], now)
+            await self._repo.mark_dirty(values["fund_id"], await self._since(values), now)
             await self._emit(
                 "operation.entered",
                 before=None,
@@ -163,7 +168,7 @@ class OperationDesk:
                 now=now,
             )
             await self._repo.add_operation_version(version)
-            await self._repo.mark_dirty(before.fund_id, before.op_date, now)
+            await self._repo.mark_dirty(before.fund_id, await self._since(_values(before)), now)
             await self._emit(
                 "operation.cancelled",
                 before=before,
@@ -173,6 +178,13 @@ class OperationDesk:
             )
             versions = await self._repo.operation_versions(operation_id)
         return OperationView(versions, visible)
+
+    async def _since(self, values: Mapping[str, Any]) -> date:
+        """С какой даты пересчитать фонд: взнос меняет проценты всего срока РЕПО."""
+        if values["kind"] != OperationKind.REPO_CONTRIBUTION:
+            return cast(date, values["op_date"])
+        repo = (await self._repo.versions(values["trade_id"]))[-1]
+        return cast(date, repo.settle_date)
 
     async def view(self, operation_id: UUID) -> OperationView:
         visible = await self._portfolios.visible(self._authorization)
@@ -201,7 +213,51 @@ class OperationDesk:
             raise RuleViolationError("future_operation", "Дата операции позже сегодняшней.")
         if entry.kind in FUND_LEVEL:
             return await self._fund_operation(entry, visible), []
+        if entry.kind is OperationKind.REPO_CONTRIBUTION:
+            return await self._contribution(entry, visible), []
         return await self._transfer(entry, visible)
+
+    async def _contribution(
+        self, entry: OperationInput, visible: Mapping[UUID, PortfolioRef]
+    ) -> dict[str, Any]:
+        """Взнос по отчёту брокера: между частями РЕПО, деньгами или бумагами сделки."""
+        # У взноса сделка есть всегда — это проверяет схема API.
+        trade_id = cast(UUID, entry.trade_id)
+        async with self._session.begin():
+            repo = (await self._repo.versions(trade_id))[-1]
+        if repo.portfolio_id not in visible or repo.kind != "repo":
+            raise RuleViolationError("repo_not_found", "Сделка РЕПО не найдена.")
+        if repo.status == CANCELLED:
+            raise RuleViolationError("repo_cancelled", "Сделка РЕПО отменена.")
+        if not repo.settle_date <= entry.op_date < repo.second_date:
+            raise RuleViolationError(
+                "contribution_outside_term",
+                f"Взнос — между частями РЕПО: с {repo.settle_date:%d.%m.%Y} "
+                f"до {repo.second_date:%d.%m.%Y}.",
+            )
+        exceptions = await self._refdata.calendar_around(entry.op_date)
+        self._check_money_day(entry.op_date, entry.op_date, exceptions, "Дата взноса")
+        values: dict[str, Any] = {
+            "kind": entry.kind.value,
+            "fund_id": repo.fund_id,
+            "portfolio_id": repo.portfolio_id,
+            "op_date": entry.op_date,
+            "trade_id": trade_id,
+            "direction": entry.direction,
+        }
+        if entry.quantity is None:
+            return values | {"amount": entry.amount}
+        if repo.instrument_id is None:
+            raise RuleViolationError(
+                "ksu_contribution", "В РЕПО с КСУ бумаг нет — взнос только деньгами."
+            )
+        return values | {
+            "quantity": entry.quantity,
+            "instrument_id": repo.instrument_id,
+            "instrument_kind": repo.instrument_kind,
+            "secid": repo.secid,
+            "short_name": repo.short_name,
+        }
 
     async def _fund_operation(
         self, entry: OperationInput, visible: Mapping[UUID, PortfolioRef]
@@ -357,7 +413,7 @@ class OperationDesk:
         position = sum(
             r.quantity if r.side == Side.BUY else -r.quantity
             for r in trades
-            if r.instrument_id == instrument_id and r.settle_date <= day
+            if r.kind == "outright" and r.instrument_id == instrument_id and r.settle_date <= day
         ) + sum(
             r.quantity if r.receiver_id == sender.id else -r.quantity
             for r in operations
@@ -450,6 +506,7 @@ JOURNAL_FIELDS: Sequence[str] = (
     "expense_kind",
     "fee_kind",
     "period_end",
+    "direction",
     "secid",
     "quantity",
 )

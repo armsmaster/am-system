@@ -104,6 +104,14 @@ class Repository:
         rows = await self._latest(trade_version, "trade_id", trade_version.c.fund_id == fund_id)
         return [r for r in rows if r.fund_id == fund_id and r.status != CANCELLED]
 
+    async def trades_by_id(self, trade_ids: Iterable[UUID]) -> dict[UUID, Row[Any]]:
+        """Последние версии сделок по номерам — для блока РЕПО в позициях."""
+        ids = list(trade_ids)
+        if not ids:
+            return {}
+        rows = await self._latest(trade_version, "trade_id", trade_version.c.trade_id.in_(ids))
+        return {r.trade_id: r for r in rows}
+
     async def instruments_named(self, instrument_ids: Iterable[UUID]) -> dict[UUID, Any]:
         """Код и название бумаги — из последней введённой сделки или перевода с ней."""
         ids = list(instrument_ids)

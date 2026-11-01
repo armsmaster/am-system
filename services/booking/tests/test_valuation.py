@@ -14,6 +14,7 @@ import pytest
 
 from am_common.clock import MOSCOW
 from booking.roll import (
+    Contribution,
     Entitlement,
     FeeRate,
     Flag,
@@ -24,6 +25,7 @@ from booking.roll import (
     Operation,
     OperationKind,
     Payment,
+    Repo,
     Side,
     State,
     Terms,
@@ -592,3 +594,201 @@ def test_fee_goes_to_a_treasury_without_its_own_activity() -> None:
     first = days[0][UUID(int=13)]
     assert first.result is not None
     assert (first.fees_owed, first.result.value) == (Decimal("2739.73"), Decimal("-2739.73"))
+
+
+# --- РЕПО (design/07): та же неделя, сделки А и Б ---------------------------------
+
+REPO_A, REPO_B = UUID(int=301), UUID(int=302)
+
+
+def repo(repo_id: UUID, *, direct: bool, dates: tuple[date, date, date], **fields: Any) -> Repo:
+    traded, first, second = dates
+    values: dict[str, Any] = {
+        "id": repo_id,
+        "instrument_id": None,
+        "kind": None,
+        "direct": direct,
+        "quantity": 0,
+        "trade_at": datetime(traded.year, traded.month, traded.day, 11, 5, tzinfo=MOSCOW),
+        "trade_date": traded,
+        "first_date": first,
+        "second_date": second,
+    } | fields
+    return Repo(**values)
+
+
+# А: казначейство размещает 30 млн в обратное РЕПО с КСУ на выходные под 14,20%.
+KSU_REPO = repo(
+    REPO_A,
+    direct=False,
+    dates=(date(2026, 11, 27), date(2026, 11, 27), date(2026, 11, 30)),
+    first_amount=Decimal("30000000.00"),
+    second_amount=Decimal("30035013.70"),
+)
+# Б: портфель облигаций привлекает деньги под 10 000 ОФЗ на 3 дня под 14,50%.
+OFZ_REPO = repo(
+    REPO_B,
+    direct=True,
+    dates=(date(2026, 11, 30), date(2026, 11, 30), date(2026, 12, 3)),
+    instrument_id=OFZ,
+    kind=InstrumentKind.BOND,
+    quantity=10_000,
+    first_amount=Decimal("5610100.00"),
+    second_amount=Decimal("5616786.01"),
+)
+REPOS = {TREASURY: [KSU_REPO], BONDS: [OFZ_REPO]}
+
+
+def amounts(*values: str) -> list[Decimal]:
+    return [Decimal(v) for v in values]
+
+
+def part(day: dict[UUID, State], name: str) -> Decimal:
+    return sum((getattr(s.result, name) for s in day.values() if s.result is not None), Decimal(0))
+
+
+def coupons(state: State) -> list[tuple[UUID | None, Decimal]]:
+    return sorted(
+        ((m.trade_id, m.cash) for m in state.movements if m.kind.value == "coupon"),
+        key=lambda item: item[1],
+    )
+
+
+def test_week_with_repo_from_the_methodology() -> None:
+    days = week(rates=[MANAGEMENT], repos=REPOS)
+    balanced(days)
+    # СЧА и вознаграждение по дням (design/07) — независимый прототип.
+    assert [nav(d) for d in days] == amounts(
+        "99995890.41",
+        "100016779.96",
+        "100024340.43",
+        "100031900.60",
+        "100080458.77",
+        "100067817.55",
+        "100103174.88",
+        "100090832.72",
+    )
+    assert [d[TREASURY].fees_today["management"] for d in days] == amounts(
+        "4109.59", "4110.45", "4110.76", "4111.07", "4113.06", "4112.55", "4114.00", "4113.49"
+    )
+    assert [part(d, "repo") for d in days] == amounts(
+        "0", "0", "11671.23", "11671.24", "11671.23", "-2228.67", "-2228.67", "-2228.67"
+    )
+    # Переоценка и купонный доход — как без РЕПО.
+    totals = [sum((part(d, n) for d in days), Decimal(0)) for n in ("revaluation", "coupon")]
+    assert totals == amounts("48000", "27400")
+    # Деньги и бумаги на счёте портфеля облигаций — лестница из методики.
+    bonds = [d[BONDS] for d in days[4:]]
+    assert [s.cash for s in bonds] == amounts(
+        "37609600.00", "48833800.00", "49895800.00", "44279013.99"
+    )
+    assert [s.holdings[OFZ].settle_quantity for s in bonds] == [40_000, 20_000, 20_000, 30_000]
+    assert [s.holdings[OFZ].trade_quantity for s in bonds] == [30_000] * 4
+    # 02.12 купон: 20 000 бумаг с эмитента и 10 000 — передачей дохода от НКЦ.
+    assert coupons(bonds[2]) == [(REPO_B, Decimal("354000.00")), (None, Decimal("708000.00"))]
+    assert bonds[1].valuations[OFZ].coupon_due == Decimal("1062000.00")
+    assert days[4][TREASURY].cash == Decimal("40035013.70")
+
+
+def test_repo_positions_carry_principal_and_interest() -> None:
+    days = week(repos=REPOS)
+    (placed,) = days[3][TREASURY].repos
+    assert (placed.direct, placed.principal, placed.accrued, placed.value) == (
+        False,
+        Decimal("30000000.00"),
+        Decimal("23342.47"),
+        Decimal("30023342.47"),
+    )
+    (borrowed,) = days[5][BONDS].repos
+    assert (borrowed.quantity, borrowed.principal, borrowed.accrued, borrowed.value) == (
+        10_000,
+        Decimal("5610100.00"),
+        Decimal("2228.67"),
+        Decimal("-5612328.67"),
+    )
+    # Вторая часть закрыла сделки: в позициях их нет.
+    assert days[4][TREASURY].repos == ()
+    assert days[7][BONDS].repos == ()
+    state = days[5][BONDS]
+    assert from_json(json.loads(json.dumps(to_json(state)))) == state
+
+
+def test_money_contribution_shifts_debt_and_interest() -> None:
+    paid = Contribution(UUID(int=401), date(2026, 12, 2), cash=Decimal("-20000.00"))
+    changed = replace(OFZ_REPO, second_amount=Decimal("5596778.06"), contributions=(paid,))
+    days = week(repos={BONDS: [changed]})
+    balanced(days)
+    assert [part(d, "repo") for d in days[5:]] == amounts("-2228.67", "-2228.67", "-2220.72")
+    (position,) = days[6][BONDS].repos
+    assert (position.principal, position.accrued) == (Decimal("5590100.00"), Decimal("4457.34"))
+    assert days[6][BONDS].cash - days[5][BONDS].cash == Decimal("1042000.00")
+
+
+def test_securities_contribution_returns_with_the_second_leg() -> None:
+    # 01.12 фонд довносит 1 000 ОФЗ: на счёте их нет, доход за них — передачей от НКЦ.
+    more = Contribution(UUID(int=402), date(2026, 12, 1), quantity=-1_000)
+    days = week(repos={BONDS: [replace(OFZ_REPO, contributions=(more,))]})
+    balanced(days)
+    assert [d[BONDS].holdings[OFZ].settle_quantity for d in days[5:]] == [19_000, 19_000, 30_000]
+    assert coupons(days[6][BONDS]) == [
+        (REPO_B, Decimal("389400.00")),
+        (None, Decimal("672600.00")),
+    ]
+
+
+def test_reverse_repo_with_bonds_passes_the_coupon_on() -> None:
+    # Обратное РЕПО с ОФЗ через дату фиксации: купон от эмитента уходит НКЦ.
+    received = repo(
+        UUID(int=303),
+        direct=False,
+        dates=(date(2026, 11, 30), date(2026, 11, 30), date(2026, 12, 3)),
+        instrument_id=OFZ,
+        kind=InstrumentKind.BOND,
+        quantity=5_000,
+        first_amount=Decimal("2805050.00"),
+        second_amount=Decimal("2808393.00"),
+    )
+    days = week(repos={TREASURY: [received]})
+    balanced(days)
+    treasury = days[6][TREASURY]
+    assert coupons(treasury) == [
+        (UUID(int=303), Decimal("-177000.00")),
+        (None, Decimal("177000.00")),
+    ]
+    assert OFZ not in treasury.valuations
+    assert sum((part(d, "repo") for d in days), Decimal(0)) == Decimal("3343.00")
+
+
+def test_direct_ksu_repo_with_a_fee_paid_at_the_first_leg() -> None:
+    # Прямое РЕПО с КСУ, первая часть на следующий торговый день; комиссия — расход
+    # в день сделки, деньги за неё — в первой части.
+    borrowed = repo(
+        UUID(int=304),
+        direct=True,
+        dates=(date(2026, 11, 27), date(2026, 11, 30), date(2026, 12, 1)),
+        first_amount=Decimal("1000000.00"),
+        second_amount=Decimal("1000397.26"),
+        fee=Decimal("50.00"),
+    )
+    days = week(repos={TREASURY: [borrowed]})
+    balanced(days)
+    friday, tuesday = days[1][TREASURY].result, days[5][TREASURY].result
+    assert friday is not None
+    assert tuesday is not None
+    assert (friday.fees, friday.payable) == (Decimal("-50.00"), Decimal("50.00"))
+    assert days[4][TREASURY].cash - days[3][TREASURY].cash == Decimal("999950.00")
+    assert tuesday.repo == Decimal("-397.26")
+
+
+def test_repo_returned_on_the_first_day_accrues_evenly() -> None:
+    # Взнос в день первой части вернул весь долг: проценты делятся по ночам поровну.
+    back = Contribution(UUID(int=403), date(2026, 11, 30), cash=Decimal("-1000000.00"))
+    empty = repo(
+        UUID(int=305),
+        direct=True,
+        dates=(date(2026, 11, 30), date(2026, 11, 30), date(2026, 12, 2)),
+        first_amount=Decimal("1000000.00"),
+        second_amount=Decimal("10.00"),
+        contributions=(back,),
+    )
+    assert [empty.accrued(date(2026, 12, d)) for d in (1, 2)] == amounts("-5.00", "-10.00")

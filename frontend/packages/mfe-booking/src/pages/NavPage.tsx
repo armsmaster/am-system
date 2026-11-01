@@ -127,6 +127,8 @@ function Composition({ day }: { readonly day: NavDay }) {
     ['НКД в оценке и купоны к получению', day.accrued, false],
     ['к получению по сделкам до расчётов', day.receivable, false],
     ['к уплате по сделкам до расчётов', day.payable, true],
+    ['размещено в обратное РЕПО, с процентами', day.repo_placed, false],
+    ['привлечено в прямое РЕПО, с процентами', day.repo_borrowed, true],
     ['требования к пайщикам', day.claims, false],
     ['обязательства перед пайщиками', day.obligations, true],
     ['начисленные расходы', day.expenses, true],

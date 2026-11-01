@@ -10,7 +10,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from decimal import ROUND_HALF_UP, Decimal
-from typing import cast
+from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +26,7 @@ from booking.roll import (
     Lot,
     Mark,
     Movement,
+    RepoPosition,
     State,
     Valuation,
     from_json,
@@ -45,6 +46,15 @@ class PortfolioState:
     obligations: Decimal = ZERO
     expenses: Decimal = ZERO
     result: DayResult | None = None  # оценка и результат дня; None — ещё не оценён
+
+
+@dataclass(frozen=True, slots=True)
+class RepoLine:
+    """Открытая сделка РЕПО на дату: позиция ролла и условия сделки."""
+
+    portfolio: PortfolioRef
+    position: RepoPosition
+    trade: Any  # последняя версия сделки: бумага, ставка
 
 
 @dataclass(slots=True)
@@ -102,6 +112,7 @@ class PositionsView:
     day: date
     portfolios: list[PortfolioState]
     lines: list[PositionLine]
+    repos: list[RepoLine] = field(default_factory=list)
 
     @property
     def cash(self) -> Decimal:
@@ -179,10 +190,13 @@ async def positions(
 
     states: list[PortfolioState] = []
     lines: dict[UUID, PositionLine] = {}
+    open_repos: list[tuple[PortfolioRef, RepoPosition]] = []
     for ref, state in found:
         states.append(_portfolio_state(ref, state, day, waiting))
         if state is None:
             continue
+        if state.day == day:
+            open_repos += [(ref, r) for r in state.repos]
         for holding in state.holdings.values():
             line = lines.setdefault(
                 holding.instrument_id,
@@ -205,8 +219,13 @@ async def positions(
         line.secid, line.short_name = names[instrument_id].secid, names[instrument_id].short_name
         if marketdata is not None and line.kind == "bond" and line.trade_quantity:
             line.metrics = await marketdata.metrics(instrument_id, at)
+    deals = await repo.trades_by_id(r.id for _, r in open_repos)
     return PositionsView(
-        portfolio, day, states, sorted(lines.values(), key=lambda line: line.secid)
+        portfolio,
+        day,
+        states,
+        sorted(lines.values(), key=lambda line: line.secid),
+        [RepoLine(ref, r, deals[r.id]) for ref, r in open_repos],
     )
 
 
@@ -272,6 +291,7 @@ class ResultDay:
     charges: Decimal
     correction: Decimal
     flags: list[Flag]
+    repo: Decimal = ZERO
 
     @property
     def total(self) -> Decimal:
@@ -283,6 +303,7 @@ class ResultDay:
             + self.expenses
             + self.charges
             + self.correction
+            + self.repo
         )
 
 
@@ -382,6 +403,7 @@ def _days(states: Iterable[tuple[Snapshot, State]]) -> list[ResultDay]:
             expenses=sum((r.expenses for r in found), ZERO),
             charges=sum((r.charges for r in found), ZERO),
             correction=sum((r.correction for r in found), ZERO),
+            repo=sum((r.repo for r in found), ZERO),
             flags=sorted({f for r in found for f in r.flags}),
         )
         for day, found in sorted(by_day.items())
@@ -409,6 +431,8 @@ class NavDay:
     fees_owed: Decimal  # начисленные и не выплаченные комиссии от СЧА
     fees_today: dict[str, Decimal]  # начислено за день по видам
     flags: list[Flag]
+    repo_placed: Decimal = ZERO  # размещено в обратное РЕПО, с процентами
+    repo_borrowed: Decimal = ZERO  # привлечено в прямое РЕПО, с процентами
 
     @property
     def unit_price(self) -> Decimal | None:
@@ -488,6 +512,8 @@ def _nav_day(day: date, states: list[State]) -> NavDay:
         fees_owed=sum((s.fees_owed for s in states), ZERO),
         fees_today=fees_today,
         flags=sorted({f for r in results for f in r.flags}),
+        repo_placed=sum((r.value for s in states for r in s.repos if not r.direct), ZERO),
+        repo_borrowed=sum((-r.value for s in states for r in s.repos if r.direct), ZERO),
     )
 
 

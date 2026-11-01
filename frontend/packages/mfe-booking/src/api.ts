@@ -54,14 +54,18 @@ export interface TradeVersion {
   readonly changed: readonly string[];
 }
 
+/** Покупка или продажа; РЕПО с НКЦ (design/07): сторона — первой части, sell — прямое. */
+export type TradeKind = 'outright' | 'repo';
+
 export interface Trade {
   readonly id: string;
   readonly number: number;
   readonly status: Status;
   readonly portfolio_id: string;
   readonly portfolio_code: string | null;
-  readonly instrument_id: string;
-  readonly instrument_kind: 'bond' | 'fund_share';
+  /** У РЕПО с КСУ бумаги нет. */
+  readonly instrument_id: string | null;
+  readonly instrument_kind: 'bond' | 'fund_share' | 'ksu';
   readonly secid: string;
   readonly short_name: string;
   readonly side: Side;
@@ -77,6 +81,11 @@ export interface Trade {
   readonly venue: 'exchange' | 'otc';
   readonly counterparty: string | null;
   readonly external_id: string | null;
+  readonly kind: TradeKind;
+  /** РЕПО: % годовых, дата и сумма второй части по отчёту брокера. */
+  readonly repo_rate: Decimal | null;
+  readonly second_date: string | null;
+  readonly second_amount: Decimal | null;
   readonly comment: string | null;
   readonly author: string;
   readonly created_at: string;
@@ -85,8 +94,9 @@ export interface Trade {
 }
 
 export interface TradeInput {
+  readonly kind: TradeKind;
   readonly portfolio_id: string;
-  readonly instrument_id: string;
+  readonly instrument_id: string | null;
   readonly side: Side;
   readonly quantity: number;
   readonly price: string;
@@ -99,6 +109,11 @@ export interface TradeInput {
   readonly counterparty: string | null;
   readonly external_id: string | null;
   readonly comment: string | null;
+  /** РЕПО с КСУ: сумма первой части. */
+  readonly amount: string | null;
+  readonly repo_rate: string | null;
+  readonly second_date: string | null;
+  readonly second_amount: string | null;
 }
 
 export interface Lot {
@@ -163,6 +178,8 @@ export interface DayResult {
   readonly charges: Decimal;
   /** Корректировка комиссий от СЧА при выплате: факт минус начисленное за период. */
   readonly correction: Decimal;
+  /** Проценты по РЕПО: доход по обратному, расход по прямому. */
+  readonly repo: Decimal;
   readonly total: Decimal;
   readonly receivable: Decimal;
   readonly payable: Decimal;
@@ -183,7 +200,10 @@ export type MovementKind =
   | 'expense_accrual'
   | 'expense_payment'
   | 'transfer_out'
-  | 'transfer_in';
+  | 'transfer_in'
+  | 'repo_first'
+  | 'repo_second'
+  | 'repo_contribution';
 
 export interface Movement {
   readonly kind: MovementKind;
@@ -232,6 +252,30 @@ export interface Positions extends FundFigures {
   /** DV01 портфеля, ₽ за 1 бп: по доходности — фиксированный купон; по спреду — все облигации. */
   readonly dv01_yield: Decimal;
   readonly dv01_spread: Decimal;
+  /** Открытые сделки РЕПО на дату. */
+  readonly repos: readonly RepoLine[];
+}
+
+/** Открытая сделка РЕПО: долг и начисленные проценты (design/07). */
+export interface RepoLine {
+  readonly id: string;
+  readonly portfolio_id: string;
+  readonly portfolio_code: string;
+  /** Прямое: фонд привлёк деньги под бумаги. */
+  readonly direct: boolean;
+  /** null — КСУ. */
+  readonly instrument_id: string | null;
+  readonly secid: string;
+  readonly short_name: string;
+  readonly quantity: number;
+  readonly rate: Decimal;
+  readonly first_date: string;
+  readonly second_date: string;
+  readonly second_amount: Decimal;
+  readonly principal: Decimal;
+  readonly accrued: Decimal;
+  /** В стоимости портфеля: требование +, обязательство −. */
+  readonly value: Decimal;
 }
 
 export interface ResultDay {
@@ -245,6 +289,7 @@ export interface ResultDay {
   readonly expenses: Decimal;
   readonly charges: Decimal;
   readonly correction: Decimal;
+  readonly repo: Decimal;
   readonly total: Decimal;
   readonly flags: readonly ValuationFlag[];
 }
@@ -280,7 +325,8 @@ export type OperationKind =
   | 'expense_payment'
   | 'cash_transfer'
   | 'security_transfer'
-  | 'fee_payment';
+  | 'fee_payment'
+  | 'repo_contribution';
 
 /** Виды комиссий от СЧА (решение 21). */
 export type FeeKind = 'management' | 'specdep' | 'registrar' | 'other';
@@ -319,6 +365,9 @@ export interface NavDay {
   readonly expenses: Decimal;
   readonly fees_owed: Decimal;
   readonly fees_today: Readonly<Partial<Record<FeeKind, Decimal>>>;
+  /** Размещено в обратное РЕПО и привлечено в прямое — с процентами. */
+  readonly repo_placed: Decimal;
+  readonly repo_borrowed: Decimal;
   readonly flags: readonly ValuationFlag[];
 }
 
@@ -359,6 +408,9 @@ export interface Operation {
   readonly fee_kind: FeeKind | null;
   /** Выплата вознаграждения: последний день оплаченного месяца. */
   readonly period_end: string | null;
+  /** Компенсационный взнос: сделка РЕПО; in — фонду, out — от фонда. */
+  readonly trade_id: string | null;
+  readonly direction: 'in' | 'out' | null;
   readonly instrument_id: string | null;
   readonly secid: string | null;
   readonly short_name: string | null;
@@ -408,6 +460,13 @@ export type OperationInput =
       readonly receiver_id: string;
       readonly instrument_id: string;
       readonly quantity: number;
+    })
+  | (OperationBase & {
+      readonly kind: 'repo_contribution';
+      readonly trade_id: string;
+      readonly direction: 'in' | 'out';
+      readonly amount: string | null;
+      readonly quantity: number | null;
     });
 
 export interface LadderMovement extends Movement {

@@ -187,6 +187,32 @@ describe('changes', () => {
     expect(['trade.cancelled', 'trade.confirmed'].map(actionLabel)).toEqual(['Отменена сделка', 'Подтверждена сделка']);
   });
 
+  it('describes a REPO and a compensation contribution', () => {
+    const repo = event('trade.entered', {
+      trade: { secid: 'КСУ', portfolio: 'OPIF1-TREASURY' },
+      before: null,
+      after: { kind: 'repo', side: 'buy', repo_rate: '14.2', second_date: '2026-11-30', second_amount: '30035013.70' },
+    });
+    const contribution = event('operation.entered', {
+      operation: { kind: 'repo_contribution', portfolio: 'OPIF1-BONDS' },
+      before: null,
+      after: { direction: 'out', amount: '20000.00' },
+    });
+
+    expect(changes(repo)).toEqual([
+      { field: 'Тип', before: '—', after: 'РЕПО с НКЦ' },
+      { field: 'Направление', before: '—', after: 'покупка' },
+      { field: 'Ставка РЕПО', before: '—', after: '14.2' },
+      { field: 'Вторая часть: дата', before: '—', after: '30.11.2026' },
+      { field: 'Вторая часть: сумма', before: '—', after: '30035013.70' },
+    ]);
+    expect(objectLabel(contribution)).toBe('OPIF1-BONDS: компенсационный взнос по РЕПО');
+    expect(changes(contribution)).toEqual([
+      { field: 'Сумма', before: '—', after: '20000.00' },
+      { field: 'Кто платит', before: '—', after: 'фонд — НКЦ' },
+    ]);
+  });
+
   it('describes fee rates and fee payments', () => {
     const rate = event('fee_rate.set', {
       fund: { code: 'OPIF1' },

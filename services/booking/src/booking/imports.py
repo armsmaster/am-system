@@ -5,6 +5,7 @@
 «отменена» — версия «отменена». Каждая сделка — своя транзакция: плохая
 отклоняется отдельно, остальные принимаются, повтор пакета безопасен.
 Правила ввода — те же, что у формы: импорт идёт через TradeDesk.
+Сделка РЕПО (design/07) — с ``kind: repo``; код ``KSU`` — РЕПО с КСУ.
 """
 
 from __future__ import annotations
@@ -26,6 +27,9 @@ from booking.repository import CANCELLED, Repository
 from booking.roll import ZERO, Side
 from booking.trades import TRACKED, RuleViolationError, TradeDesk, TradeInput, TradeView
 
+# Код обеспечения РЕПО с КСУ: бумаги нет, только деньги (решение 117).
+KSU_CODES = frozenset({"KSU", "КСУ"})
+
 
 @dataclass(frozen=True, slots=True)
 class ImportItem:
@@ -33,12 +37,12 @@ class ImportItem:
 
     external_id: str
     portfolio: str  # код портфеля
-    code: str  # SECID или ISIN
+    code: str  # SECID или ISIN; KSU — РЕПО с КСУ
     side: Side
-    quantity: int
-    price: Decimal
     trade_at: datetime
     settle_date: date
+    quantity: int = 0
+    price: Decimal = ZERO
     accrued: Decimal | None = None
     face_value: Decimal | None = None
     fee: Decimal = ZERO
@@ -46,6 +50,11 @@ class ImportItem:
     counterparty: str | None = None
     comment: str | None = None
     cancelled: bool = False
+    kind: str = "outright"
+    amount: Decimal | None = None  # РЕПО с КСУ: сумма первой части
+    repo_rate: Decimal | None = None
+    second_date: date | None = None
+    second_amount: Decimal | None = None
 
 
 class Result(StrEnum):
@@ -166,8 +175,9 @@ def _entry(
             "portfolio_unavailable",
             f"Портфеля {item.portfolio} нет или к нему нет доступа.",
         )
-    instrument_id = codes.get(item.code.upper())
-    if instrument_id is None:
+    ksu = item.code.upper() in KSU_CODES
+    instrument_id = None if ksu else codes.get(item.code.upper())
+    if instrument_id is None and not ksu:
         raise RuleViolationError(
             "unknown_instrument",
             f"Бумаги {item.code} нет в справочнике. Загрузите её в разделе «Справочник».",
@@ -186,4 +196,9 @@ def _entry(
         venue=item.venue,
         counterparty=item.counterparty,
         external_id=item.external_id,
+        kind=item.kind,
+        amount=item.amount,
+        repo_rate=item.repo_rate,
+        second_date=item.second_date,
+        second_amount=item.second_amount,
     )

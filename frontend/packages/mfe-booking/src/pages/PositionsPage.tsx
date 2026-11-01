@@ -2,7 +2,7 @@ import { LoadedView, useLoad } from '@am/ui';
 import { Fragment, useCallback } from 'react';
 
 import type { Context } from '../App';
-import type { DayResult, Instrument, Line, Positions, PortfolioState } from '../api';
+import type { DayResult, Instrument, Line, Positions, PortfolioState, RepoLine } from '../api';
 import { SelectionForm, useSelection } from '../components/Selection';
 import {
   FLAG_LABELS,
@@ -11,7 +11,7 @@ import {
   formatPrice,
   formatQuantity,
   formatTime,
-  MOVEMENT_LABELS,
+  movementLabel,
 } from '../format';
 
 /**
@@ -64,6 +64,7 @@ function PositionsView({
       </p>
       <FundFiguresNote view={view} />
       {view.result && <ResultNote result={view.result} />}
+      {view.repos.length > 0 && <RepoTable repos={view.repos} />}
       {view.lines.length === 0 ? (
         <p className="muted">Бумаг нет.</p>
       ) : (
@@ -99,6 +100,46 @@ function PositionsView({
   );
 }
 
+/** Открытые сделки РЕПО: долг и начисленные проценты (design/07). */
+function RepoTable({ repos }: { readonly repos: readonly RepoLine[] }) {
+  return (
+    <table className="data" aria-label="РЕПО">
+      <thead>
+        <tr>
+          <th>Портфель</th>
+          <th>Сделка</th>
+          <th>Обеспечение</th>
+          <th className="num">Бумаги, шт.</th>
+          <th className="num">Ставка, %</th>
+          <th>Части</th>
+          <th className="num">Долг, ₽</th>
+          <th className="num">Проценты, ₽</th>
+          <th className="num">В стоимости, ₽</th>
+        </tr>
+      </thead>
+      <tbody>
+        {repos.map((r) => (
+          <tr key={r.id}>
+            <td>{r.portfolio_code}</td>
+            <td>{r.direct ? 'прямое: привлекли' : 'обратное: разместили'}</td>
+            <td>
+              <span className="code">{r.secid}</span>
+            </td>
+            <td className="num">{r.quantity ? formatQuantity(r.quantity) : '—'}</td>
+            <td className="num">{formatPrice(r.rate)}</td>
+            <td>
+              {formatDate(r.first_date)} → {formatDate(r.second_date)}: {formatMoney(r.second_amount)} ₽
+            </td>
+            <td className="num">{formatMoney(r.principal)}</td>
+            <td className="num">{formatMoney(r.accrued)}</td>
+            <td className="num">{formatMoney(r.value)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 /** Стоимость портфеля и результат дня по частям: части в сумме дают результат. */
 function ResultNote({ result }: { readonly result: DayResult }) {
   const parts = [
@@ -109,6 +150,7 @@ function ResultNote({ result }: { readonly result: DayResult }) {
     ['расходы фонда', result.expenses],
     ['вознаграждение и комиссии от СЧА', result.charges],
     ['корректировка комиссий при выплате', result.correction],
+    ['проценты по РЕПО', result.repo],
   ] as const;
   return (
     <>
@@ -316,7 +358,7 @@ function Movements({
         {rows.map(({ p, m, index }) => (
           <tr key={`${p.id}-${index}`}>
             <td>{p.code}</td>
-            <td>{MOVEMENT_LABELS[m.kind]}</td>
+            <td>{movementLabel(m)}</td>
             <td>{secid(m.instrument_id)}</td>
             <td className="num">{m.quantity ? formatQuantity(m.quantity) : '—'}</td>
             <td className="num">{formatMoney(m.cash)}</td>

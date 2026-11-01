@@ -98,6 +98,10 @@ export function trade(fields: Partial<Trade> = {}): Trade {
     venue: 'exchange',
     counterparty: null,
     external_id: null,
+    kind: 'outright',
+    repo_rate: null,
+    second_date: null,
+    second_amount: null,
     comment: null,
     author: 'trader',
     created_at: '2026-11-27T08:43:00Z',
@@ -107,6 +111,25 @@ export function trade(fields: Partial<Trade> = {}): Trade {
     warnings: [],
     ...fields,
   };
+}
+
+/** Прямое РЕПО Б из методики шага 7: 10 000 ОФЗ 26238 на 30.11–03.12 под 14,50%. */
+export function repoTrade(fields: Partial<Trade> = {}): Trade {
+  return trade({
+    id: 't-repo',
+    kind: 'repo',
+    side: 'sell',
+    quantity: 10000,
+    price: '52.600000',
+    amount: '5610100.00',
+    trade_at: '2026-11-30T08:05:00Z',
+    trade_date: '2026-11-30',
+    settle_date: '2026-11-30',
+    repo_rate: '14.500000',
+    second_date: '2026-12-03',
+    second_amount: '5616786.01',
+    ...fields,
+  });
 }
 
 /** Портфель облигаций на 02.12: купон пришёл, лот 30 000 по 52,50%. */
@@ -142,6 +165,7 @@ export function positions(fields: Partial<Positions> = {}): Positions {
     result: dayResult(),
     dv01_yield: '9780.00',
     dv01_spread: '9780.00',
+    repos: [],
     lines: [
       {
         instrument_id: 'i-ofz',
@@ -197,6 +221,7 @@ export function dayResult(fields: Partial<DayResult> = {}): DayResult {
     expenses: '0.00',
     charges: '0.00',
     correction: '0.00',
+    repo: '0.00',
     total: '41700.00',
     receivable: '0.00',
     payable: '0.00',
@@ -218,6 +243,7 @@ export function results(fields: Partial<Results> = {}): Results {
     expenses: '0.00',
     charges: '0.00',
     correction: '0.00',
+    repo: '0.00',
     total,
     flags: [],
   });
@@ -266,6 +292,8 @@ export function nav(fields: Partial<Nav> = {}): Nav {
     expenses: '0.00',
     fees_owed: owed,
     fees_today: { management: fee },
+    repo_placed: '0.00',
+    repo_borrowed: '0.00',
     flags: [],
   });
   return {
@@ -315,6 +343,8 @@ export function operation(fields: Partial<Operation> = {}): Operation {
     expense_kind: null,
     fee_kind: null,
     period_end: null,
+    trade_id: null,
+    direction: null,
     instrument_id: null,
     secid: null,
     short_name: null,

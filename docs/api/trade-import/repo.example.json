@@ -1,0 +1,34 @@
+{
+  "source": "broker-x",
+  "trades": [
+    {
+      "external_id": "BX-2026-11-27-R001",
+      "portfolio": "OPIF1-TREASURY",
+      "code": "KSU",
+      "kind": "repo",
+      "side": "buy",
+      "trade_at": "2026-11-27T10:00:00+03:00",
+      "settle_date": "2026-11-27",
+      "amount": 30000000,
+      "repo_rate": 14.2,
+      "second_date": "2026-11-30",
+      "second_amount": 30035013.7,
+      "comment": "Свободные деньги — в РЕПО с КСУ на выходные"
+    },
+    {
+      "external_id": "BX-2026-11-30-R002",
+      "portfolio": "OPIF1-BONDS",
+      "code": "SU26238RMFS4",
+      "kind": "repo",
+      "side": "sell",
+      "quantity": 10000,
+      "price": 52.6,
+      "accrued": 35.01,
+      "trade_at": "2026-11-30T11:05:00+03:00",
+      "settle_date": "2026-11-30",
+      "repo_rate": 14.5,
+      "second_date": "2026-12-03",
+      "second_amount": 5616786.01
+    }
+  ]
+}

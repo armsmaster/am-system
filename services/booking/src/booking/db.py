@@ -1,8 +1,12 @@
 """Схема БД сделок и позиций.
 
 Сделка не меняется и не удаляется: правка, подтверждение и отмена — новая
-версия. Снапшот дня не удаляется при пересчёте, а помечается замещённым
-(решение 8): видно, что система показывала до исправления.
+версия. Сделка РЕПО (design/07) — та же сделка с видом ``repo``: сторона —
+первой части (``sell`` — прямое, ``buy`` — обратное), сумма и дата расчётов —
+первой части, ставка и вторая часть — в своих полях. У РЕПО с КСУ бумаги нет.
+
+Снапшот дня не удаляется при пересчёте, а помечается замещённым (решение 8):
+видно, что система показывала до исправления.
 """
 
 from __future__ import annotations
@@ -32,6 +36,25 @@ from am_common.outbox import outbox_table
 
 metadata = MetaData()
 
+# У КСУ нет ни количества, ни цены: РЕПО с КСУ — только деньги (решение 117).
+TRADE_POSITIVE = (
+    "fee >= 0 AND amount > 0 AND CASE WHEN instrument_kind = 'ksu' "
+    "THEN instrument_id IS NULL AND quantity = 0 AND price = 0 "
+    "ELSE instrument_id IS NOT NULL AND quantity > 0 AND price > 0 END"
+)
+TRADE_KIND = (
+    "CASE kind "
+    "WHEN 'outright' THEN instrument_kind <> 'ksu' AND repo_rate IS NULL "
+    "AND second_date IS NULL AND second_amount IS NULL "
+    "WHEN 'repo' THEN repo_rate IS NOT NULL AND second_date > settle_date "
+    "AND second_amount > 0 "
+    "ELSE false END"
+)
+OPERATION_KINDS = (
+    "kind IN ('unit_issue', 'unit_redemption', 'expense_accrual', 'expense_payment', "
+    "'cash_transfer', 'security_transfer', 'fee_payment', 'repo_contribution')"
+)
+
 trade = Table(
     "trade",
     metadata,
@@ -53,7 +76,7 @@ trade_version = Table(
     # Фонд портфеля: пересчёт — по фонду целиком (переводы связывают его портфели).
     Column("fund_id", Uuid, nullable=False),
     Column("portfolio_id", Uuid, nullable=False),
-    Column("instrument_id", Uuid, nullable=False),
+    Column("instrument_id", Uuid),  # у РЕПО с КСУ бумаги нет
     # Как бумага называлась при вводе — для списков без похода в справочник.
     Column("instrument_kind", Text, nullable=False),
     Column("secid", Text, nullable=False),
@@ -71,6 +94,10 @@ trade_version = Table(
     Column("venue", Text, nullable=False),
     Column("counterparty", Text),
     Column("external_id", Text),  # номер сделки у биржи или брокера
+    Column("kind", Text, nullable=False, server_default="outright"),
+    Column("repo_rate", Numeric(9, 6)),  # РЕПО: ставка, % годовых
+    Column("second_date", Date),  # РЕПО: расчёты по второй части
+    Column("second_amount", Numeric(20, 2)),  # РЕПО: сумма второй части по отчёту брокера
     Column("comment", Text),
     Column("author", Text, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
@@ -79,10 +106,11 @@ trade_version = Table(
     CheckConstraint("side IN ('buy', 'sell')", name="trade_version_side"),
     CheckConstraint("venue IN ('exchange', 'otc')", name="trade_version_venue"),
     CheckConstraint(
-        "instrument_kind IN ('bond', 'fund_share')", name="trade_version_instrument_kind"
+        "instrument_kind IN ('bond', 'fund_share', 'ksu')", name="trade_version_instrument_kind"
     ),
-    CheckConstraint("quantity > 0 AND price > 0 AND fee >= 0", name="trade_version_positive"),
+    CheckConstraint(TRADE_POSITIVE, name="trade_version_positive"),
     CheckConstraint("settle_date >= trade_date", name="trade_version_dates"),
+    CheckConstraint(TRADE_KIND, name="trade_version_kind"),
     Index("trade_version_portfolio", "portfolio_id", "trade_date"),
     Index("trade_version_instrument", "instrument_id"),
     Index("trade_version_fund", "fund_id"),
@@ -122,6 +150,8 @@ operation_version = Table(
     Column("expense_kind", Text),
     Column("fee_kind", Text),  # выплата вознаграждения: вид комиссии от СЧА
     Column("period_end", Date),  # выплата вознаграждения: конец оплаченного периода
+    Column("trade_id", Uuid),  # компенсационный взнос: сделка РЕПО
+    Column("direction", Text),  # компенсационный взнос: in — фонду, out — от фонда
     Column("instrument_id", Uuid),  # перевод бумаг
     Column("instrument_kind", Text),
     Column("secid", Text),
@@ -132,10 +162,10 @@ operation_version = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
     PrimaryKeyConstraint("operation_id", "number", name="operation_version_pk"),
     CheckConstraint("status IN ('active', 'cancelled')", name="operation_version_status"),
+    CheckConstraint(OPERATION_KINDS, name="operation_version_kind"),
     CheckConstraint(
-        "kind IN ('unit_issue', 'unit_redemption', 'expense_accrual', 'expense_payment', "
-        "'cash_transfer', 'security_transfer', 'fee_payment')",
-        name="operation_version_kind",
+        "kind <> 'repo_contribution' OR (trade_id IS NOT NULL AND direction IN ('in', 'out'))",
+        name="operation_version_contribution",
     ),
     CheckConstraint(
         "(amount IS NULL OR amount > 0) AND (units IS NULL OR units > 0) "

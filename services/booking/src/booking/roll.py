@@ -26,6 +26,11 @@
 его портфели: ставка × СЧА до сегодняшних комиссий / дней в году — в казначейский
 портфель, по месяцам. Выплата за период закрывает месяцы этого периода, разница
 с начисленным — корректировка в день выплаты (решения 43, 106).
+
+РЕПО с НКЦ (design/07) — не продажа: экономическая позиция и лоты не меняются,
+части сделки двигают деньги и бумаги на счёте депо. Проценты — весь денежный
+поток сделки, по ночам пропорционально долгу (решения 111, 113). Купон за бумаги
+в РЕПО идёт передачей дохода в дату выплаты (решение 112).
 """
 
 from __future__ import annotations
@@ -159,12 +164,115 @@ class Holding:
 
 @dataclass(frozen=True, slots=True)
 class Entitlement:
-    """Право на выплату: бумаги были на счёте на конец даты фиксации."""
+    """Право на выплату: бумаги были на счёте на конец даты фиксации. У передачи дохода
+    по РЕПО — сделка: бумаги на конец даты фиксации были в РЕПО (решение 112)."""
 
     instrument_id: UUID
     pay_date: date
     record_date: date
-    quantity: int
+    quantity: int  # передача дохода: + НКЦ платит фонду, − фонд платит НКЦ
+    repo_id: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Contribution:
+    """Компенсационный взнос по РЕПО (решение 113): деньги и бумаги — со знаком для фонда."""
+
+    id: UUID
+    day: date
+    cash: Decimal = ZERO  # + фонд получил, − заплатил
+    quantity: int = 0  # бумаги на счёт фонда: + пришли, − ушли
+
+
+@dataclass(frozen=True, slots=True)
+class Repo:
+    """Действующая версия сделки РЕПО с НКЦ — то, что нужно роллу (design/07).
+
+    Прямое: фонд отдаёт бумаги и получает деньги в первой части, во второй — наоборот.
+    Обратное — зеркально. С КСУ бумаг нет: только деньги (решение 117).
+    """
+
+    id: UUID
+    instrument_id: UUID | None  # обеспечение; None — КСУ
+    kind: InstrumentKind | None
+    direct: bool
+    quantity: int  # бумаги в первой части; у КСУ — 0
+    trade_at: datetime
+    trade_date: date
+    first_date: date
+    first_amount: Decimal
+    second_date: date
+    second_amount: Decimal
+    fee: Decimal = ZERO
+    contributions: tuple[Contribution, ...] = ()
+
+    @property
+    def first_cash(self) -> Decimal:
+        return self.first_amount if self.direct else -self.first_amount
+
+    @property
+    def first_bonds(self) -> int:
+        return -self.quantity if self.direct else self.quantity
+
+    def active(self) -> list[Contribution]:
+        """Взносы между частями сделки: позже второй части взносов не бывает."""
+        return [c for c in self.contributions if self.first_date <= c.day < self.second_date]
+
+    def net_cash(self, day: date) -> Decimal:
+        """Деньги фонду по сделке на конец дня между частями: первая часть и взносы."""
+        return self.first_cash + sum((c.cash for c in self.active() if c.day <= day), ZERO)
+
+    def bonds(self, day: date) -> int:
+        """Бумаги на счёт фонда по сделке на конец дня между частями."""
+        return self.first_bonds + sum(c.quantity for c in self.active() if c.day <= day)
+
+    @property
+    def second_cash(self) -> Decimal:
+        return -self.second_amount if self.direct else self.second_amount
+
+    @property
+    def income(self) -> Decimal:
+        """Проценты сделки для фонда: весь денежный поток; у прямого — отрицательные."""
+        return self.net_cash(self.second_date - timedelta(days=1)) + self.second_cash
+
+    def accrued(self, day: date) -> Decimal:
+        """Проценты на вечер дня: доля ночей срока до этого дня, взвешенная долгом
+        за ночь, нарастающим итогом до копейки (решения 111, 113)."""
+        if day < self.first_date:
+            return ZERO
+        if day >= self.second_date:
+            return self.income
+        nights = [
+            self.first_date + timedelta(days=n)
+            for n in range((self.second_date - self.first_date).days)
+        ]
+        weights = [abs(self.net_cash(night)) for night in nights]
+        total = sum(weights, ZERO)
+        if not total:
+            weights, total = [Decimal(1)] * len(nights), Decimal(len(nights))
+        passed = sum((w for night, w in zip(nights, weights, strict=True) if night < day), ZERO)
+        return _kopecks(self.income * passed / total)
+
+
+@dataclass(frozen=True, slots=True)
+class RepoPosition:
+    """Открытая сделка РЕПО на конец дня: долг и начисленные проценты."""
+
+    id: UUID
+    instrument_id: UUID | None
+    direct: bool
+    quantity: int  # бумаги в РЕПО: прямое — отданы, обратное — получены
+    principal: Decimal  # долг без процентов: первая часть с взносами
+    accrued: Decimal  # начисленные проценты
+    first_date: date
+    second_date: date
+    second_amount: Decimal
+
+    @property
+    def value(self) -> Decimal:
+        """В стоимости фонда: размещение — требование, привлечение — обязательство."""
+        total = self.principal + self.accrued
+        return -total if self.direct else total
 
 
 class MovementKind(StrEnum):
@@ -182,6 +290,9 @@ class MovementKind(StrEnum):
     EXPENSE_PAYMENT = "expense_payment"
     TRANSFER_OUT = "transfer_out"
     TRANSFER_IN = "transfer_in"
+    REPO_FIRST = "repo_first"  # первая часть РЕПО
+    REPO_SECOND = "repo_second"  # вторая часть РЕПО
+    REPO_CONTRIBUTION = "repo_contribution"  # компенсационный взнос
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,6 +377,7 @@ class DayResult:
     expenses: Decimal = ZERO  # начисленные расходы фонда
     charges: Decimal = ZERO  # начисленные вознаграждение и комиссии от СЧА
     correction: Decimal = ZERO  # корректировка комиссий от СЧА при выплате
+    repo: Decimal = ZERO  # проценты по РЕПО: доход по обратному, расход по прямому
     receivable: Decimal = ZERO  # к получению по сделкам до расчётов
     payable: Decimal = ZERO  # к уплате по сделкам до расчётов, с комиссией
     flags: tuple[Flag, ...] = ()
@@ -280,6 +392,7 @@ class DayResult:
             + self.expenses
             + self.charges
             + self.correction
+            + self.repo
         )
 
 
@@ -311,10 +424,15 @@ class State:
     # Комиссии от СЧА к выплате: вид → месяц «ГГГГ-ММ» → сумма; начислено сегодня по видам.
     fees_due: Mapping[str, Mapping[str, Decimal]] = field(default_factory=dict)
     fees_today: Mapping[str, Decimal] = field(default_factory=dict)
+    repos: tuple[RepoPosition, ...] = ()  # открытые сделки РЕПО — с оценкой
 
     @property
     def fees_owed(self) -> Decimal:
         return sum((a for months in self.fees_due.values() for a in months.values()), ZERO)
+
+    @property
+    def repo_value(self) -> Decimal:
+        return sum((r.value for r in self.repos), ZERO)
 
 
 class OperationKind(StrEnum):
@@ -325,6 +443,8 @@ class OperationKind(StrEnum):
     CASH_TRANSFER = "cash_transfer"
     SECURITY_TRANSFER = "security_transfer"
     FEE_PAYMENT = "fee_payment"
+    # Взнос — часть своей сделки РЕПО: в ролл он идёт внутри неё, а не операцией.
+    REPO_CONTRIBUTION = "repo_contribution"
 
 
 @dataclass(frozen=True, slots=True)
@@ -377,13 +497,18 @@ class _Day:
     expensed: Decimal = ZERO  # начисленные расходы
     fees_due: dict[str, dict[str, Decimal]] = field(default_factory=dict)
     charged: Decimal = ZERO  # корректировки вознаграждения при выплате
+    repos: list[Repo] = field(default_factory=list)  # сделки РЕПО портфеля
 
 
 def roll(
-    previous: State, trades: Iterable[Trade], terms_on: TermsOn, marks_on: MarksOn | None = None
+    previous: State,
+    trades: Iterable[Trade],
+    terms_on: TermsOn,
+    marks_on: MarksOn | None = None,
+    repos: Iterable[Repo] = (),
 ) -> State:
     """Состояние портфеля на конец следующего дня после ``previous``."""
-    return _close(_open(previous, trades), terms_on, marks_on)
+    return _close(_open(previous, trades, repos), terms_on, marks_on)
 
 
 def roll_fund(
@@ -396,6 +521,7 @@ def roll_fund(
     marks_on: MarksOn | None = None,
     rates: Sequence[FeeRate] = (),
     projected: bool = False,
+    repos: Mapping[UUID, Sequence[Repo]] | None = None,
 ) -> dict[UUID, State]:
     """Состояния всех портфелей фонда на конец ``day`` по состояниям на конец предыдущего дня.
 
@@ -405,13 +531,18 @@ def roll_fund(
     проходит в плановую дату.
     """
     before = day - timedelta(days=1)
+    repos = repos or {}
     portfolios = (
         set(previous)
         | set(trades)
+        | set(repos)
         | {o.portfolio_id for o in operations}
         | {o.receiver_id for o in operations if o.receiver_id is not None}
     )
-    works = {p: _open(previous.get(p) or State(day=before), trades.get(p, ())) for p in portfolios}
+    works = {
+        p: _open(previous.get(p) or State(day=before), trades.get(p, ()), repos.get(p, ()))
+        for p in portfolios
+    }
     for operation in sorted(operations, key=lambda o: str(o.id)):
         _OPERATIONS[operation.kind](operation, works, day, projected)
     states = {p: _close(work, terms_on, marks_on) for p, work in works.items()}
@@ -429,6 +560,7 @@ def roll_fund_days(
     marks_on: MarksOn | None = None,
     rates: Sequence[FeeRate] = (),
     projected: bool = False,
+    repos: Mapping[UUID, Sequence[Repo]] | None = None,
 ) -> list[dict[UUID, State]]:
     """Состояния фонда на каждый календарный день с ``first_day`` по ``till``."""
     days: list[dict[UUID, State]] = []
@@ -444,14 +576,15 @@ def roll_fund_days(
             marks_on=marks_on,
             rates=rates,
             projected=projected,
+            repos=repos,
         )
         days.append(current)
         day += timedelta(days=1)
     return days
 
 
-def _open(previous: State, trades: Iterable[Trade]) -> _Day:
-    """Начало дня: сделки по дате заключения и расчёты по сделкам."""
+def _open(previous: State, trades: Iterable[Trade], repos: Iterable[Repo] = ()) -> _Day:
+    """Начало дня: сделки по дате заключения, расчёты по сделкам, части РЕПО и взносы."""
     day = previous.day + timedelta(days=1)
     todays = list(trades)
     work = _Day(
@@ -468,17 +601,59 @@ def _open(previous: State, trades: Iterable[Trade]) -> _Day:
         fees_due={kind: dict(months) for kind, months in previous.fees_due.items()},
         traded=[t for t in todays if t.trade_date == day],
         unsettled=[t for t in todays if t.trade_date <= day < t.settle_date],
+        repos=[r for r in repos if r.trade_date <= day <= r.second_date],
     )
     _trade_day(work.holdings, work.traded, work.realized)
     work.cash = _settle(
         work.holdings, [t for t in todays if t.settle_date == day], work.cash, work.movements
     )
+    for repo in _ordered_repos(work.repos):
+        _repo_day(work, repo)
     return work
+
+
+def _ordered_repos(repos: Iterable[Repo]) -> list[Repo]:
+    return sorted(repos, key=lambda r: (r.trade_at, str(r.id)))
+
+
+def _repo_day(work: _Day, repo: Repo) -> None:
+    """Части РЕПО и взносы дня: деньги и бумаги на счёте депо. Позиция и лоты не меняются."""
+    day = work.day
+    legs: list[tuple[MovementKind, Decimal, int, UUID | None]] = []
+    if repo.first_date == day:
+        legs.append((MovementKind.REPO_FIRST, repo.first_cash, repo.first_bonds, None))
+        if repo.fee:
+            legs.append((MovementKind.FEE, -repo.fee, 0, None))
+    legs += [
+        (MovementKind.REPO_CONTRIBUTION, c.cash, c.quantity, c.id)
+        for c in repo.active()
+        if c.day == day
+    ]
+    if repo.second_date == day:
+        returned = -repo.bonds(day - timedelta(days=1))
+        legs.append((MovementKind.REPO_SECOND, repo.second_cash, returned, None))
+    for kind, cash, quantity, operation_id in legs:
+        work.cash += cash
+        if quantity and repo.instrument_id is not None:
+            # Бумаги РЕПО всегда с видом — его берёт сделка.
+            current = work.holdings.get(repo.instrument_id) or Holding(
+                repo.instrument_id, cast(InstrumentKind, repo.kind)
+            )
+            work.holdings[repo.instrument_id] = replace(
+                current, settle_quantity=current.settle_quantity + quantity
+            )
+        work.movements.append(
+            Movement(kind, repo.instrument_id, repo.id, quantity, cash, operation_id)
+        )
 
 
 def _close(work: _Day, terms_on: TermsOn, marks_on: MarksOn | None) -> State:
     """Конец дня: право на выплаты, выплаты, амортизация и погашение, оценка."""
-    pending = [*work.pending, *_record(work.holdings, work.day, terms_on)]
+    pending = [
+        *work.pending,
+        *_record(work.holdings, work.day, terms_on),
+        *_record_repos(work.repos, work.day, terms_on),
+    ]
     pending, received = _payments(pending, work.day, terms_on, work.movements)
     _amortize(work.holdings, work.day, terms_on, work.realized)
     state = State(
@@ -495,8 +670,43 @@ def _close(work: _Day, terms_on: TermsOn, marks_on: MarksOn | None) -> State:
     )
     if marks_on is None:
         return state
+    repos = _repo_positions(work.repos, work.day)
+    state = replace(state, repos=repos)
     valuations, result = _appraise(work, state, terms_on, marks_on)
     return replace(state, valuations=valuations, result=result)
+
+
+def _repo_positions(repos: Iterable[Repo], day: date) -> tuple[RepoPosition, ...]:
+    """Сделки РЕПО между частями на конец дня."""
+    return tuple(
+        RepoPosition(
+            id=r.id,
+            instrument_id=r.instrument_id,
+            direct=r.direct,
+            quantity=abs(r.bonds(day)),
+            principal=abs(r.net_cash(day)),
+            accrued=abs(r.accrued(day)),
+            first_date=r.first_date,
+            second_date=r.second_date,
+            second_amount=r.second_amount,
+        )
+        for r in _ordered_repos(repos)
+        if r.first_date <= day < r.second_date
+    )
+
+
+def _record_repos(repos: Iterable[Repo], day: date, terms_on: TermsOn) -> list[Entitlement]:
+    """Передача дохода: бумаги в РЕПО на конец даты фиксации. Свои бумаги, отданные
+    в прямое РЕПО, — доход фонду; чужие, полученные в обратное, — доход НКЦ."""
+    return [
+        Entitlement(repo.instrument_id, p.pay_date, day, -repo.bonds(day), repo.id)
+        for repo in _ordered_repos(repos)
+        if repo.instrument_id is not None
+        and repo.first_date <= day < repo.second_date
+        and repo.bonds(day)
+        for p in terms_on(repo.instrument_id, day).payments
+        if p.record_date == day
+    ]
 
 
 def _unit(kind: InstrumentKind, price: Decimal, face: Decimal | None) -> Decimal:
@@ -551,9 +761,13 @@ def _appraise(
             valuations[instrument_id] = valuation
 
     receivable = sum((t.amount for t in work.unsettled if t.side is Side.SELL), ZERO)
-    payable = sum((t.amount for t in work.unsettled if t.side is Side.BUY), ZERO) + sum(
-        (t.fee for t in work.unsettled), ZERO
+    payable = (
+        sum((t.amount for t in work.unsettled if t.side is Side.BUY), ZERO)
+        + sum((t.fee for t in work.unsettled), ZERO)
+        # Комиссия РЕПО — расход в дату сделки, деньги — в первой части (решение 105).
+        + sum((r.fee for r in work.repos if r.trade_date <= work.day < r.first_date), ZERO)
     )
+    yesterday = work.day - timedelta(days=1)
     values = list(valuations.values())
     result = DayResult(
         value=state.cash
@@ -563,14 +777,17 @@ def _appraise(
         + state.claims
         - state.obligations
         - state.expenses
-        - state.fees_owed,
+        - state.fees_owed
+        + state.repo_value,
         flows=work.flows + moved_in,
         revaluation=sum((v.revaluation for v in values), ZERO),
         realized=sum((v.realized for v in values), ZERO),
         coupon=sum((v.coupon for v in values), ZERO),
-        fees=sum((v.fees for v in values), ZERO),
+        fees=sum((v.fees for v in values), ZERO)
+        - sum((r.fee for r in work.repos if r.trade_date == work.day), ZERO),
         expenses=ZERO - work.expensed,
         correction=ZERO - work.charged,
+        repo=sum((r.accrued(work.day) - r.accrued(yesterday) for r in work.repos), ZERO),
         receivable=receivable,
         payable=payable,
         flags=tuple(sorted({f for v in values for f in v.flags})),
@@ -1019,7 +1236,13 @@ def _payments(
         if paid is None:
             still.append(entitlement)
             movements.append(
-                Movement(MovementKind.PAYMENT_UNKNOWN, entitlement.instrument_id, None, 0, ZERO)
+                Movement(
+                    MovementKind.PAYMENT_UNKNOWN,
+                    entitlement.instrument_id,
+                    entitlement.repo_id,
+                    0,
+                    ZERO,
+                )
             )
             continue
         received += sum((m.cash for m in paid), ZERO)
@@ -1127,12 +1350,15 @@ def _pay(entitlement: Entitlement, payment: Payment) -> list[Movement] | None:
         return None
     movements: list[Movement] = []
     quantity = entitlement.quantity
+    # Передача дохода по РЕПО — те же выплаты со ссылкой на сделку: бумаги на счёте
+    # она не двигает, их возвращает вторая часть.
+    repo = entitlement.repo_id
     if payment.coupon is not None:
         movements.append(
             Movement(
                 MovementKind.COUPON,
                 entitlement.instrument_id,
-                None,
+                repo,
                 0,
                 _kopecks(quantity * payment.coupon),
             )
@@ -1143,8 +1369,8 @@ def _pay(entitlement: Entitlement, payment: Payment) -> list[Movement] | None:
             Movement(
                 kind,
                 entitlement.instrument_id,
-                None,
-                -quantity if payment.final else 0,
+                repo,
+                -quantity if payment.final and repo is None else 0,
                 _kopecks(quantity * payment.principal),
             )
         )
@@ -1184,6 +1410,7 @@ def to_json(state: State) -> dict[str, Any]:
                 "pay_date": e.pay_date.isoformat(),
                 "record_date": e.record_date.isoformat(),
                 "quantity": e.quantity,
+                "repo_id": None if e.repo_id is None else str(e.repo_id),
             }
             for e in state.pending
         ],
@@ -1227,6 +1454,20 @@ def to_json(state: State) -> dict[str, Any]:
             for kind, months in state.fees_due.items()
         },
         "fees_today": {kind: str(amount) for kind, amount in state.fees_today.items()},
+        "repos": [
+            {
+                "id": str(r.id),
+                "instrument_id": None if r.instrument_id is None else str(r.instrument_id),
+                "direct": r.direct,
+                "quantity": r.quantity,
+                "principal": str(r.principal),
+                "accrued": str(r.accrued),
+                "first_date": r.first_date.isoformat(),
+                "second_date": r.second_date.isoformat(),
+                "second_amount": str(r.second_amount),
+            }
+            for r in state.repos
+        ],
     }
 
 
@@ -1241,6 +1482,7 @@ def _result_json(result: DayResult) -> dict[str, Any]:
         "expenses": str(result.expenses),
         "charges": str(result.charges),
         "correction": str(result.correction),
+        "repo": str(result.repo),
         "receivable": str(result.receivable),
         "payable": str(result.payable),
         "flags": [f.value for f in result.flags],
@@ -1278,6 +1520,7 @@ def from_json(data: Mapping[str, Any]) -> State:
                 pay_date=date.fromisoformat(e["pay_date"]),
                 record_date=date.fromisoformat(e["record_date"]),
                 quantity=e["quantity"],
+                repo_id=_uuid(e.get("repo_id")),
             )
             for e in data["pending"]
         ),
@@ -1321,6 +1564,20 @@ def from_json(data: Mapping[str, Any]) -> State:
             for kind, months in data.get("fees_due", {}).items()
         },
         fees_today={kind: Decimal(a) for kind, a in data.get("fees_today", {}).items()},
+        repos=tuple(
+            RepoPosition(
+                id=UUID(r["id"]),
+                instrument_id=_uuid(r["instrument_id"]),
+                direct=r["direct"],
+                quantity=r["quantity"],
+                principal=Decimal(r["principal"]),
+                accrued=Decimal(r["accrued"]),
+                first_date=date.fromisoformat(r["first_date"]),
+                second_date=date.fromisoformat(r["second_date"]),
+                second_amount=Decimal(r["second_amount"]),
+            )
+            for r in data.get("repos", [])
+        ),
     )
 
 
@@ -1337,6 +1594,7 @@ def _result(data: Mapping[str, Any] | None) -> DayResult | None:
         expenses=Decimal(data["expenses"]),
         charges=Decimal(data.get("charges", "0")),
         correction=Decimal(data.get("correction", "0")),
+        repo=Decimal(data.get("repo", "0")),
         receivable=Decimal(data["receivable"]),
         payable=Decimal(data["payable"]),
         flags=tuple(Flag(f) for f in data["flags"]),

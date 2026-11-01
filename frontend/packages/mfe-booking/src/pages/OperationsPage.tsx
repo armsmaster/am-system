@@ -119,6 +119,7 @@ function OperationRow({
     OPERATION_LABELS[o.kind],
     o.expense_kind && EXPENSE_LABELS[o.expense_kind],
     o.fee_kind && `${FEE_LABELS[o.fee_kind]} по ${formatDate(o.period_end)}`,
+    o.direction && (o.direction === 'in' ? 'НКЦ — фонду' : 'фонд — НКЦ'),
     o.secid,
   ].filter(Boolean);
   const settlement = !isUnits

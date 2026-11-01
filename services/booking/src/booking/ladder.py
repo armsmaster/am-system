@@ -27,6 +27,7 @@ from booking.roll import (
     Movement,
     MovementKind,
     Operation,
+    Repo,
     State,
     TermsOn,
     Trade,
@@ -66,11 +67,14 @@ def horizon(
     trades: Mapping[UUID, Sequence[Trade]],
     operations: Sequence[Operation],
     exceptions: Mapping[date, bool],
+    repos: Mapping[UUID, Sequence[Repo]] | None = None,
 ) -> date:
     """До последнего известного будущего расчёта, но не меньше 10 торговых дней."""
-    known = [t.settle_date for portfolio in trades.values() for t in portfolio] + [
-        o.planned for o in operations if o.settled is None and o.planned is not None
-    ]
+    known = (
+        [t.settle_date for portfolio in trades.values() for t in portfolio]
+        + [o.planned for o in operations if o.settled is None and o.planned is not None]
+        + [r.second_date for portfolio in (repos or {}).values() for r in portfolio]
+    )
     return max([add_trading_days(today, HORIZON_TRADING_DAYS, exceptions), *known])
 
 
@@ -84,6 +88,7 @@ def project(
     operations: Sequence[Operation],
     terms_on: TermsOn,
     exceptions: Mapping[date, bool],
+    repos: Mapping[UUID, Sequence[Repo]] | None = None,
 ) -> list[LadderDay]:
     """Дни лестницы с сегодняшнего: торговые и те, где есть движения по счёту."""
     planned = [
@@ -92,7 +97,7 @@ def project(
         else o
         for o in operations
     ]
-    till = horizon(today, trades, planned, exceptions)
+    till = horizon(today, trades, planned, exceptions, repos)
     days = roll_fund_days(
         previous,
         first_day,
@@ -101,6 +106,7 @@ def project(
         operations=planned,
         terms_on=terms_on,
         projected=True,
+        repos=repos,
     )
     instruments: set[UUID] = set()
     for states in days:
@@ -169,6 +175,7 @@ async def ladder(
     latest = max(
         [today]
         + [t.settle_date for portfolio in inputs.trades.values() for t in portfolio]
+        + [r.second_date for portfolio in inputs.repos.values() for r in portfolio]
         + [o.planned for o in inputs.operations if o.planned is not None]
     )
     book, exceptions = await terms_book(refdata, inputs, latest)
@@ -181,6 +188,7 @@ async def ladder(
         operations=inputs.operations,
         terms_on=book,
         exceptions=exceptions,
+        repos=inputs.repos,
     )
     instruments = {i for d in days for i in d.securities} | {
         m.instrument_id for d in days for _, m in d.movements if m.instrument_id is not None

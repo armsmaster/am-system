@@ -12,9 +12,9 @@ describe('ResultsPage', () => {
 
     const days = within(await screen.findByRole('table', { name: 'Результат по дням' })).getAllByRole('row');
     expect(api.results).toHaveBeenCalledWith('p-fund', '2026-11-27', '2026-11-30');
-    expect(days[1]).toHaveTextContent('27.11.2026100 025 000,000,0025 000,000,000,000,000,000,000,0025 000,00');
+    expect(days[1]).toHaveTextContent('27.11.2026100 025 000,000,0025 000,000,000,000,000,000,000,000,0025 000,00');
     // Итого: стоимость — на конец периода, части и результат — суммы по дням.
-    expect(days[3]).toHaveTextContent('Итого100 066 000,000,0036 000,0020 000,0010 000,000,000,000,000,0066 000,00');
+    expect(days[3]).toHaveTextContent('Итого100 066 000,000,0036 000,0020 000,0010 000,000,000,000,000,000,0066 000,00');
     const bonds = within(screen.getByRole('table', { name: 'Результат по бумагам' })).getAllByRole('row');
     expect(bonds[1]).toHaveTextContent('SU26238RMFS4 — ОФЗ 2623836 000,0020 000,0010 000,000,0066 000,00');
     expect(screen.getByText('Портфели: OPIF1-BONDS, OPIF1-TREASURY.')).toBeInTheDocument();

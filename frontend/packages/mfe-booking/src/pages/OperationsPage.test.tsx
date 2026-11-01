@@ -129,10 +129,11 @@ describe('OperationsPage', () => {
       'выплата вознаграждения',
       async (form: HTMLElement, user: ReturnType<typeof userEvent.setup>) => {
         await user.selectOptions(within(form).getByLabelText('Вид комиссии'), 'specdep');
-        fireEvent.change(within(form).getByLabelText('Оплачено по'), { target: { value: '2026-10-31' } });
+        // Не прошлый месяц: подсказку меняют на квартал, а не оставляют как есть.
+        fireEvent.change(within(form).getByLabelText('Оплачено по'), { target: { value: '2026-09-30' } });
         await user.type(within(form).getByLabelText('Сумма, ₽'), '20550');
       },
-      { kind: 'fee_payment', fund_id: 'p-fund', fee_kind: 'specdep', period_end: '2026-10-31', amount: '20550' },
+      { kind: 'fee_payment', fund_id: 'p-fund', fee_kind: 'specdep', period_end: '2026-09-30', amount: '20550' },
     ],
     [
       'перевод денег',

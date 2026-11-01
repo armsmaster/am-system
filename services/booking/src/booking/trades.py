@@ -1,6 +1,10 @@
 """Сделки: ввод, правка, отмена, подтверждение (design/05, «Сделка»).
 
 Сделка не меняется и не удаляется: каждое изменение — новая версия.
+Сделка РЕПО с НКЦ (design/07) — та же сделка с видом ``repo``: сторона —
+первой части (продажа — прямое РЕПО, покупка — обратное), дата расчётов
+и сумма — первой части; ставка, дата и сумма второй части — по отчёту
+брокера (решение 110).
 Изменение, отметка «фонд пересчитать с даты» и событие для журнала
 пишутся одной транзакцией. Запросы к соседним сервисам — до транзакции:
 держать её открытой во время сетевого запроса нельзя.
@@ -32,7 +36,7 @@ from booking.clients import (
 )
 from booking.db import outbox
 from booking.repository import CANCELLED, Repository
-from booking.roll import HUNDRED, ZERO, InstrumentKind, Side, trade_amount
+from booking.roll import HUNDRED, KOPECK, ZERO, InstrumentKind, Side, trade_amount
 from booking.terms import InstrumentHistory
 
 SERVICE = "booking"
@@ -54,7 +58,18 @@ TRACKED: Sequence[str] = (
     "venue",
     "counterparty",
     "external_id",
+    "kind",
+    "amount",
+    "repo_rate",
+    "second_date",
+    "second_amount",
 )
+
+OUTRIGHT, REPO = "outright", "repo"
+KSU = "ksu"  # РЕПО с КСУ: бумаги нет, только деньги (решение 117)
+YEAR = Decimal(365)
+# Сумма второй части расходится с расчётной больше чем на рубль — скорее всего, опечатка.
+SECOND_AMOUNT_TOLERANCE = Decimal(1)
 
 
 class RuleViolationError(Exception):
@@ -70,7 +85,7 @@ class RuleViolationError(Exception):
 @dataclass(frozen=True, slots=True)
 class TradeInput:
     portfolio_id: UUID
-    instrument_id: UUID
+    instrument_id: UUID | None  # None — РЕПО с КСУ
     side: Side
     quantity: int
     price: Decimal
@@ -83,6 +98,11 @@ class TradeInput:
     counterparty: str | None = None
     external_id: str | None = None
     comment: str | None = None
+    kind: str = OUTRIGHT
+    amount: Decimal | None = None  # РЕПО с КСУ: сумма первой части
+    repo_rate: Decimal | None = None  # РЕПО: % годовых
+    second_date: date | None = None
+    second_amount: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -327,27 +347,110 @@ class TradeDesk:
             raise RuleViolationError("future_trade", "Дата сделки позже сегодняшней.")
         if entry.settle_date < trade_date:
             raise RuleViolationError("settle_before_trade", "Дата расчётов раньше даты заключения.")
-        history = await self._history(entry.instrument_id)
-        if history is None:
-            raise RuleViolationError("unknown_instrument", "Бумаги нет в справочнике.")
         exceptions = await self._refdata.calendar_around(entry.settle_date)
         if not is_trading_day(entry.settle_date, exceptions):
             raise RuleViolationError(
                 "settle_not_trading_day",
                 f"{entry.settle_date:%d.%m.%Y} — не торговый день: расчётов нет.",
             )
+        repo = await self._repo_fields(entry) if entry.kind == REPO else {}
+        if entry.instrument_id is None:
+            instrument = self._ksu(entry)
+        else:
+            instrument = await self._security(entry, entry.instrument_id)
+        values = {
+            # У physical ровно один фонд — это проверяет сервис портфелей.
+            "fund_id": cast(UUID, portfolio.fund_id),
+            "portfolio_id": entry.portfolio_id,
+            **instrument,
+            "side": entry.side.value,
+            "fee": entry.fee,
+            "trade_at": entry.trade_at,
+            "trade_date": trade_date,
+            "settle_date": entry.settle_date,
+            "venue": entry.venue,
+            "counterparty": entry.counterparty,
+            "external_id": entry.external_id,
+            "kind": entry.kind,
+            "repo_rate": repo.get("repo_rate"),
+            "second_date": repo.get("second_date"),
+            "second_amount": repo.get("second_amount"),
+        }
+        warnings = self._second_amount_check(values) if entry.kind == REPO else []
+        return values, warnings + await self._warnings(entry, trade_date, trade_id)
+
+    async def _repo_fields(self, entry: TradeInput) -> dict[str, Any]:
+        """РЕПО — только биржевое с НКЦ (решение 109); вторая часть — по отчёту брокера."""
+        if entry.venue != "exchange":
+            raise RuleViolationError(
+                "repo_not_exchange", "РЕПО — только биржевые сделки с НКЦ (решение 109)."
+            )
+        if entry.repo_rate is None or entry.second_date is None or entry.second_amount is None:
+            raise RuleViolationError(
+                "repo_terms_required",
+                "У сделки РЕПО нужны ставка, дата и сумма второй части.",
+            )
+        if entry.second_date <= entry.settle_date:
+            raise RuleViolationError(
+                "second_before_first", "Вторая часть РЕПО должна быть позже первой."
+            )
+        exceptions = await self._refdata.calendar_around(entry.second_date)
+        if not is_trading_day(entry.second_date, exceptions):
+            raise RuleViolationError(
+                "second_not_trading_day",
+                f"{entry.second_date:%d.%m.%Y} — не торговый день: второй части не будет.",
+            )
+        return {
+            "repo_rate": entry.repo_rate,
+            "second_date": entry.second_date,
+            "second_amount": entry.second_amount,
+        }
+
+    def _ksu(self, entry: TradeInput) -> dict[str, Any]:
+        """РЕПО с КСУ: только деньги — сумма первой части из сделки."""
+        if entry.kind != REPO:
+            raise RuleViolationError("instrument_required", "У сделки нужна бумага.")
+        if entry.amount is None:
+            raise RuleViolationError(
+                "repo_amount_required", "У РЕПО с КСУ нужна сумма первой части."
+            )
+        return {
+            "instrument_id": None,
+            "instrument_kind": KSU,
+            "secid": "КСУ",
+            "short_name": "КСУ",
+            "quantity": 0,
+            "price": ZERO,
+            "face_value": None,
+            "accrued": None,
+            "amount": entry.amount,
+        }
+
+    async def _security(self, entry: TradeInput, instrument_id: UUID) -> dict[str, Any]:
+        """Бумага сделки: справочник, номинал и НКД на дату расчётов, сумма (решение 86)."""
+        if entry.quantity <= 0 or entry.price <= 0:
+            raise RuleViolationError(
+                "quantity_required", "У сделки с бумагой нужны количество и цена."
+            )
+        history = await self._history(instrument_id)
+        if history is None:
+            raise RuleViolationError("unknown_instrument", "Бумаги нет в справочнике.")
         version = history.version_on(entry.settle_date)
         if version is None:
             raise RuleViolationError("not_issued", "На дату расчётов бумага ещё не выпущена.")
         maturity = version[1].get("maturity_date")
-        if maturity is not None and date.fromisoformat(maturity) < entry.settle_date:
+        last = entry.second_date if entry.kind == REPO and entry.second_date else entry.settle_date
+        if maturity is not None and date.fromisoformat(maturity) < last:
             raise RuleViolationError("matured", f"Бумага погашена {maturity}.")
-
         kind = InstrumentKind(history.kind)
+        if entry.kind == REPO and kind is not InstrumentKind.BOND:
+            raise RuleViolationError(
+                "repo_collateral", "РЕПО — с облигациями или с КСУ (решение 109)."
+            )
         face = accrued = None
         if kind is InstrumentKind.BOND:
             face = entry.face_value or await self._face_value(
-                entry.instrument_id, version, entry.settle_date
+                instrument_id, version, entry.settle_date
             )
             if face is None:
                 raise RuleViolationError(
@@ -356,43 +459,45 @@ class TradeDesk:
                 )
             accrued = entry.accrued
             if accrued is None:
-                accrued = await self._on_date(
-                    entry.instrument_id, "accrued-interest", entry.settle_date
-                )
+                accrued = await self._on_date(instrument_id, "accrued-interest", entry.settle_date)
             if accrued is None:
                 raise RuleViolationError(
                     "accrued_required",
                     "НКД на дату расчётов неизвестен — укажите его по подтверждению брокера.",
                 )
-        values = {
-            # У physical ровно один фонд — это проверяет сервис портфелей.
-            "fund_id": cast(UUID, portfolio.fund_id),
-            "portfolio_id": entry.portfolio_id,
-            "instrument_id": entry.instrument_id,
+        return {
+            "instrument_id": instrument_id,
             "instrument_kind": kind.value,
             "secid": history.secid,
             "short_name": history.short_name,
-            "side": entry.side.value,
             "quantity": entry.quantity,
             "price": entry.price,
             "face_value": face,
             "accrued": accrued,
             "amount": trade_amount(kind, entry.quantity, entry.price, face, accrued),
-            "fee": entry.fee,
-            "trade_at": entry.trade_at,
-            "trade_date": trade_date,
-            "settle_date": entry.settle_date,
-            "venue": entry.venue,
-            "counterparty": entry.counterparty,
-            "external_id": entry.external_id,
         }
-        return values, await self._warnings(entry, trade_date, trade_id)
+
+    @staticmethod
+    def _second_amount_check(values: Mapping[str, Any]) -> list[str]:
+        """Сумма второй части — из отчёта брокера; формула только ловит опечатку (решение 110)."""
+        term = (values["second_date"] - values["settle_date"]).days
+        expected = (values["amount"] * (1 + values["repo_rate"] / HUNDRED * term / YEAR)).quantize(
+            KOPECK
+        )
+        if abs(values["second_amount"] - expected) <= SECOND_AMOUNT_TOLERANCE:
+            return []
+        return [
+            f"Сумма второй части {values['second_amount']} ₽ отличается от расчётной "
+            f"{expected} ₽ по ставке {values['repo_rate']}% и сроку {term} дн. больше чем "
+            "на рубль — проверьте ставку, срок и сумму по отчёту брокера."
+        ]
 
     async def _warnings(
         self, entry: TradeInput, trade_date: date, trade_id: UUID | None
     ) -> list[str]:
-        """Продажа больше позиции — не запрет, а предупреждение (решение 89)."""
-        if entry.side is not Side.SELL:
+        """Продажа больше позиции — не запрет, а предупреждение (решение 89). Так же —
+        прямое РЕПО: отдать бумаги, которых нет, нельзя без дефицита к расчётам."""
+        if entry.side is not Side.SELL or entry.instrument_id is None:
             return []
         async with self._session.begin():
             rows = await self._repo.current(
@@ -401,15 +506,17 @@ class TradeDesk:
         position = sum(
             r.quantity if r.side == Side.BUY else -r.quantity
             for r in rows
-            if r.instrument_id == entry.instrument_id
+            if r.kind == OUTRIGHT
+            and r.instrument_id == entry.instrument_id
             and r.trade_date <= trade_date
             and r.trade_id != trade_id
         )
         if position >= entry.quantity:
             return []
+        what = "в прямое РЕПО отдаётся" if entry.kind == REPO else "продаётся"
         return [
             f"Продажа больше позиции: на {trade_date:%d.%m.%Y} в портфеле {position} шт., "
-            f"продаётся {entry.quantity}. Дефицит к расчётам покажет лестница."
+            f"{what} {entry.quantity}. Дефицит к расчётам покажет лестница."
         ]
 
     async def _face_value(
@@ -513,6 +620,10 @@ JOURNAL_FIELDS: Sequence[str] = (
     "trade_date",
     "settle_date",
     "secid",
+    "kind",
+    "repo_rate",
+    "second_date",
+    "second_amount",
 )
 
 

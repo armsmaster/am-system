@@ -419,3 +419,252 @@ async def test_today_nav_at_the_current_price(trader: Api, world: World) -> None
     last = nav_of(trader, "2026-12-03", "2026-12-03")["days"][-1]
     # Без вознаграждения: СЧА 03.12 — 100 095 400 ₽ и +12 000 ₽ от новой цены.
     assert (last["nav"], last["unit_price"]) == ("100107400.00", "1001.07")
+
+
+# --- РЕПО (design/07) --------------------------------------------------------------
+
+LQDT = UUID("00000000-0000-0000-0000-0000000001d7")
+BONDS_ACCOUNT = UUID(int=BONDS.int + 1)
+# Сделка А: обратное РЕПО с КСУ — казначейство размещает 30 млн на выходные.
+KSU_REPO = {
+    "kind": "repo",
+    "portfolio_id": str(TREASURY),
+    "side": "buy",
+    "trade_at": "2026-11-27T10:00:00+03:00",
+    "settle_date": "2026-11-27",
+    "amount": "30000000",
+    "repo_rate": "14.20",
+    "second_date": "2026-11-30",
+    "second_amount": "30035013.70",
+}
+# Сделка Б: прямое РЕПО — портфель облигаций отдаёт 10 000 ОФЗ на три дня.
+OFZ_REPO = {
+    "kind": "repo",
+    "portfolio_id": str(BONDS),
+    "instrument_id": str(OFZ),
+    "side": "sell",
+    "quantity": 10_000,
+    "price": "52.60",
+    "trade_at": "2026-11-30T11:05:00+03:00",
+    "settle_date": "2026-11-30",
+    "repo_rate": "14.50",
+    "second_date": "2026-12-03",
+    "second_amount": "5616786.01",
+}
+REPO_NAVS = [
+    "99995890.41",
+    "100016779.96",
+    "100024340.43",
+    "100031900.60",
+    "100080458.77",
+    "100067817.55",
+    "100103174.88",
+    "100090832.72",
+]
+
+
+def positions_of(api: Api, portfolio: UUID, day: str) -> dict[str, Any]:
+    found: dict[str, Any] = api.ok("GET", "/positions", portfolio_id=str(portfolio), date=day)
+    return found
+
+
+@pytest.mark.usefixtures("week")
+async def test_repo_week_from_the_methodology(trader: Api, ops: Api, resources: Resources) -> None:
+    management(ops)
+    placed = trader.ok("POST", "/trades", KSU_REPO)
+    assert (placed["kind"], placed["instrument_id"], placed["secid"], placed["amount"]) == (
+        "repo",
+        None,
+        "КСУ",
+        "30000000.00",
+    )
+    borrowed = trader.ok("POST", "/trades", OFZ_REPO)
+    assert (borrowed["amount"], borrowed["accrued"], borrowed["warnings"]) == (
+        "5610100.00",
+        "35.01",
+        [],
+    )
+    await recalc(resources)
+
+    found = nav_of(trader)
+    assert [d["nav"] for d in found["days"]] == REPO_NAVS
+    sunday, tuesday = found["days"][3], found["days"][5]
+    assert (sunday["repo_placed"], sunday["repo_borrowed"]) == ("30023342.47", "0")
+    assert (tuesday["repo_placed"], tuesday["repo_borrowed"]) == ("0", "5612328.67")
+    result = trader.ok(
+        "GET", "/results", portfolio_id=str(FUND), **{"from": "2026-11-26", "till": "2026-12-03"}
+    )
+    assert [Decimal(d["repo"]) for d in result["days"]] == list(
+        money("0", "0", "11671.23", "11671.24", "11671.23", "-2228.67", "-2228.67", "-2228.67")
+    )
+
+    (repo,) = positions_of(trader, FUND, "2026-12-01")["repos"]
+    assert (repo["portfolio_code"], repo["direct"], repo["secid"], repo["quantity"]) == (
+        "OPIF1-BONDS",
+        True,
+        "SU26238RMFS4",
+        10_000,
+    )
+    assert numbers(repo, "rate", "principal", "accrued", "value") == money(
+        "14.50", "5610100.00", "2228.67", "-5612328.67"
+    )
+    tuesday_bonds = positions_of(trader, BONDS, "2026-12-01")
+    (line,) = tuesday_bonds["lines"]
+    assert (line["trade_quantity"], line["settle_quantity"]) == (30_000, 20_000)
+    assert tuesday_bonds["result"]["repo"] == "-2228.67"
+
+    # Лестница счёта с 03.12: вторая часть сделки Б возвращает бумаги и забирает деньги.
+    ladder = trader.ok("GET", "/ladder", account_id=str(BONDS_ACCOUNT))
+    today = ladder["days"][0]
+    assert today["date"] == "2026-12-03"
+    second = [m for m in today["movements"] if m["kind"] == "repo_second"]
+    assert [(m["trade_id"], m["quantity"], m["cash"]) for m in second] == [
+        (borrowed["id"], 10_000, "-5616786.01")
+    ]
+    listed = trader.ok("GET", "/trades", portfolio_id=str(BONDS), date="2026-11-30")
+    assert [(t["kind"], t["second_date"]) for t in listed] == [
+        ("repo", "2026-12-03"),
+        ("outright", None),
+    ]
+
+
+@pytest.mark.usefixtures("week")
+async def test_money_contribution_changes_the_interest(
+    trader: Api, ops: Api, resources: Resources
+) -> None:
+    borrowed = trader.ok("POST", "/trades", OFZ_REPO)
+    paid = ops.ok(
+        "POST",
+        "/operations",
+        {
+            "kind": "repo_contribution",
+            "trade_id": borrowed["id"],
+            "op_date": "2026-12-02",
+            "direction": "out",
+            "amount": "20000",
+        },
+    )
+    assert (paid["kind"], paid["trade_id"], paid["direction"], paid["portfolio_code"]) == (
+        "repo_contribution",
+        borrowed["id"],
+        "out",
+        "OPIF1-BONDS",
+    )
+    ops.ok(
+        "POST",
+        f"/trades/{borrowed['id']}/versions",
+        OFZ_REPO | {"second_amount": "5596778.06", "comment": "Брокер пересчитал вторую часть"},
+    )
+    await recalc(resources)
+    result = trader.ok(
+        "GET", "/results", portfolio_id=str(BONDS), **{"from": "2026-12-01", "till": "2026-12-03"}
+    )
+    assert [d["repo"] for d in result["days"]] == ["-2228.67", "-2228.67", "-2220.72"]
+
+    # Отмена взноса пересчитывает фонд с первой части: проценты снова делятся поровну.
+    ops.ok("POST", f"/operations/{paid['id']}/cancel", {"comment": "Взнос не проходил"})
+    await recalc(resources)
+    (repo,) = positions_of(trader, BONDS, "2026-12-02")["repos"]
+    assert repo["principal"] == "5610100.00"
+
+
+@pytest.mark.usefixtures("week")
+def test_securities_contribution_and_its_checks(trader: Api, ops: Api) -> None:
+    borrowed = trader.ok("POST", "/trades", OFZ_REPO)
+    more = ops.ok(
+        "POST",
+        "/operations",
+        {
+            "kind": "repo_contribution",
+            "trade_id": borrowed["id"],
+            "op_date": "2026-12-01",
+            "direction": "out",
+            "quantity": 1_000,
+        },
+    )
+    assert (more["secid"], more["quantity"], more["amount"]) == ("SU26238RMFS4", 1_000, None)
+
+    placed = trader.ok("POST", "/trades", KSU_REPO)
+    plain = trader.ok("POST", "/trades", trade(trade_at="2026-11-27T12:00:00+03:00"))
+    cancelled = trader.ok("POST", "/trades", OFZ_REPO)
+    trader.ok("POST", f"/trades/{cancelled['id']}/cancel", {"comment": "Ошибка ввода"})
+
+    def refused(trade_id: str, **changes: Any) -> str:
+        body = {
+            "kind": "repo_contribution",
+            "trade_id": trade_id,
+            "op_date": "2026-12-01",
+            "direction": "in",
+            "amount": "100",
+        } | changes
+        response = ops.call("POST", "/operations", body)
+        assert response.status_code == 422, response.text
+        return str(response.json()["detail"]["code"])
+
+    assert refused(borrowed["id"], op_date="2026-12-03") == "contribution_outside_term"
+    assert refused(borrowed["id"], op_date="2026-11-29") == "contribution_outside_term"
+    assert refused(placed["id"], op_date="2026-11-27", amount=None, quantity=5) == (
+        "ksu_contribution"
+    )
+    assert refused(plain["id"]) == "repo_not_found"
+    unknown = {"kind": "repo_contribution", "trade_id": str(UUID(int=5)), "op_date": "2026-12-01"}
+    assert (
+        ops.call("POST", "/operations", unknown | {"direction": "in", "amount": "1"}).status_code
+        == 404
+    )
+    assert refused(cancelled["id"]) == "repo_cancelled"
+    both = ops.call(
+        "POST",
+        "/operations",
+        {
+            "kind": "repo_contribution",
+            "trade_id": borrowed["id"],
+            "op_date": "2026-12-01",
+            "direction": "in",
+            "amount": "100",
+            "quantity": 5,
+        },
+    )
+    assert both.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("changes", "code"),
+    [
+        ({"repo_rate": None}, "repo_terms_required"),
+        ({"second_date": "2026-11-30"}, "second_before_first"),
+        ({"second_date": "2026-11-29"}, "second_before_first"),
+        ({"second_date": "2026-11-28", "settle_date": "2026-11-27"}, "second_not_trading_day"),
+        ({"venue": "otc"}, "repo_not_exchange"),
+        ({"instrument_id": str(LQDT), "price": "1.5"}, "repo_collateral"),
+        (
+            {
+                "second_date": "2026-11-30",
+                "settle_date": "2026-11-27",
+                "instrument_id": None,
+                "quantity": 0,
+                "price": "0",
+            },
+            "repo_amount_required",
+        ),
+        (
+            {"kind": "outright", "instrument_id": None, "quantity": 0, "price": "0"},
+            "instrument_required",
+        ),
+    ],
+)
+def test_repo_entry_checks(trader: Api, changes: dict[str, Any], code: str) -> None:
+    body = OFZ_REPO | {"trade_at": "2026-11-27T11:05:00+03:00", "settle_date": "2026-11-30"}
+    response = trader.call("POST", "/trades", body | changes)
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == code
+
+
+def test_repo_warnings_and_a_security_without_quantity(trader: Api) -> None:
+    # Отдают в прямое РЕПО бумаги, которых нет, и ошибаются во второй части на 100 ₽.
+    found = trader.ok("POST", "/trades", OFZ_REPO | {"second_amount": "5616886.01"})
+    second, position = found["warnings"]
+    assert second.startswith("Сумма второй части 5616886.01 ₽ отличается от расчётной")
+    assert "в прямое РЕПО отдаётся 10000" in position
+    lacking = trader.call("POST", "/trades", OFZ_REPO | {"quantity": 0})
+    assert lacking.status_code == 422
