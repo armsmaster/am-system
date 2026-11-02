@@ -32,6 +32,7 @@ _ALGORITHMS = ["RS256"]
 class Role(StrEnum):
     TRADING = "trading"
     OPERATIONS = "operations"  # сопровождение
+    RISK = "risk"  # риск-менеджмент: рейтинги, классификаторы, лимиты
     ADMIN = "admin"
     PRICE_FEED = "price_feed"  # скрипт цен — служебная учётная запись, не человек
     TRADE_FEED = "trade_feed"  # скрипт сделок — служебная учётная запись, не человек

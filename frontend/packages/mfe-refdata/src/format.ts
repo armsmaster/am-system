@@ -7,6 +7,8 @@ import type {
   NominalIndexation,
   OfferKind,
   RateKind,
+  RatingAction,
+  Target,
   Version,
 } from './api';
 
@@ -44,6 +46,27 @@ export const SOURCE_LABELS: Readonly<Record<Version['source'], string>> = {
   manual: 'вручную',
 };
 
+/** К чему относится классификатор. */
+export const TARGET_LABELS: Readonly<Record<Target, string>> = {
+  instrument: 'для бумаг',
+  issuer: 'для эмитентов',
+};
+
+export const RATING_ACTION_LABELS: Readonly<Record<RatingAction, string>> = {
+  assigned: 'присвоен или изменён',
+  withdrawn: 'отозван',
+  unrated: 'рейтинга нет ни у одного агентства',
+};
+
+const ISS_TYPE_LABELS: Readonly<Record<string, string>> = {
+  ofz_bond: 'ОФЗ',
+  exchange_bond: 'биржевая облигация',
+  corporate_bond: 'корпоративная облигация',
+  subfederal_bond: 'региональная облигация',
+  municipal_bond: 'муниципальная облигация',
+  exchange_ppif: 'пай биржевого фонда',
+};
+
 /** Названия полей — те же, что в сервисе и в журнале. */
 export const FIELD_LABELS: Readonly<Record<Field, string>> = {
   name: 'Название',
@@ -70,6 +93,11 @@ const WEEKDAYS = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'] as con
 /** У паёв фондов купона нет. */
 export function couponKindLabel(kind: CouponKind | null): string {
   return kind ? COUPON_KIND_LABELS[kind] : NO_VALUE;
+}
+
+/** Тип бумаги ISS словами; незнакомый — кодом ISS. */
+export function issTypeLabel(type: string | null): string {
+  return type ? (ISS_TYPE_LABELS[type] ?? type) : NO_VALUE;
 }
 
 /** 2026-10-26 → 26.10.2026. Дату не переводим в Date: так она не сдвинется из-за часового пояса. */

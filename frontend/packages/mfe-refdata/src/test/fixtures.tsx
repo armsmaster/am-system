@@ -6,10 +6,17 @@ import { vi } from 'vitest';
 
 import type {
   CalendarDay,
+  Classifications,
+  Classifier,
   Instrument,
   InstrumentSummary,
+  Issuer,
+  IssuerSummary,
   Lookup,
   Params,
+  RatingRecord,
+  Ratings,
+  RatingScale,
   RefdataApi,
   Version,
 } from '../api';
@@ -105,6 +112,8 @@ export function instrument(
     current,
     versions: versions.map(({ params: _params, ...header }) => header),
     alerts: [],
+    issuer: { id: 'e-1', name: 'Министерство финансов Российской Федерации' },
+    iss_type: 'ofz_bond',
     ...fields,
   };
 }
@@ -122,6 +131,139 @@ export const DAYS: readonly CalendarDay[] = [
   { day: '2026-12-27', is_trading: true, comment: null },
 ];
 
+export const ISSUERS: readonly IssuerSummary[] = [
+  { id: 'e-1', iss_id: 1228, name: 'Министерство финансов Российской Федерации', inn: '7710168360', instruments: 2 },
+  { id: 'e-2', iss_id: 406, name: 'государственная корпорация развития «ВЭБ.РФ»', inn: null, instruments: 1 },
+];
+
+export const ISSUER: Issuer = {
+  id: 'e-1',
+  iss_id: 1228,
+  name: 'Министерство финансов Российской Федерации',
+  inn: '7710168360',
+  instruments: [SUMMARY, { ...SUMMARY, id: 'i-2', secid: 'LQDT', short_name: 'LQDT', kind: 'fund_share' }],
+};
+
+/** Две ступени общей шкалы у двух агентств — достаточно для формы. */
+export const SCALE: RatingScale = {
+  agencies: [
+    { code: 'acra', name: 'АКРА', ratings: ['AAA(RU)', 'AA+(RU)', 'AA-(RU)'] },
+    { code: 'expert_ra', name: 'Эксперт РА', ratings: ['ruAAA', 'ruAA+', 'ruAA-'] },
+  ],
+  grades: ['AAA', 'AA+', 'AA-'],
+};
+
+export function ratingRecord(id: string, fields: Partial<RatingRecord> = {}): RatingRecord {
+  return {
+    id,
+    action: 'assigned',
+    agency: 'acra',
+    agency_name: 'АКРА',
+    rating: 'AA+(RU)',
+    grade: 'AA+',
+    valid_from: '2026-06-01',
+    comment: null,
+    author: 'risk',
+    created_at: '2026-11-02T09:00:00Z',
+    cancelled_by: null,
+    cancelled_at: null,
+    cancel_comment: null,
+    ...fields,
+  };
+}
+
+/** Эмитент Г из методики шага 9: АКРА понизило 11.11, ошибочная запись НКР отменена. */
+export const RATINGS: Ratings = {
+  now: {
+    status: 'rated',
+    ratings: [{ agency: 'acra', agency_name: 'АКРА', rating: 'AA-(RU)', grade: 'AA-', since: '2026-11-11' }],
+  },
+  records: [
+    ratingRecord('r-1'),
+    ratingRecord('r-2', {
+      agency: 'nkr',
+      agency_name: 'НКР',
+      rating: 'A+.ru',
+      grade: 'A+',
+      valid_from: '2026-11-10',
+      cancelled_by: 'risk',
+      cancelled_at: '2026-11-10T12:00:00Z',
+      cancel_comment: 'Не тот эмитент',
+    }),
+    ratingRecord('r-3', { rating: 'AA-(RU)', grade: 'AA-', valid_from: '2026-11-11', comment: 'Пресс-релиз АКРА' }),
+  ],
+};
+
+export const SENIORITY: Classifier = {
+  id: 'c-1',
+  name: 'Очерёдность',
+  target: 'instrument',
+  description: 'п. 2 политики',
+  created_by: 'risk',
+  created_at: '2026-11-02T09:00:00Z',
+  values: [
+    { id: 'v-1', name: 'старший долг' },
+    { id: 'v-2', name: 'субординированная' },
+  ],
+};
+
+export const TRANCHE: Classifier = {
+  ...SENIORITY,
+  id: 'c-2',
+  name: 'Транш',
+  description: null,
+  values: [
+    { id: 'v-3', name: 'старший' },
+    { id: 'v-4', name: 'иной' },
+  ],
+};
+
+export const ISSUER_KIND: Classifier = {
+  ...SENIORITY,
+  id: 'c-3',
+  name: 'Тип эмитента',
+  target: 'issuer',
+  description: null,
+  values: [
+    { id: 'v-5', name: 'банк' },
+    { id: 'v-6', name: 'прочие' },
+  ],
+};
+
+export const CLASSIFICATIONS: Classifications = {
+  now: [{ classifier_id: 'c-1', classifier: 'Очерёдность', value_id: 'v-1', value: 'старший долг', since: null }],
+  records: [
+    {
+      id: 'k-1',
+      classifier_id: 'c-1',
+      classifier: 'Очерёдность',
+      value_id: 'v-1',
+      value: 'старший долг',
+      valid_from: null,
+      comment: null,
+      author: 'risk',
+      created_at: '2026-11-02T09:00:00Z',
+      cancelled_by: null,
+      cancelled_at: null,
+      cancel_comment: null,
+    },
+    {
+      id: 'k-2',
+      classifier_id: 'c-1',
+      classifier: 'Очерёдность',
+      value_id: 'v-2',
+      value: 'субординированная',
+      valid_from: '2026-11-11',
+      comment: 'По проспекту',
+      author: 'risk',
+      created_at: '2026-11-11T09:00:00Z',
+      cancelled_by: 'risk',
+      cancelled_at: '2026-11-11T10:00:00Z',
+      cancel_comment: 'Ошиблись выпуском',
+    },
+  ],
+};
+
 /** Подменный API: отвечает фиксированными данными, вызовы запоминает. */
 export function fakeApi() {
   const answer = <T,>(value: T) => vi.fn((..._args: unknown[]) => Promise.resolve(value));
@@ -137,6 +279,20 @@ export function fakeApi() {
     setDay: answer(null),
     clearDay: answer(null),
     addTradingDays: answer({ date: '2026-10-27' }),
+    issuers: answer<IssuerSummary[]>([...ISSUERS]),
+    issuer: answer(ISSUER),
+    ratingScale: answer(SCALE),
+    ratings: answer(RATINGS),
+    addRating: answer(RATINGS),
+    cancelRating: answer(RATINGS),
+    classifiers: answer<Classifier[]>([SENIORITY, TRANCHE, ISSUER_KIND]),
+    createClassifier: answer(SENIORITY),
+    updateClassifier: answer(SENIORITY),
+    addValue: answer(SENIORITY),
+    renameValue: answer(SENIORITY),
+    classifications: answer(CLASSIFICATIONS),
+    classify: answer(CLASSIFICATIONS),
+    cancelClassification: answer(CLASSIFICATIONS),
   } satisfies Record<keyof RefdataApi, unknown>;
 }
 

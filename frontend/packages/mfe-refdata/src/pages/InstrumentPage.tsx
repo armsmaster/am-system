@@ -1,21 +1,25 @@
 import { ErrorNote, LoadedView, useAction, useLoad } from '@am/ui';
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router';
 
 import type { Instrument, RefdataApi, VersionHeader } from '../api';
+import { ClassesPanel } from '../components/ClassesPanel';
 import { EditForm } from '../components/EditForm';
+import { RatingsPanel } from '../components/RatingsPanel';
 import { VersionDetails } from '../components/VersionDetails';
-import { FIELD_LABELS, formatDate, formatTime, KIND_LABELS, SOURCE_LABELS } from '../format';
+import { FIELD_LABELS, formatDate, formatTime, issTypeLabel, KIND_LABELS, SOURCE_LABELS } from '../format';
 
 interface Props {
   readonly api: RefdataApi;
   readonly id: string;
   readonly basePath: string;
   readonly canEdit: boolean;
+  /** Вести рейтинги и классификаторы: риск-менеджмент. */
+  readonly canRate: boolean;
 }
 
-/** Карточка бумаги: предупреждения, версии, параметры и графики, правка. */
-export function InstrumentPage({ api, id, basePath, canEdit }: Props) {
+/** Карточка бумаги: предупреждения, версии, параметры и графики, правка, рейтинги. */
+export function InstrumentPage({ api, id, basePath, canEdit, canRate }: Props) {
   const load = useCallback(() => api.instrument(id), [api, id]);
   const [state, reload] = useLoad(load);
 
@@ -31,7 +35,9 @@ export function InstrumentPage({ api, id, basePath, canEdit }: Props) {
             key={instrument.current.number}
             instrument={instrument}
             api={api}
+            basePath={basePath}
             canEdit={canEdit}
+            canRate={canRate}
             onChanged={reload}
           />
         )}
@@ -43,14 +49,19 @@ export function InstrumentPage({ api, id, basePath, canEdit }: Props) {
 function InstrumentCard({
   instrument,
   api,
+  basePath,
   canEdit,
+  canRate,
   onChanged,
 }: {
   readonly instrument: Instrument;
   readonly api: RefdataApi;
+  readonly basePath: string;
   readonly canEdit: boolean;
+  readonly canRate: boolean;
   readonly onChanged: () => void;
 }) {
+  const subject = useMemo(() => ({ instrument_id: instrument.id }), [instrument.id]);
   const [selected, setSelected] = useState(instrument.current.number);
   const loadVersion = useCallback(
     () =>
@@ -68,6 +79,15 @@ function InstrumentCard({
       </h2>
       <p className="muted">
         {[instrument.name, instrument.isin, KIND_LABELS[instrument.kind]].filter(Boolean).join(' · ')}
+      </p>
+      <p>
+        Эмитент:{' '}
+        {instrument.issuer ? (
+          <Link to={`${basePath}/issuers/${instrument.issuer.id}`}>{instrument.issuer.name}</Link>
+        ) : (
+          <span className="muted">появится после сверки с MOEX ISS</span>
+        )}{' '}
+        · тип в ISS: {issTypeLabel(instrument.iss_type)}
       </p>
       {instrument.alerts.length > 0 && (
         <ul className="plain alerts" aria-label="Предупреждения">
@@ -99,6 +119,12 @@ function InstrumentCard({
             </p>
           </section>
         )}
+      </div>
+
+      <div className="split">
+        {/* Рейтинг бывает у облигации, а не у пая. */}
+        {instrument.kind === 'bond' && <RatingsPanel api={api} subject={subject} canEdit={canRate} />}
+        <ClassesPanel api={api} subject={subject} target="instrument" canEdit={canRate} />
       </div>
 
       <LoadedView state={version}>

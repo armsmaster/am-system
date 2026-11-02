@@ -5,9 +5,18 @@ import {
   formatDate,
   formatDecimal,
   formatTime,
+  issTypeLabel,
   todayInMoscow,
   weekday,
 } from './format';
+
+describe('issTypeLabel', () => {
+  it('names the ISS type, keeps an unknown code and dashes no type', () => {
+    expect(issTypeLabel('ofz_bond')).toBe('ОФЗ');
+    expect(issTypeLabel('euro_bond')).toBe('euro_bond');
+    expect(issTypeLabel(null)).toBe('—');
+  });
+});
 
 describe('formatDate', () => {
   it('writes the date the Russian way', () => {

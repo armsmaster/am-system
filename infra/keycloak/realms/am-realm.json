@@ -30,6 +30,10 @@
         "description": "Сопровождение"
       },
       {
+        "name": "risk",
+        "description": "Риск-менеджмент: рейтинги, классификаторы, лимиты"
+      },
+      {
         "name": "admin",
         "description": "Администратор: видит всё и может всё"
       },
@@ -336,6 +340,24 @@
       ],
       "realmRoles": [
         "operations"
+      ]
+    },
+    {
+      "username": "risk",
+      "enabled": true,
+      "email": "risk@am.local",
+      "emailVerified": true,
+      "firstName": "Риск-менеджер",
+      "lastName": "Разработки",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "risk-dev",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "risk"
       ]
     },
     {

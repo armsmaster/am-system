@@ -100,10 +100,150 @@ export interface InstrumentSummary {
   readonly last_sync_error: string | null;
 }
 
+export interface IssuerRef {
+  readonly id: string;
+  readonly name: string;
+}
+
 export interface Instrument extends InstrumentSummary {
   readonly current: Version;
   readonly versions: readonly VersionHeader[];
   readonly alerts: readonly Alert[];
+  /** Эмитент по коду ISS; у бумаг, загруженных раньше, — после сверки с ISS. */
+  readonly issuer: IssuerRef | null;
+  /** Тип бумаги ISS: ofz_bond, exchange_bond… */
+  readonly iss_type: string | null;
+}
+
+export interface IssuerSummary {
+  readonly id: string;
+  readonly iss_id: number;
+  readonly name: string;
+  readonly inn: string | null;
+  /** Бумаг эмитента в справочнике. */
+  readonly instruments: number;
+}
+
+export interface Issuer extends Omit<IssuerSummary, 'instruments'> {
+  readonly instruments: readonly InstrumentSummary[];
+}
+
+/** Бумага или эмитент — ровно одно из двух. */
+export type Subject = { readonly instrument_id: string } | { readonly issuer_id: string };
+
+export type RatingAction = 'assigned' | 'withdrawn' | 'unrated';
+/** unknown — рейтинг ещё не вводили; unrated — рейтинга нет. */
+export type RatingStatus = 'rated' | 'unrated' | 'unknown';
+
+export interface AgencyRating {
+  readonly agency: string;
+  readonly agency_name: string;
+  /** Запись агентства: AA-(RU). */
+  readonly rating: string;
+  /** Ступень общей шкалы: AA-. */
+  readonly grade: string;
+  readonly since: IsoDate;
+}
+
+export interface RatingRecord {
+  readonly id: string;
+  readonly action: RatingAction;
+  readonly agency: string | null;
+  readonly agency_name: string | null;
+  readonly rating: string | null;
+  readonly grade: string | null;
+  readonly valid_from: IsoDate;
+  readonly comment: string | null;
+  readonly author: string;
+  readonly created_at: string;
+  readonly cancelled_by: string | null;
+  readonly cancelled_at: string | null;
+  readonly cancel_comment: string | null;
+}
+
+export interface Ratings {
+  readonly now: { readonly status: RatingStatus; readonly ratings: readonly AgencyRating[] };
+  readonly records: readonly RatingRecord[];
+}
+
+export interface Agency {
+  readonly code: string;
+  readonly name: string;
+  /** Записи агентства — от высшей ступени к низшей. */
+  readonly ratings: readonly string[];
+}
+
+export interface RatingScale {
+  readonly agencies: readonly Agency[];
+  readonly grades: readonly string[];
+}
+
+export interface NewRating {
+  readonly action: RatingAction;
+  readonly agency: string | null;
+  readonly rating: string | null;
+  readonly valid_from: IsoDate;
+  readonly comment: string | null;
+}
+
+export type Target = 'instrument' | 'issuer';
+
+export interface ClassValue {
+  readonly id: string;
+  readonly name: string;
+}
+
+export interface Classifier {
+  readonly id: string;
+  readonly name: string;
+  readonly target: Target;
+  readonly description: string | null;
+  readonly created_by: string;
+  readonly created_at: string;
+  readonly values: readonly ClassValue[];
+}
+
+export interface NewClassifier {
+  readonly name: string;
+  readonly target: Target;
+  readonly description: string | null;
+  readonly values: readonly string[];
+}
+
+export interface ClassificationRecord {
+  readonly id: string;
+  readonly classifier_id: string;
+  readonly classifier: string;
+  readonly value_id: string;
+  readonly value: string;
+  /** null — с начала обращения. */
+  readonly valid_from: IsoDate | null;
+  readonly comment: string | null;
+  readonly author: string;
+  readonly created_at: string;
+  readonly cancelled_by: string | null;
+  readonly cancelled_at: string | null;
+  readonly cancel_comment: string | null;
+}
+
+export interface CurrentClass {
+  readonly classifier_id: string;
+  readonly classifier: string;
+  readonly value_id: string;
+  readonly value: string;
+  readonly since: IsoDate | null;
+}
+
+export interface Classifications {
+  readonly now: readonly CurrentClass[];
+  readonly records: readonly ClassificationRecord[];
+}
+
+export interface NewClassification {
+  readonly classifier_id: string;
+  readonly value_id: string;
+  readonly valid_from: IsoDate | null;
+  readonly comment: string | null;
 }
 
 /** Что будет загружено из ISS. */
@@ -162,6 +302,32 @@ export function refdataApi(client: ApiClient) {
       client.get<{ date: IsoDate }>(
         `${BASE}/calendar/add-trading-days?${query({ date: day, days: String(days) })}`,
       ),
+
+    issuers: (text: string) =>
+      client.get<IssuerSummary[]>(`${BASE}/issuers${text ? `?${query({ query: text })}` : ''}`),
+    issuer: (id: string) => client.get<Issuer>(`${BASE}/issuers/${id}`),
+
+    ratingScale: () => client.get<RatingScale>(`${BASE}/ratings/scale`),
+    ratings: (subject: Subject) => client.get<Ratings>(`${BASE}/ratings?${query(subject)}`),
+    addRating: (subject: Subject, body: NewRating) =>
+      client.post<Ratings>(`${BASE}/ratings`, { ...subject, ...body }),
+    cancelRating: (id: string, comment: string) =>
+      client.post<Ratings>(`${BASE}/ratings/${id}/cancel`, { comment }),
+
+    classifiers: () => client.get<Classifier[]>(`${BASE}/classifiers`),
+    createClassifier: (body: NewClassifier) => client.post<Classifier>(`${BASE}/classifiers`, body),
+    updateClassifier: (id: string, body: { name: string; description: string | null }) =>
+      client.put<Classifier>(`${BASE}/classifiers/${id}`, body),
+    addValue: (id: string, name: string) =>
+      client.post<Classifier>(`${BASE}/classifiers/${id}/values`, { name }),
+    renameValue: (id: string, valueId: string, name: string) =>
+      client.put<Classifier>(`${BASE}/classifiers/${id}/values/${valueId}`, { name }),
+    classifications: (subject: Subject) =>
+      client.get<Classifications>(`${BASE}/classifications?${query(subject)}`),
+    classify: (subject: Subject, body: NewClassification) =>
+      client.post<Classifications>(`${BASE}/classifications`, { ...subject, ...body }),
+    cancelClassification: (id: string, comment: string) =>
+      client.post<Classifications>(`${BASE}/classifications/${id}/cancel`, { comment }),
   };
 }
 

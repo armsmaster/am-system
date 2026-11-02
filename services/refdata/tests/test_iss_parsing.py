@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -235,3 +236,32 @@ def test_broken_values_are_reported(field: str, value: Any, message: str) -> Non
 def test_missing_block_is_reported() -> None:
     with pytest.raises(IssError, match="no block"):
         rows({}, "securities")
+
+
+# --- эмитент и тип бумаги ----------------------------------------------------
+
+
+def test_issuer_and_iss_type() -> None:
+    ofz, veb, fund = security("SU26238RMFS4"), security("RU000A10F504"), security("LQDT")
+
+    assert ofz.issuer is not None
+    assert (ofz.issuer.iss_id, ofz.issuer.inn, ofz.iss_type) == (1228, "7710168360", "ofz_bond")
+    assert ofz.issuer.name == "Министерство финансов Российской Федерации"
+    assert veb.issuer is not None
+    assert (veb.issuer.iss_id, veb.iss_type) == (406, "exchange_bond")
+    # Эмитент пая — управляющая компания фонда.
+    assert fund.issuer is not None
+    assert (fund.issuer.name, fund.iss_type) == (
+        "Акционерное общество ВИМ Инвестиции",
+        "exchange_ppif",
+    )
+
+
+def test_issuer_without_a_name_is_not_an_issuer() -> None:
+    candidate = pick("SU26238RMFS4", parse_search(load("search_SU26238RMFS4")))
+    nameless = replace(candidate, issuer=None)
+
+    found = parse_security(nameless, load("desc_SU26238RMFS4"), load("bond_SU26238RMFS4"))
+
+    assert found.issuer is None
+    assert found.iss_type == "ofz_bond"

@@ -299,6 +299,75 @@ describe('changes', () => {
     expect(actionLabel(reopened.type)).toBe('Открыт заново день фонда');
   });
 
+  it('describes ratings of issuers and bonds', () => {
+    const added = event('rating.added', {
+      issuer: { name: 'ПАО «Газпром нефть»' },
+      before: null,
+      after: { action: 'assigned', agency: 'expert_ra', rating: 'ruAA-', valid_from: '2026-11-12' },
+    });
+    const cancelled = event('rating.cancelled', {
+      instrument: { secid: 'RU000A107HG1', isin: 'RU000A107HG1' },
+      before: { action: 'unrated', agency: null, rating: null, valid_from: '2026-06-01' },
+      after: null,
+    });
+
+    expect([actionLabel(added.type), objectLabel(added)]).toEqual(['Записан рейтинг', 'ПАО «Газпром нефть»']);
+    expect(changes(added)).toEqual([
+      { field: 'Действует с', before: '—', after: '12.11.2026' },
+      { field: 'Что произошло', before: '—', after: 'рейтинг присвоен или изменён' },
+      { field: 'Агентство', before: '—', after: 'Эксперт РА' },
+      { field: 'Рейтинг', before: '—', after: 'ruAA-' },
+    ]);
+    expect([actionLabel(cancelled.type), objectLabel(cancelled)]).toEqual([
+      'Отменена запись о рейтинге',
+      'RU000A107HG1',
+    ]);
+    expect(changes(cancelled)[1]).toEqual({
+      field: 'Что произошло',
+      before: 'рейтинга нет ни у одного агентства',
+      after: '—',
+    });
+  });
+
+  it('describes classifiers and their values', () => {
+    const created = event('classifier.created', {
+      classifier: { name: 'Тип эмитента' },
+      before: null,
+      after: { name: 'Тип эмитента', target: 'issuer', description: null, values: 'банк, прочие' },
+    });
+    const set = event('classification.set', {
+      issuer: { name: 'ВЭБ.РФ' },
+      classifier: { name: 'Тип эмитента' },
+      before: null,
+      after: { class_value: 'прочие', valid_from: null },
+    });
+    const onBond = event('classification.cancelled', {
+      instrument: { secid: 'RU000A10F504' },
+      classifier: { name: 'Очерёдность' },
+      before: { class_value: 'субординированная', valid_from: '2026-11-11' },
+      after: null,
+    });
+
+    expect([actionLabel(created.type), objectLabel(created)]).toEqual(['Заведён классификатор', 'Тип эмитента']);
+    expect(changes(created)).toEqual([
+      { field: 'Название', before: '—', after: 'Тип эмитента' },
+      { field: 'К чему относится', before: '—', after: 'эмитент' },
+      { field: 'Значения', before: '—', after: 'банк, прочие' },
+      { field: 'Описание', before: '—', after: '—' },
+    ]);
+    expect([actionLabel(set.type), objectLabel(set)]).toEqual(['Задано значение классификатора', 'ВЭБ.РФ: Тип эмитента']);
+    // Без даты — с начала обращения.
+    expect(changes(set)).toEqual([
+      { field: 'Действует с', before: '—', after: '—' },
+      { field: 'Значение', before: '—', after: 'прочие' },
+    ]);
+    expect([actionLabel(onBond.type), objectLabel(onBond)]).toEqual([
+      'Отменено значение классификатора',
+      'RU000A10F504: Очерёдность',
+    ]);
+    expect(actionLabel('classifier.value_renamed')).toBe('Переименовано значение классификатора');
+  });
+
   it('describes prices for past days', () => {
     const backfilled = event('prices.backfilled', {
       since: '2026-10-22',

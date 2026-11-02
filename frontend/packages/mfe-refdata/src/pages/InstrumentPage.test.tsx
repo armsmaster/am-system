@@ -28,15 +28,18 @@ const EDITED = instrument(
   },
 );
 
-function renderCard(api: FakeApi = fakeApi(), canEdit = false) {
+function renderCard(api: FakeApi = fakeApi(), canEdit = false, canRate = false) {
   render(
     <MemoryRouter initialEntries={['/refdata/instruments/i-1']}>
       <Routes>
         <Route
           path="/refdata/instruments/:id"
-          element={<InstrumentPage api={asApi(api)} id="i-1" basePath="/refdata" canEdit={canEdit} />}
+          element={
+            <InstrumentPage api={asApi(api)} id="i-1" basePath="/refdata" canEdit={canEdit} canRate={canRate} />
+          }
         />
         <Route path="/refdata" element={<p>Список бумаг</p>} />
+        <Route path="/refdata/issuers/:id" element={<p>Карточка эмитента</p>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -172,6 +175,40 @@ describe('InstrumentPage', () => {
     renderCard(api);
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Не найдено: instrument');
+  });
+
+  it('shows the issuer, ratings and classifiers of the bond', async () => {
+    const api = renderCard();
+
+    expect(await screen.findByText(/тип в ISS: ОФЗ/)).toBeInTheDocument();
+    expect(await screen.findByRole('table', { name: 'Действующие рейтинги' })).toBeInTheDocument();
+    expect(screen.getByRole('table', { name: 'Значения сейчас' })).toBeInTheDocument();
+    expect(api.ratings).toHaveBeenCalledWith({ instrument_id: 'i-1' });
+    // Вести рейтинги может только риск-менеджмент.
+    expect(screen.queryByRole('form', { name: 'Новая запись о рейтинге' })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('link', { name: 'Министерство финансов Российской Федерации' }));
+    expect(screen.getByText('Карточка эмитента')).toBeInTheDocument();
+  });
+
+  it('gives risk management the rating and classifier forms', async () => {
+    renderCard(fakeApi(), false, true);
+
+    expect(await screen.findByRole('form', { name: 'Новая запись о рейтинге' })).toBeInTheDocument();
+    expect(await screen.findByRole('form', { name: 'Новое значение классификатора' })).toBeInTheDocument();
+  });
+
+  it('says when the issuer is not known yet and has no ratings for a fund share', async () => {
+    const api = fakeApi();
+    api.instrument.mockResolvedValue(
+      instrument([version(1)], { kind: 'fund_share', issuer: null, iss_type: null }),
+    );
+    renderCard(api);
+
+    expect(await screen.findByText('появится после сверки с MOEX ISS')).toBeInTheDocument();
+    expect(screen.getByText(/тип в ISS: —/)).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Рейтинги' })).not.toBeInTheDocument();
+    expect(api.ratings).not.toHaveBeenCalled();
   });
 
   it('leads back to the list', async () => {

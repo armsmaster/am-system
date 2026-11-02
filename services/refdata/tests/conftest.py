@@ -30,6 +30,8 @@ class FakeIss:
         self.requests: list[str] = []
         # Правки ответов: (вид, код) → функция, меняющая JSON.
         self.patches: dict[tuple[str, str], Callable[[dict[str, Any]], None]] = {}
+        # Бумаги, у которых ISS не сообщает эмитента и тип.
+        self.without_issuer: set[str] = set()
 
     def transport(self) -> httpx2.MockTransport:
         return httpx2.MockTransport(self._handle)
@@ -41,6 +43,17 @@ class FakeIss:
             for row in payload["description"]["data"]:
                 if row[0] == field:
                     row[2] = value
+
+        self.patches[("desc", code)] = patch
+
+    def hide_issuer(self, code: str) -> None:
+        """ISS отвечает без эмитента и типа бумаги — в поиске и в описании."""
+        self.without_issuer.add(code)
+
+        def patch(payload: dict[str, Any]) -> None:
+            for row in payload["description"]["data"]:
+                if row[0] in {"EMITTER_ID", "TYPE"}:
+                    row[2] = None
 
         self.patches[("desc", code)] = patch
 
@@ -71,8 +84,11 @@ class FakeIss:
             columns = table["columns"]
             for row in table["data"]:
                 record = dict(zip(columns, row, strict=True))
+                if record["secid"] in self.without_issuer:
+                    for name in ("emitent_id", "emitent_title", "emitent_inn", "type"):
+                        record[name] = None
                 if wanted in record["secid"].upper() or wanted in (record["isin"] or "").upper():
-                    found[record["secid"]] = row
+                    found[record["secid"]] = [record[name] for name in columns]
         return httpx2.Response(
             200, json={"securities": {"columns": columns, "data": list(found.values())}}
         )

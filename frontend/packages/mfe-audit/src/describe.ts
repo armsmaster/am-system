@@ -35,6 +35,14 @@ const ACTIONS: Readonly<Record<string, string>> = {
   'discrepancy.accepted': 'Принято расхождение сверки',
   'day.closed': 'Закрыт день фонда',
   'day.reopened': 'Открыт заново день фонда',
+  'rating.added': 'Записан рейтинг',
+  'rating.cancelled': 'Отменена запись о рейтинге',
+  'classifier.created': 'Заведён классификатор',
+  'classifier.updated': 'Изменён классификатор',
+  'classifier.value_added': 'Добавлено значение классификатора',
+  'classifier.value_renamed': 'Переименовано значение классификатора',
+  'classification.set': 'Задано значение классификатора',
+  'classification.cancelled': 'Отменено значение классификатора',
 };
 
 const FIELDS: Readonly<Record<string, string>> = {
@@ -111,6 +119,13 @@ const FIELDS: Readonly<Record<string, string>> = {
   first_day: 'С дня',
   last_day: 'По день',
   closed_through: 'Фонд закрыт по',
+  action: 'Что произошло',
+  agency: 'Агентство',
+  rating: 'Рейтинг',
+  target: 'К чему относится',
+  values: 'Значения',
+  description: 'Описание',
+  class_value: 'Значение',
 };
 
 /** Значения перечислений — словами. */
@@ -152,6 +167,15 @@ const VALUES: Readonly<Record<string, string>> = {
   mismatched: 'расходится',
   not_in_system: 'нет в системе',
   not_in_statement: 'нет в выписке',
+  assigned: 'рейтинг присвоен или изменён',
+  withdrawn: 'рейтинг отозван',
+  unrated: 'рейтинга нет ни у одного агентства',
+  acra: 'АКРА',
+  expert_ra: 'Эксперт РА',
+  nkr: 'НКР',
+  nra: 'НРА',
+  instrument: 'бумага',
+  issuer: 'эмитент',
 };
 
 /** Порядок полей — как в FIELDS: база данных хранит ключи события в своём порядке. */
@@ -187,6 +211,8 @@ export function objectLabel(event: AuditEvent): string {
     user?: Ref;
     portfolio?: Ref;
     instrument?: Ref;
+    issuer?: { readonly name: string };
+    classifier?: { readonly name: string };
     trade?: { readonly secid: string; readonly portfolio: string | null };
     operation?: { readonly kind: string; readonly portfolio: string | null };
     instruments?: readonly { readonly secid: string }[];
@@ -199,6 +225,14 @@ export function objectLabel(event: AuditEvent): string {
   };
   if (data.trade) {
     return `${data.trade.portfolio ?? '—'}: ${data.trade.secid}`;
+  }
+  // Рейтинги и классификаторы: бумага или эмитент, у значения — ещё и классификатор.
+  const subject = data.instrument?.secid ?? data.issuer?.name;
+  if (data.classifier) {
+    return subject ? `${subject}: ${data.classifier.name}` : data.classifier.name;
+  }
+  if (data.issuer) {
+    return data.issuer.name;
   }
   if (data.fund) {
     return `${data.fund.code ?? ''}`;

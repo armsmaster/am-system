@@ -5,12 +5,13 @@
  * и берёт из неё токен для запросов к API.
  */
 
-export const ROLES = ['trading', 'operations', 'admin'] as const;
+export const ROLES = ['trading', 'operations', 'risk', 'admin'] as const;
 export type Role = (typeof ROLES)[number];
 
 export const ROLE_LABELS: Readonly<Record<Role, string>> = {
   trading: 'Трейдинг',
   operations: 'Сопровождение',
+  risk: 'Риск-менеджмент',
   admin: 'Администратор',
 };
 

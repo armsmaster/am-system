@@ -1,6 +1,6 @@
 # Основные команды разработки. Работают в Git Bash (Windows), Linux и macOS.
 
-.PHONY: up down reset logs install lint test test-unit check py-lint py-types py-test fe-lint fe-test fe-build blog blog-check
+.PHONY: up down reset logs install lint test test-unit check py-lint py-types py-test fe-lint fe-test fe-build blog blog-check keycloak-sync
 
 ## Локальное окружение
 up:          ## поднять всё окружение
@@ -50,6 +50,9 @@ blog:        ## пересобрать HTML после правки статей
 
 blog-check:  ## HTML совпадает с markdown (проверка в CI)
 	uv run python scripts/build_blog.py --check
+
+keycloak-sync:  ## что из realm не хватает работающему Keycloak; дописать — с --apply
+	uv run python scripts/keycloak_sync.py
 
 lint: py-lint fe-lint blog-check
 test: py-test fe-test

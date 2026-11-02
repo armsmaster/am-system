@@ -4,16 +4,25 @@ import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import RefdataApp from './App';
-import { instrument, session } from './test/fixtures';
+import { CLASSIFICATIONS, instrument, ISSUER, RATINGS, SCALE, SENIORITY, session } from './test/fixtures';
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-/** Ответы сервиса по пути запроса, как их видит браузер. */
+/** Ответы сервиса по началу пути запроса, как их видит браузер; остальное — пустой список. */
+const ANSWERS: readonly (readonly [string, unknown])[] = [
+  ['/api/refdata/instruments/', instrument()],
+  ['/api/refdata/issuers/', ISSUER],
+  ['/api/refdata/ratings/scale', SCALE],
+  ['/api/refdata/ratings?', RATINGS],
+  ['/api/refdata/classifiers', [SENIORITY]],
+  ['/api/refdata/classifications?', CLASSIFICATIONS],
+];
+
 function stubService() {
   const fetchMock = vi.fn((path: string) => {
-    const body = path.startsWith('/api/refdata/instruments/') ? instrument() : [];
+    const body = ANSWERS.find(([prefix]) => path.startsWith(prefix))?.[1] ?? [];
     return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
   });
   vi.stubGlobal('fetch', fetchMock);
@@ -65,6 +74,34 @@ describe('RefdataApp', () => {
     expect(await screen.findByRole('heading', { name: 'SU26238RMFS4 — ОФЗ 26238' })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith('/api/refdata/instruments/i-1', expect.anything());
     expect(screen.queryByRole('form', { name: 'Правка' }) !== null).toBe(canEdit);
+  });
+
+  it('switches to issuers and classifiers; risk management keeps classifiers', async () => {
+    const fetchMock = stubService();
+    renderInShell(['risk']);
+
+    await userEvent.click(screen.getByRole('link', { name: 'Эмитенты' }));
+    expect(await screen.findByText(/Эмитентов пока нет/)).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith('/api/refdata/issuers', expect.anything());
+
+    await userEvent.click(screen.getByRole('link', { name: 'Классификаторы' }));
+    expect(await screen.findByRole('form', { name: 'Новый классификатор' })).toBeInTheDocument();
+  });
+
+  it.each([
+    [['risk'] as const, true],
+    [['operations'] as const, false],
+  ])('opens the issuer card; ratings for %s: %s', async (roles, canRate) => {
+    stubService();
+    renderInShell([...roles], '/refdata/issuers/e-1');
+
+    expect(await screen.findByRole('heading', { name: 'Министерство финансов Российской Федерации' })).toBeInTheDocument();
+    expect(await screen.findByRole('table', { name: 'Действующие рейтинги' })).toBeInTheDocument();
+    if (canRate) {
+      expect(await screen.findByRole('form', { name: 'Новая запись о рейтинге' })).toBeInTheDocument();
+    } else {
+      expect(screen.queryByRole('form', { name: 'Новая запись о рейтинге' })).not.toBeInTheDocument();
+    }
   });
 
   it('shows loading from ISS only to those who may load', async () => {

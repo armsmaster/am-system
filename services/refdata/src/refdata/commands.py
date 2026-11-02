@@ -1,4 +1,5 @@
-"""Изменения справочника: загрузка бумаги, правка, синхронизация с ISS, календарь.
+"""Изменения справочника: загрузка бумаги, правка, синхронизация с ISS, календарь,
+рейтинги и классификаторы.
 
 Запрос к ISS — до транзакции: сеть бывает медленной, а держать открытой
 транзакцию во время сетевого запроса нельзя. Изменение и событие для журнала
@@ -19,9 +20,22 @@ from am_common.clock import moscow_now
 from am_common.db import Database
 from am_common.events import Actor, Event
 from am_common.outbox import Outbox
+from refdata import scale
+from refdata.attributes import (
+    ClassificationRecord,
+    ClassifierRecord,
+    RatingAction,
+    RatingRecord,
+    Subject,
+    Target,
+    ValueRecord,
+    classification_on,
+    ratings_on,
+)
 from refdata.db import outbox
 from refdata.domain import (
     FIELD_LABELS,
+    InstrumentKind,
     RuleViolationError,
     Version,
     apply_edit,
@@ -32,7 +46,7 @@ from refdata.domain import (
     merge_from_iss,
 )
 from refdata.iss import IssClient, IssError
-from refdata.repository import CalendarDay, InstrumentRecord, Repository
+from refdata.repository import CalendarDay, InstrumentRecord, NotFoundError, Repository
 
 SERVICE = "refdata"
 SYNC_AUTHOR = "moex-iss"
@@ -88,6 +102,7 @@ class Commands:
                 # Пока шёл запрос к ISS, ту же бумагу загрузил кто-то другой.
                 found = await self._repo.find_by_code(security.secid)
                 return Loaded(found.id if found else record.id, created=False)
+            await self._repo.link_issuer(record.id, security.issuer, security.iss_type)
             await self._repo.add_version(
                 record.id,
                 Version(
@@ -178,6 +193,8 @@ class Commands:
             await self._repo.set_sync_state(
                 instrument_id, synced_at=now, snapshot=from_iss, error=None
             )
+            # Бумагам, загруженным до эмитентов, эмитент приходит при сверке.
+            await self._repo.link_issuer(instrument_id, security.issuer, security.iss_type)
         return bool(changed)
 
     async def _save_version(
@@ -221,7 +238,322 @@ class Commands:
             await self._repo.clear_calendar_day(day)
             await self._emit_calendar("calendar.day_cleared", day, before, None)
 
+    # --- рейтинги ---------------------------------------------------------------
+
+    async def add_rating(
+        self,
+        subject: Subject,
+        action: RatingAction,
+        *,
+        agency: str | None,
+        rating: str | None,
+        valid_from: date,
+        comment: str | None,
+    ) -> RatingRecord:
+        """Рейтинг присвоен или изменён, отозван, или рейтинга нет ни у кого (design/09)."""
+        self._not_in_future(valid_from)
+        grade: str | None = None
+        if action is RatingAction.UNRATED:
+            agency = rating = None
+        else:
+            if agency is None:
+                raise RuleViolationError("agency_required", "Укажите агентство.")
+            scale.agency(agency)
+            if action is RatingAction.ASSIGNED:
+                if not rating:
+                    raise RuleViolationError("rating_required", "Укажите рейтинг.")
+                grade = scale.grade_of(agency, rating)
+                rating = scale.notation(agency, grade)
+            else:
+                rating = None
+        async with self._session.begin():
+            label, name = await self._subject(subject, lock=True, rated=True)
+            current = ratings_on(await self._repo.ratings(subject), valid_from)
+            active = {r.agency: r for r in current.ratings}
+            if action is RatingAction.WITHDRAWN and agency not in active:
+                raise RuleViolationError(
+                    "nothing_to_withdraw",
+                    f"На {valid_from:%d.%m.%Y} у {name} нет рейтинга "
+                    f"{scale.agency(agency or '').name} — отзывать нечего.",
+                )
+            if action is RatingAction.UNRATED and active:
+                listed = ", ".join(
+                    f"{scale.agency(r.agency).name} {r.rating}" for r in current.ratings
+                )
+                raise RuleViolationError(
+                    "rated",
+                    f"На {valid_from:%d.%m.%Y} у {name} действуют рейтинги: {listed}. "
+                    "Сначала отметьте их отзыв.",
+                )
+            record = RatingRecord(
+                id=uuid4(),
+                seq=0,
+                subject=subject,
+                action=action,
+                agency=agency,
+                rating=rating,
+                grade=grade,
+                valid_from=valid_from,
+                comment=comment,
+                author=self._actor.username,
+                created_at=self._clock(),
+                cancelled_by=None,
+                cancelled_at=None,
+                cancel_comment=None,
+            )
+            await self._repo.add_rating(record)
+            await self._emit_on(
+                "rating.added",
+                subject,
+                label,
+                {"before": None, "after": _rating_view(record)},
+                comment,
+            )
+        return record
+
+    async def cancel_rating(self, rating_id: UUID, comment: str) -> RatingRecord:
+        """Ошибочная запись: остаётся в истории, но больше не действует."""
+        async with self._session.begin():
+            record = await self._repo.get_rating(rating_id)
+            if record.cancelled_at is not None:
+                raise RuleViolationError("already_cancelled", "Запись уже отменена.")
+            label, _name = await self._subject(record.subject, lock=True)
+            await self._repo.cancel_rating(rating_id, self._actor.username, self._clock(), comment)
+            await self._emit_on(
+                "rating.cancelled",
+                record.subject,
+                label,
+                {"before": _rating_view(record), "after": None},
+                comment,
+            )
+        return record
+
+    # --- классификаторы ---------------------------------------------------------
+
+    async def create_classifier(
+        self, name: str, target: Target, description: str | None, values: Sequence[str]
+    ) -> UUID:
+        names = _distinct(values)
+        record = ClassifierRecord(
+            id=uuid4(),
+            name=name,
+            target=target,
+            description=description,
+            created_by=self._actor.username,
+            created_at=self._clock(),
+            values=tuple(
+                ValueRecord(uuid4(), value, position) for position, value in enumerate(names)
+            ),
+        )
+        async with self._session.begin():
+            await self._name_is_free(name)
+            await self._repo.add_classifier(record)
+            await self._emit_classifier(
+                "classifier.created",
+                record,
+                None,
+                {
+                    "name": name,
+                    "target": target.value,
+                    "description": description,
+                    "values": ", ".join(names),
+                },
+            )
+        return record.id
+
+    async def update_classifier(
+        self, classifier_id: UUID, name: str, description: str | None
+    ) -> None:
+        async with self._session.begin():
+            record = await self._repo.get_classifier(classifier_id, lock=True)
+            if (record.name, record.description) == (name, description):
+                raise RuleViolationError("no_changes", "Изменений нет.")
+            if name.lower() != record.name.lower():
+                await self._name_is_free(name)
+            await self._repo.update_classifier(classifier_id, name, description)
+            await self._emit_classifier(
+                "classifier.updated",
+                record,
+                {"name": record.name, "description": record.description},
+                {"name": name, "description": description},
+            )
+
+    async def add_value(self, classifier_id: UUID, name: str) -> None:
+        async with self._session.begin():
+            record = await self._repo.get_classifier(classifier_id, lock=True)
+            _value_is_free(record, name)
+            position = max((v.position for v in record.values), default=-1) + 1
+            await self._repo.add_value(classifier_id, ValueRecord(uuid4(), name, position))
+            await self._emit_classifier(
+                "classifier.value_added", record, None, {"class_value": name}
+            )
+
+    async def rename_value(self, classifier_id: UUID, value_id: UUID, name: str) -> None:
+        async with self._session.begin():
+            record = await self._repo.get_classifier(classifier_id, lock=True)
+            value = record.value(value_id)
+            if value is None:
+                raise NotFoundError("classifier value", value_id)
+            if value.name == name:
+                raise RuleViolationError("no_changes", "Изменений нет.")
+            if value.name.lower() != name.lower():
+                _value_is_free(record, name)
+            await self._repo.rename_value(value_id, name)
+            await self._emit_classifier(
+                "classifier.value_renamed",
+                record,
+                {"class_value": value.name},
+                {"class_value": name},
+            )
+
+    # --- значения классификаторов -----------------------------------------------
+
+    async def classify(
+        self,
+        subject: Subject,
+        classifier_id: UUID,
+        value_id: UUID,
+        *,
+        valid_from: date | None,
+        comment: str | None,
+    ) -> ClassificationRecord:
+        """Значение классификатора у бумаги или эмитента с даты; без даты — с начала."""
+        if valid_from is not None:
+            self._not_in_future(valid_from)
+        async with self._session.begin():
+            found = await self._repo.get_classifier(classifier_id)
+            if found.target is not subject.target:
+                kind = "эмитентов" if found.target is Target.ISSUER else "бумаг"
+                raise RuleViolationError(
+                    "wrong_target", f"Классификатор «{found.name}» — для {kind}."
+                )
+            value = found.value(value_id)
+            if value is None:
+                raise RuleViolationError(
+                    "unknown_value", f"У классификатора «{found.name}» нет такого значения."
+                )
+            label, _name = await self._subject(subject, lock=True)
+            records = await self._repo.classifications(subject)
+            before = classification_on(records, valid_from or date.min).get(classifier_id)
+            if before is not None and before.value_id == value_id:
+                raise RuleViolationError(
+                    "no_changes", f"«{found.name}» на эту дату уже «{value.name}»."
+                )
+            record = ClassificationRecord(
+                id=uuid4(),
+                seq=0,
+                classifier_id=classifier_id,
+                subject=subject,
+                value_id=value_id,
+                valid_from=valid_from,
+                comment=comment,
+                author=self._actor.username,
+                created_at=self._clock(),
+                cancelled_by=None,
+                cancelled_at=None,
+                cancel_comment=None,
+            )
+            await self._repo.add_classification(record)
+            await self._emit_on(
+                "classification.set",
+                subject,
+                {**label, "classifier": {"name": found.name}},
+                {
+                    "before": None if before is None else _classification_view(found, before),
+                    "after": _classification_view(found, record),
+                },
+                comment,
+            )
+        return record
+
+    async def cancel_classification(
+        self, classification_id: UUID, comment: str
+    ) -> ClassificationRecord:
+        async with self._session.begin():
+            record = await self._repo.get_classification(classification_id)
+            if record.cancelled_at is not None:
+                raise RuleViolationError("already_cancelled", "Запись уже отменена.")
+            found = await self._repo.get_classifier(record.classifier_id)
+            label, _name = await self._subject(record.subject, lock=True)
+            await self._repo.cancel_classification(
+                classification_id, self._actor.username, self._clock(), comment
+            )
+            await self._emit_on(
+                "classification.cancelled",
+                record.subject,
+                {**label, "classifier": {"name": found.name}},
+                {"before": _classification_view(found, record), "after": None},
+                comment,
+            )
+        return record
+
+    # --- общее для рейтингов и классификаторов ----------------------------------
+
+    def _not_in_future(self, valid_from: date) -> None:
+        if valid_from > self._clock().date():
+            raise RuleViolationError(
+                "future_date", "Дата — не позже сегодняшней: вводят то, что уже произошло."
+            )
+
+    async def _subject(
+        self, subject: Subject, *, lock: bool, rated: bool = False
+    ) -> tuple[dict[str, Any], str]:
+        """Бумага или эмитент для журнала и сообщений; рейтинг бывает только у облигации."""
+        if subject.target is Target.INSTRUMENT:
+            record = await self._repo.get(subject.id, lock=lock)
+            if rated and record.kind is not InstrumentKind.BOND:
+                raise RuleViolationError(
+                    "not_rated", "Рейтинг бывает у облигации или эмитента, а не у пая."
+                )
+            return {"instrument": {"secid": record.secid, "isin": record.isin}}, record.secid
+        found = await self._repo.get_issuer(subject.id, lock=lock)
+        return {"issuer": {"name": found.name}}, found.name
+
+    async def _name_is_free(self, name: str) -> None:
+        if await self._repo.classifier_named(name) is not None:
+            raise RuleViolationError("classifier_exists", f"Классификатор «{name}» уже есть.")
+
     # --- журнал -----------------------------------------------------------------
+
+    async def _emit_on(
+        self,
+        event_type: str,
+        subject: Subject,
+        label: dict[str, Any],
+        data: dict[str, Any],
+        comment: str | None,
+    ) -> None:
+        await self._outbox.add(
+            self._session,
+            Event(
+                service=SERVICE,
+                type=event_type,
+                actor=self._actor,
+                entity_type=subject.target.value,
+                entity_id=str(subject.id),
+                data={**label, **data},
+                comment=comment,
+            ),
+        )
+
+    async def _emit_classifier(
+        self,
+        event_type: str,
+        record: ClassifierRecord,
+        before: dict[str, Any] | None,
+        after: dict[str, Any],
+    ) -> None:
+        await self._outbox.add(
+            self._session,
+            Event(
+                service=SERVICE,
+                type=event_type,
+                actor=self._actor,
+                entity_type="classifier",
+                entity_id=str(record.id),
+                data={"classifier": {"name": record.name}, "before": before, "after": after},
+            ),
+        )
 
     async def _emit(
         self,
@@ -293,3 +625,39 @@ async def sync_all(
 
 def _lower_first(label: str) -> str:
     return label[:1].lower() + label[1:]
+
+
+def _distinct(values: Sequence[str]) -> list[str]:
+    """Значения классификатора: хотя бы одно, без повторов без учёта регистра."""
+    if not values:
+        raise RuleViolationError("values_required", "Укажите хотя бы одно значение.")
+    seen: set[str] = set()
+    for value in values:
+        if value.lower() in seen:
+            raise RuleViolationError("duplicate_value", f"Значение «{value}» указано дважды.")
+        seen.add(value.lower())
+    return list(values)
+
+
+def _value_is_free(record: ClassifierRecord, name: str) -> None:
+    if any(v.name.lower() == name.lower() for v in record.values):
+        raise RuleViolationError(
+            "duplicate_value", f"У классификатора «{record.name}» уже есть значение «{name}»."
+        )
+
+
+def _rating_view(record: RatingRecord) -> dict[str, Any]:
+    return {
+        "action": record.action.value,
+        "agency": record.agency,
+        "rating": record.rating,
+        "valid_from": record.valid_from.isoformat(),
+    }
+
+
+def _classification_view(found: ClassifierRecord, record: ClassificationRecord) -> dict[str, Any]:
+    # Значение записи — всегда значение её классификатора (так проверяет classify).
+    return {
+        "class_value": next(v.name for v in found.values if v.id == record.value_id),
+        "valid_from": None if record.valid_from is None else record.valid_from.isoformat(),
+    }

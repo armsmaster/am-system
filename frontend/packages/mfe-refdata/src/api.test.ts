@@ -14,6 +14,9 @@ describe('refdataApi', () => {
   };
   const api = refdataApi(client as unknown as ApiClient);
   const edit = { valid_from: '2026-10-26', comment: 'Маржа из проспекта', changes: {}, unpin: [] };
+  const rating = { action: 'assigned', agency: 'acra', rating: 'AA(RU)', valid_from: '2026-11-10', comment: null } as const;
+  const classifier = { name: 'Транш', target: 'instrument', description: null, values: ['старший'] } as const;
+  const classification = { classifier_id: 'c-3', value_id: 'v-5', valid_from: null, comment: null } as const;
 
   it.each([
     ['lookup', () => api.lookup('SU26238RMFS4'), 'get', ['/api/refdata/lookup?code=SU26238RMFS4']],
@@ -37,6 +40,56 @@ describe('refdataApi', () => {
       () => api.addTradingDays('2026-10-30', 1),
       'get',
       ['/api/refdata/calendar/add-trading-days?date=2026-10-30&days=1'],
+    ],
+    ['issuers all', () => api.issuers(''), 'get', ['/api/refdata/issuers']],
+    ['issuers', () => api.issuers('ВЭБ'), 'get', ['/api/refdata/issuers?query=%D0%92%D0%AD%D0%91']],
+    ['issuer', () => api.issuer('e-1'), 'get', ['/api/refdata/issuers/e-1']],
+    ['ratingScale', () => api.ratingScale(), 'get', ['/api/refdata/ratings/scale']],
+    ['ratings', () => api.ratings({ issuer_id: 'e-1' }), 'get', ['/api/refdata/ratings?issuer_id=e-1']],
+    [
+      'addRating',
+      () => api.addRating({ instrument_id: 'i-1' }, rating),
+      'post',
+      ['/api/refdata/ratings', { instrument_id: 'i-1', ...rating }],
+    ],
+    [
+      'cancelRating',
+      () => api.cancelRating('r-1', 'Опечатка'),
+      'post',
+      ['/api/refdata/ratings/r-1/cancel', { comment: 'Опечатка' }],
+    ],
+    ['classifiers', () => api.classifiers(), 'get', ['/api/refdata/classifiers']],
+    ['createClassifier', () => api.createClassifier(classifier), 'post', ['/api/refdata/classifiers', classifier]],
+    [
+      'updateClassifier',
+      () => api.updateClassifier('c-1', { name: 'Очерёдность', description: null }),
+      'put',
+      ['/api/refdata/classifiers/c-1', { name: 'Очерёдность', description: null }],
+    ],
+    ['addValue', () => api.addValue('c-1', 'иной'), 'post', ['/api/refdata/classifiers/c-1/values', { name: 'иной' }]],
+    [
+      'renameValue',
+      () => api.renameValue('c-1', 'v-1', 'старший'),
+      'put',
+      ['/api/refdata/classifiers/c-1/values/v-1', { name: 'старший' }],
+    ],
+    [
+      'classifications',
+      () => api.classifications({ instrument_id: 'i-1' }),
+      'get',
+      ['/api/refdata/classifications?instrument_id=i-1'],
+    ],
+    [
+      'classify',
+      () => api.classify({ issuer_id: 'e-1' }, classification),
+      'post',
+      ['/api/refdata/classifications', { issuer_id: 'e-1', ...classification }],
+    ],
+    [
+      'cancelClassification',
+      () => api.cancelClassification('k-1', 'Ошибка'),
+      'post',
+      ['/api/refdata/classifications/k-1/cancel', { comment: 'Ошибка' }],
     ],
   ] as const)('%s', async (_name, call, method, args) => {
     await call();

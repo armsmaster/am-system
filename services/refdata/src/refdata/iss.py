@@ -55,6 +55,18 @@ class Candidate:
     group: str | None
     board: str | None
     issuer: str | None
+    issuer_id: int | None = None  # код эмитента ISS
+    issuer_inn: str | None = None
+    type: str | None = None  # тип бумаги ISS: ofz_bond, exchange_bond…
+
+
+@dataclass(frozen=True, slots=True)
+class IssIssuer:
+    """Эмитент, как его видит ISS."""
+
+    iss_id: int
+    name: str
+    inn: str | None
 
 
 class NotFoundInIssError(Exception):
@@ -81,6 +93,8 @@ class Security:
     isin: str | None
     kind: InstrumentKind
     params: Params
+    issuer: IssIssuer | None = None
+    iss_type: str | None = None
 
 
 # --- разбор ---------------------------------------------------------------------
@@ -106,6 +120,9 @@ def parse_search(payload: Mapping[str, Any]) -> list[Candidate]:
             group=row.get("group"),
             board=row.get("primary_boardid"),
             issuer=row.get("emitent_title"),
+            issuer_id=_int(row.get("emitent_id")),
+            issuer_inn=row.get("emitent_inn") or None,
+            type=row.get("type"),
         )
         for row in rows(payload, "securities")
     ]
@@ -152,11 +169,16 @@ def parse_security(
         iss_floater=_iss_floater(desc),
         **(_schedules(bondization) if bondization is not None else {}),
     )
+    issuer_id = _int(desc.get("EMITTER_ID")) or candidate.issuer_id
     return Security(
         secid=desc.get("SECID") or candidate.secid,
         isin=desc.get("ISIN") or candidate.isin,
         kind=kind,
         params=params,
+        issuer=None
+        if issuer_id is None or not candidate.issuer
+        else IssIssuer(issuer_id, candidate.issuer, candidate.issuer_inn),
+        iss_type=desc.get("TYPE") or candidate.type,
     )
 
 
