@@ -46,9 +46,11 @@ function TradeCard({
 }) {
   const [mode, setMode] = useState<'view' | 'amend' | 'cancel'>('view');
   const confirm = useAction(onChanged);
+  // День сделки закрыт — ни правки, ни подтверждения до повторного открытия (решение 127).
+  const closed = trade.closed_through !== null && trade.trade_date <= trade.closed_through;
   // Подтверждённую сделку правит и отменяет только сопровождение (решение 95).
   const changeable =
-    trade.status !== 'cancelled' && (trade.status !== 'confirmed' || context.isOperations);
+    !closed && trade.status !== 'cancelled' && (trade.status !== 'confirmed' || context.isOperations);
   const done = () => {
     setMode('view');
     onChanged();
@@ -110,8 +112,14 @@ function TradeCard({
         <dt>Номер сделки у брокера</dt>
         <dd>{trade.external_id ?? '—'}</dd>
       </dl>
+      {closed && (
+        <p className="notice">
+          День сделки закрыт: фонд закрыт по {formatDate(trade.closed_through)}. Исправить, отменить или
+          подтвердить сделку можно после повторного открытия дня — его открывает администратор.
+        </p>
+      )}
       <p>
-        {context.isOperations && trade.status === 'entered' && (
+        {context.isOperations && trade.status === 'entered' && !closed && (
           <button
             type="button"
             disabled={confirm.busy}

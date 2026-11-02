@@ -109,6 +109,7 @@ export function trade(fields: Partial<Trade> = {}): Trade {
       { number: 1, status: 'entered', author: 'trader', created_at: '2026-11-27T08:43:00Z', comment: null, changed: [] },
     ],
     warnings: [],
+    closed_through: null,
     ...fields,
   };
 }

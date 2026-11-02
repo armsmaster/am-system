@@ -176,6 +176,9 @@ services:
     environment:
       <<: *service-env
       AM_DATABASE_URL: postgresql+asyncpg://svc_reconciliation:${SERVICES_DB_PASSWORD:-services-dev}@postgres:5432/am
+      # День закрываем в booking под служебной учётной записью am-reconciliation.
+      AM_KEYCLOAK_URL: http://keycloak:8080/auth
+      AM_KEYCLOAK_CLIENT_SECRET: ${RECONCILIATION_KEYCLOAK_SECRET:-reconciliation-dev-secret}
     depends_on: *service-depends
     healthcheck: *service-healthcheck
 

@@ -33,6 +33,8 @@ const ACTIONS: Readonly<Record<string, string>> = {
   'fee_rate.set': 'Изменена ставка комиссии от СЧА',
   'statement.received': 'Получена выписка по счёту',
   'discrepancy.accepted': 'Принято расхождение сверки',
+  'day.closed': 'Закрыт день фонда',
+  'day.reopened': 'Открыт заново день фонда',
 };
 
 const FIELDS: Readonly<Record<string, string>> = {
@@ -106,6 +108,9 @@ const FIELDS: Readonly<Record<string, string>> = {
   line: 'Строка сверки',
   system: 'В системе',
   statement: 'В выписке',
+  first_day: 'С дня',
+  last_day: 'По день',
+  closed_through: 'Фонд закрыт по',
 };
 
 /** Значения перечислений — словами. */

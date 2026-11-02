@@ -197,6 +197,26 @@ fee_rate = Table(
     Index("fee_rate_fund", "fund_id", "valid_from"),
 )
 
+# Закрытый период (design/08): закрытия и повторные открытия только дописываются;
+# граница фонда — по последней строке.
+fund_closing = Table(
+    "fund_closing",
+    metadata,
+    Column("seq", BigInteger, Identity(), primary_key=True),
+    Column("fund_id", Uuid, nullable=False),
+    Column("action", Text, nullable=False),
+    # Закрытие — какие дни закрыло; открытие — какие открыло.
+    Column("first_day", Date, nullable=False),
+    Column("last_day", Date, nullable=False),
+    Column("closed_through", Date, nullable=False),  # граница после действия
+    Column("author", Text, nullable=False),
+    Column("comment", Text),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("action IN ('close', 'reopen')", name="fund_closing_action"),
+    CheckConstraint("first_day <= last_day", name="fund_closing_days"),
+    Index("fund_closing_fund", "fund_id", "seq"),
+)
+
 # Очередь пересчёта: фонд и дата, с которой его состояние могло измениться.
 recalc_queue = Table(
     "recalc_queue",

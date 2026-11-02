@@ -211,7 +211,10 @@ async def recompute(
 ) -> None:
     today = now.astimezone(MOSCOW).date()
     async with database.session() as session:
-        inputs = await load_inputs(Repository(session), claim.fund_id, claim.since, today)
+        repo = Repository(session)
+        # Фонд могли закрыть, пока он ждал: закрытые дни не пересчитываются (решение 128).
+        since = await repo.open_since(claim.fund_id, claim.since)
+        inputs = await load_inputs(repo, claim.fund_id, since, today)
     book, _ = await terms_book(refdata, inputs, today)
     marks = (
         None
@@ -229,7 +232,7 @@ async def recompute(
         terms_on=book,
         repos=inputs.repos,
     )
-    replace_from = inputs.first_day if inputs.previous else min(claim.since, inputs.first_day)
+    replace_from = inputs.first_day if inputs.previous else min(since, inputs.first_day)
     async with database.session() as session, session.begin():
         await Repository(session).save_run(
             {

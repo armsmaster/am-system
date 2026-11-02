@@ -8,6 +8,7 @@ import type {
   Account,
   AccountDay,
   BalanceLine,
+  Closing,
   FundDay,
   MovementLine,
   Portfolio,
@@ -170,7 +171,26 @@ export function fundDay(fields: Partial<FundDay> = {}): FundDay {
     date: '2026-12-02',
     trading: true,
     reconciled: false,
+    closed: false,
+    closed_through: '2026-12-01',
+    next_day: '2026-12-02',
+    history: [],
     accounts: [bank(), broker()],
+    ...fields,
+  };
+}
+
+/** Неделя закрыта по 01.12; 30.11 закрыли вместе с выходными. */
+export function closing(fields: Partial<Closing> = {}): Closing {
+  return {
+    fund_id: 'p-fund',
+    closed_through: '2026-12-01',
+    next_day: '2026-12-02',
+    history: [
+      { action: 'close', first_day: '2026-11-28', last_day: '2026-11-30', closed_through: '2026-11-30', author: 'ops', comment: null, created_at: '2026-12-01T06:10:00Z' },
+      { action: 'reopen', first_day: '2026-11-30', last_day: '2026-11-30', closed_through: '2026-11-29', author: 'admin', comment: 'Брокер исправил отчёт', created_at: '2026-12-01T07:00:00Z' },
+      { action: 'close', first_day: '2026-11-30', last_day: '2026-11-30', closed_through: '2026-11-30', author: 'ops', comment: null, created_at: '2026-12-01T08:00:00Z' },
+    ],
     ...fields,
   };
 }
@@ -193,12 +213,15 @@ export function fakeApi() {
     enter: vi.fn((..._args: unknown[]): Promise<Received> => Promise.resolve({ statement_id: 's-2', result: 'created' })),
     accept: vi.fn((..._args: unknown[]) => Promise.resolve(broker())),
     confirm: vi.fn((..._args: unknown[]) => Promise.resolve(null)),
+    close: vi.fn((..._args: unknown[]) => Promise.resolve(fundDay({ closed: true, closed_through: '2026-12-02' }))),
+    closing: vi.fn((..._args: unknown[]) => Promise.resolve(closing())),
+    reopen: vi.fn((..._args: unknown[]) => Promise.resolve(closing())),
   };
 }
 
 export type FakeApi = ReturnType<typeof fakeApi>;
 
-export function renderReconciliation(api: FakeApi, path: string, isOperations = true): FakeApi {
+export function renderReconciliation(api: FakeApi, path: string, isOperations = true, isAdmin = false): FakeApi {
   render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
@@ -209,6 +232,7 @@ export function renderReconciliation(api: FakeApi, path: string, isOperations = 
               api={api as unknown as ReconciliationApi}
               basePath="/reconciliation"
               isOperations={isOperations}
+              isAdmin={isAdmin}
             />
           }
         />

@@ -221,9 +221,10 @@ def test_bank_account_week(trader: Api) -> None:
 
     first, last = found["days"][0], found["days"][-1]
     assert (first["opening_cash"], first["closing_cash"]) == ("0", "40000000.00")
-    assert moves(first) == [
-        ("unit_settlement", "100000000.00", None, None),
+    # Порядок движений одного дня не важен: сверка складывает их по виду.
+    assert sorted(moves(first)) == [
         ("transfer_out", "-60000000.00", None, None),
+        ("unit_settlement", "100000000.00", None, None),
     ]
     assert (last["closing_cash"], moves(last)) == (
         "39979450.00",

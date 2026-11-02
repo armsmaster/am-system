@@ -44,6 +44,10 @@
       {
         "name": "statement_feed",
         "description": "Скрипт выписок брокера: присылает выписки по счетам в reconciliation и видит все счета (служебная учётная запись)."
+      },
+      {
+        "name": "close_day",
+        "description": "Закрывает день фонда в booking — только служебная учётная запись сервиса сверки."
       }
     ]
   },
@@ -249,6 +253,34 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "am-reconciliation",
+      "name": "Сервис reconciliation: закрытие дня",
+      "description": "Служебная учётная запись: сервис сверки закрывает в booking день фонда, когда все счета сверены (роль close_day).",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "reconciliation-dev-secret",
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocolMappers": [
+        {
+          "name": "audience am-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "am-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
     }
   ],
   "users": [
@@ -350,6 +382,14 @@
       "username": "service-account-am-booking",
       "enabled": true,
       "serviceAccountClientId": "am-booking"
+    },
+    {
+      "username": "service-account-am-reconciliation",
+      "enabled": true,
+      "serviceAccountClientId": "am-reconciliation",
+      "realmRoles": [
+        "close_day"
+      ]
     }
   ]
 }

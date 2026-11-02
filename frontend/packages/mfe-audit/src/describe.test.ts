@@ -278,6 +278,27 @@ describe('changes', () => {
     ]);
   });
 
+  it('describes closing and reopening days', () => {
+    const closed = event('day.closed', {
+      fund: { code: 'OPIF1' },
+      before: null,
+      after: { first_day: '2026-11-28', last_day: '2026-11-30', closed_through: '2026-11-30' },
+    });
+    const reopened = event('day.reopened', {
+      fund: { code: 'OPIF1' },
+      before: null,
+      after: { first_day: '2026-11-30', last_day: '2026-12-03', closed_through: '2026-11-29' },
+    });
+
+    expect([actionLabel(closed.type), objectLabel(closed)]).toEqual(['Закрыт день фонда', 'OPIF1']);
+    expect(changes(closed)).toEqual([
+      { field: 'С дня', before: '—', after: '28.11.2026' },
+      { field: 'По день', before: '—', after: '30.11.2026' },
+      { field: 'Фонд закрыт по', before: '—', after: '30.11.2026' },
+    ]);
+    expect(actionLabel(reopened.type)).toBe('Открыт заново день фонда');
+  });
+
   it('describes prices for past days', () => {
     const backfilled = event('prices.backfilled', {
       since: '2026-10-22',

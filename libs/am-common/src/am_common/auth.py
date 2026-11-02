@@ -36,6 +36,7 @@ class Role(StrEnum):
     PRICE_FEED = "price_feed"  # скрипт цен — служебная учётная запись, не человек
     TRADE_FEED = "trade_feed"  # скрипт сделок — служебная учётная запись, не человек
     STATEMENT_FEED = "statement_feed"  # скрипт выписок брокера — служебная учётная запись
+    CLOSE_DAY = "close_day"  # сервис сверки закрывает день фонда в booking
 
 
 @dataclass(frozen=True, slots=True)

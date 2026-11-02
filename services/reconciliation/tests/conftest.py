@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from collections.abc import AsyncIterator, Iterator
 from datetime import date, datetime, timedelta
@@ -25,6 +26,7 @@ from reconciliation.settings import ReconciliationSettings
 PORTFOLIO_URL = "http://portfolio.test"
 BOOKING_URL = "http://booking.test"
 REFDATA_URL = "http://refdata.test"
+KEYCLOAK_URL = "http://keycloak.test/auth"
 
 # Фонд «ОПИФ 1» (design/08, сквозной пример): казначейский портфель на банковском
 # счёте, портфель облигаций — на брокерском. Второй фонд трейдеру не виден.
@@ -207,6 +209,12 @@ class World:
         self.waiting: dict[UUID, str] = {}
         self.calendar = {date(2026, 11, 4): False}
         self.requests: list[str] = []
+        # Дни счёта, которые спрашивала сверка: с какого по какой.
+        self.days_asked: list[tuple[UUID, date, date]] = []
+        # Граница закрытого периода фонда в сервисе сделок и что он ответит на закрытие.
+        self.closed_through: date | None = None
+        self.closings: list[dict[str, Any]] = []
+        self.close_refusal: dict[str, str] | None = None
 
     # Сделки для тестов: сервис сделок отдаёт их в дне счёта.
     trade = staticmethod(trade)
@@ -220,6 +228,10 @@ class World:
         self.requests.append(path)
         if path.endswith("/protocol/openid-connect/certs"):
             return httpx2.Response(200, json=self.tokens.jwks())
+        if path.endswith("/protocol/openid-connect/token"):
+            if "keycloak" in self.down:
+                raise httpx2.ConnectError("keycloak is down", request=request)
+            return httpx2.Response(200, json={"access_token": "service-token", "expires_in": 300})
         for name, base in (
             ("portfolio", PORTFOLIO_URL),
             ("booking", BOOKING_URL),
@@ -252,11 +264,16 @@ class World:
         return httpx2.Response(200, json=self.instruments)
 
     def _booking(self, request: httpx2.Request, path: str) -> httpx2.Response:
+        if path.endswith("/closing"):
+            return httpx2.Response(200, json=self.closing())
+        if path.endswith("/close"):
+            return self._close(request)
         match = re.fullmatch(r"/accounts/([^/]+)/days", path)
         assert match is not None
         account_id = UUID(match[1])
         first = date.fromisoformat(request.url.params["from"])
         last = date.fromisoformat(request.url.params["till"])
+        self.days_asked.append((account_id, first, last))
         ledger = self.ledger.get(account_id, {})
         cash = Decimal(0)
         day, days = FIRST_DAY, []
@@ -290,6 +307,44 @@ class World:
             },
         )
 
+    def closing(self) -> dict[str, Any]:
+        """Граница, как её отдаёт сервис сделок: следующий день — первый будний после."""
+        day = FIRST_DAY if self.closed_through is None else self.closed_through + timedelta(days=1)
+        while day.weekday() >= 5:
+            day += timedelta(days=1)
+        return {
+            "fund_id": str(FUND),
+            "closed_through": None
+            if self.closed_through is None
+            else self.closed_through.isoformat(),
+            "next_day": day.isoformat(),
+            "history": self.closings,
+        }
+
+    def _close(self, request: httpx2.Request) -> httpx2.Response:
+        # Закрывает только служебная учётная запись сверки.
+        assert request.headers["Authorization"] == "Bearer service-token"
+        if self.close_refusal is not None:
+            return httpx2.Response(422, json={"detail": self.close_refusal})
+        body = json.loads(request.content)
+        day = date.fromisoformat(body["day"])
+        first = (
+            FIRST_DAY if self.closed_through is None else self.closed_through + timedelta(days=1)
+        )
+        self.closings.append(
+            {
+                "action": "close",
+                "first_day": first.isoformat(),
+                "last_day": day.isoformat(),
+                "closed_through": day.isoformat(),
+                "author": body["closed_by"]["username"],
+                "comment": None,
+                "created_at": "2026-12-04T09:30:00+03:00",
+            }
+        )
+        self.closed_through = day
+        return httpx2.Response(200, json=self.closing())
+
 
 @pytest.fixture(scope="session")
 def tokens() -> TokenFactory:
@@ -313,6 +368,8 @@ def bare_settings(postgres_url: str, redis_url: str, schema: str) -> Reconciliat
         portfolio_url=PORTFOLIO_URL,
         booking_url=BOOKING_URL,
         refdata_url=REFDATA_URL,
+        keycloak_url=KEYCLOAK_URL,
+        keycloak_client_secret=SecretStr("reconciliation-secret"),
     )
 
 

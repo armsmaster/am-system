@@ -35,6 +35,8 @@ from booking.roll import InstrumentKind, OperationKind, Side
 from booking.trades import SERVICE, RuleViolationError
 
 ACTIVE = "active"
+# Что нельзя в закрытом дне — для сообщения об отказе (design/08).
+CHANGE = "Провести, отметить или отменить операцию"
 UNITS = frozenset({OperationKind.UNIT_ISSUE, OperationKind.UNIT_REDEMPTION})
 EXPENSES = frozenset({OperationKind.EXPENSE_ACCRUAL, OperationKind.EXPENSE_PAYMENT})
 # Операции уровня фонда — в казначейский портфель (решение 35).
@@ -105,6 +107,7 @@ class OperationDesk:
         operation_id = uuid4()
         now = self._clock()
         async with self._session.begin():
+            await self._repo.ensure_open(values["fund_id"], await self._since(values), CHANGE)
             await self._repo.add_operation(
                 {"id": operation_id, "created_at": now, "created_by": self._actor.username}
             )
@@ -139,6 +142,7 @@ class OperationDesk:
                     "already_settled", f"Расчёт уже отмечен {before.settled_date:%d.%m.%Y}."
                 )
             self._check_money_day(settled, before.op_date, exceptions, "Дата расчёта")
+            await self._repo.ensure_open(before.fund_id, settled, CHANGE)
             values = {**_values(before), "settled_date": settled}
             version = self._version(
                 operation_id,
@@ -161,6 +165,7 @@ class OperationDesk:
         now = self._clock()
         async with self._session.begin():
             before = await self._latest(operation_id, visible)
+            await self._repo.ensure_open(before.fund_id, await self._since(_values(before)), CHANGE)
             version = self._version(
                 operation_id,
                 before.number + 1,
@@ -321,6 +326,7 @@ class OperationDesk:
         fund = _treasury_fund(fund_id, visible)
         now = self._clock()
         async with self._session.begin():
+            await self._repo.ensure_open(fund.id, valid_from, "Изменить ставку комиссии")
             await self._repo.add_fee_rate(
                 {
                     "fund_id": fund.id,

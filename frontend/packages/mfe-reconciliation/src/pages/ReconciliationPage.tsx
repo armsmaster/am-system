@@ -71,10 +71,76 @@ function FundDayView({
       <p className={day.reconciled ? 'notice' : 'notice notice-error'}>
         {day.code}, {formatDate(day.date)}. {summary}
       </p>
+      <ClosingBar day={day} context={context} reload={reload} />
       {day.accounts.map((account) => (
         <AccountView key={account.account_id} account={account} date={day.date} context={context} reload={reload} />
       ))}
     </>
+  );
+}
+
+/** Граница закрытого периода: закрыть день, открыть заново (design/08). */
+function ClosingBar({
+  day,
+  context,
+  reload,
+}: {
+  readonly day: FundDay;
+  readonly context: Context;
+  readonly reload: () => void;
+}) {
+  const { api, isOperations, isAdmin } = context;
+  const { run, error, busy } = useAction(reload);
+  const [comment, setComment] = useState('');
+  const through = day.closed_through ? `Фонд закрыт по ${formatDate(day.closed_through)}.` : 'Закрытых дней нет.';
+
+  if (day.closed) {
+    return (
+      <div>
+        <p>
+          {formatDate(day.date)} закрыт. {through}
+        </p>
+        {!day.reconciled && (
+          <p role="alert" className="notice notice-error">
+            Закрытый день не сходится с выписками. Исправить его можно после повторного открытия — его
+            открывает администратор.
+          </p>
+        )}
+        {isAdmin && (
+          <form
+            aria-label="Открыть день заново"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void run(() => api.reopen(day.fund_id, day.date, comment.trim()));
+            }}
+          >
+            <label>
+              Почему открываем день заново
+              <input value={comment} onChange={(e) => setComment(e.target.value)} />
+            </label>
+            <button type="submit" disabled={busy || comment.trim().length < 3}>
+              Открыть заново с {formatDate(day.date)}
+            </button>
+          </form>
+        )}
+        <ErrorNote message={error} />
+      </div>
+    );
+  }
+  const next = day.next_day && ` Следующий к закрытию — ${formatDate(day.next_day)}.`;
+  return (
+    <div>
+      <p>
+        {through}
+        {next}
+      </p>
+      {isOperations && day.next_day === day.date && (
+        <button type="button" disabled={busy || !day.reconciled} onClick={() => void run(() => api.close(day.fund_id, day.date))}>
+          Закрыть {formatDate(day.date)}
+        </button>
+      )}
+      <ErrorNote message={error} />
+    </div>
   );
 }
 

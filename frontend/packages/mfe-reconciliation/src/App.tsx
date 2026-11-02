@@ -4,6 +4,7 @@ import { useCallback, useMemo } from 'react';
 import { NavLink, Route, Routes } from 'react-router';
 
 import { reconciliationApi, type Account, type Portfolio, type ReconciliationApi } from './api';
+import { ClosingsPage } from './pages/ClosingsPage';
 import { ReconciliationPage } from './pages/ReconciliationPage';
 import { StatementsPage } from './pages/StatementsPage';
 
@@ -15,7 +16,14 @@ import { StatementsPage } from './pages/StatementsPage';
 export default function ReconciliationApp({ session, basePath }: MicrofrontendProps) {
   const api = useMemo(() => reconciliationApi(createApiClient(session)), [session]);
   // Сервер всё равно проверит права; здесь — только чтобы не показывать лишнего.
-  return <Reconciliation api={api} basePath={basePath} isOperations={hasRole(session, 'operations')} />;
+  return (
+    <Reconciliation
+      api={api}
+      basePath={basePath}
+      isOperations={hasRole(session, 'operations')}
+      isAdmin={session.roles.has('admin')}
+    />
+  );
 }
 
 export interface Context {
@@ -23,16 +31,20 @@ export interface Context {
   readonly funds: readonly Portfolio[];
   readonly accounts: readonly Account[];
   readonly isOperations: boolean;
+  /** Открывает закрытый день заново только администратор (решение 127). */
+  readonly isAdmin: boolean;
 }
 
 export function Reconciliation({
   api,
   basePath,
   isOperations,
+  isAdmin,
 }: {
   readonly api: ReconciliationApi;
   readonly basePath: string;
   readonly isOperations: boolean;
+  readonly isAdmin: boolean;
 }) {
   const load = useCallback(() => Promise.all([api.portfolios(), api.accounts()]), [api]);
   const [state] = useLoad(load);
@@ -45,6 +57,7 @@ export function Reconciliation({
           Сверка за день
         </NavLink>
         <NavLink to={`${basePath}/statements`}>Выписки</NavLink>
+        <NavLink to={`${basePath}/closings`}>Закрытые дни</NavLink>
       </nav>
       <LoadedView state={state}>
         {([portfolios, accounts]) => {
@@ -53,11 +66,13 @@ export function Reconciliation({
             funds: portfolios.filter((p) => p.is_fund),
             accounts,
             isOperations,
+            isAdmin,
           };
           return (
             <Routes>
               <Route index element={<ReconciliationPage context={context} />} />
               <Route path="statements" element={<StatementsPage context={context} />} />
+              <Route path="closings" element={<ClosingsPage context={context} />} />
             </Routes>
           );
         }}

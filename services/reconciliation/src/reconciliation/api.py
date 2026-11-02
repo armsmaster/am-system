@@ -17,7 +17,9 @@ from reconciliation.clients import (
     BookingClient,
     PortfolioClient,
     RefdataClient,
+    RefusedError,
     ServiceUnavailableError,
+    service_token,
 )
 from reconciliation.matching import (
     BY_DAY,
@@ -34,6 +36,7 @@ from reconciliation.statements import (
     KSU_CODES,
     AccountReconciliation,
     Desk,
+    FundDay,
     MovementEntry,
     NotFoundError,
     Received,
@@ -67,7 +70,7 @@ class Clients:
     def __init__(self, resources: AppResources) -> None:
         settings = cast(ReconciliationSettings, resources.settings)
         self.portfolios = PortfolioClient(resources.http, settings.portfolio_url)
-        self.booking = BookingClient(resources.http, settings.booking_url)
+        self.booking = BookingClient(resources.http, settings.booking_url, service_token(resources))
         self.refdata = RefdataClient(resources.http, settings.refdata_url)
 
 
@@ -312,14 +315,35 @@ class AccountDayOut(BaseModel):
     waiting: list[WaitingOut]
 
 
+class ClosingRowOut(BaseModel):
+    """Закрытие или повторное открытие дней фонда — как его записал сервис сделок."""
+
+    action: Literal["close", "reopen"]
+    first_day: date
+    last_day: date
+    closed_through: date
+    author: str
+    comment: str | None
+    created_at: datetime
+
+
 class FundDayOut(BaseModel):
     fund_id: UUID
     code: str
     name: str
+    # Граница закрытого периода (design/08): закрыто по, что закрывать дальше, день закрыт.
+    closed_through: date | None
+    next_day: date | None
     date: date
     trading: bool
     reconciled: bool
+    closed: bool
+    history: list[ClosingRowOut]
     accounts: list[AccountDayOut]
+
+
+class CloseIn(BaseModel):
+    date: date
 
 
 class AcceptIn(BaseModel):
@@ -432,15 +456,23 @@ async def fund_day(
 ) -> FundDayOut:
     """Сверка фонда за день: по каждому счёту — сделки, движения, остатки."""
     found = await desk(request, session, authorization, services, _user).fund_day(fund_id, day)
-    return FundDayOut(
-        fund_id=found.fund.id,
-        code=found.fund.code,
-        name=found.fund.name,
-        date=found.day,
-        trading=found.trading,
-        reconciled=found.reconciled,
-        accounts=[_account_out(a) for a in found.accounts],
-    )
+    return _fund_day_out(found)
+
+
+@router.post("/funds/{fund_id}/close", tags=["reconciliation"])
+async def close_day(
+    fund_id: UUID,
+    body: CloseIn,
+    request: Request,
+    *,
+    user: Operations,
+    session: DbSession,
+    authorization: Authorization,
+    services: Services,
+) -> FundDayOut:
+    """Закрыть день фонда: все счета сверены, дни — строго подряд (решения 39, 48)."""
+    found = await desk(request, session, authorization, services, user).close(fund_id, body.date)
+    return _fund_day_out(found)
 
 
 @router.post("/acceptances", status_code=201, tags=["reconciliation"])
@@ -461,6 +493,22 @@ async def accept(
 
 
 # --- ответы ---------------------------------------------------------------------
+
+
+def _fund_day_out(found: FundDay) -> FundDayOut:
+    return FundDayOut(
+        fund_id=found.fund.id,
+        code=found.fund.code,
+        name=found.fund.name,
+        date=found.day,
+        trading=found.trading,
+        reconciled=found.reconciled,
+        closed=found.closed,
+        closed_through=found.closing.closed_through,
+        next_day=found.closing.next_day,
+        history=[ClosingRowOut.model_validate(r) for r in found.closing.history],
+        accounts=[_account_out(a) for a in found.accounts],
+    )
 
 
 def _entry(body: _StatementBase, *, account: str | None = None) -> StatementEntry:
@@ -610,6 +658,11 @@ def install_error_handlers(app: FastAPI) -> None:
         violation = cast(RuleViolationError, exc)
         return problem(violation.status, violation.code, violation.message)
 
+    async def refused(_request: Request, exc: Exception) -> Response:
+        """Сервис сделок отказал по правилам — его объяснение пользователю как есть."""
+        found = cast(RefusedError, exc)
+        return problem(422, found.code, found.message)
+
     async def not_found(_request: Request, exc: Exception) -> Response:
         missing = cast(NotFoundError, exc)
         return problem(404, "not_found", f"Не найдено: {missing.what}")
@@ -620,6 +673,7 @@ def install_error_handlers(app: FastAPI) -> None:
             "portfolio": "Сервис портфелей",
             "booking": "Сервис сделок",
             "refdata": "Справочник",
+            "keycloak": "Вход служебной учётной записи сверки",
         }
         return problem(
             503, f"{service}_unavailable", f"{names[service]} недоступен. Повторите позже."
@@ -627,4 +681,5 @@ def install_error_handlers(app: FastAPI) -> None:
 
     app.add_exception_handler(RuleViolationError, rule_violation)
     app.add_exception_handler(NotFoundError, not_found)
+    app.add_exception_handler(RefusedError, refused)
     app.add_exception_handler(ServiceUnavailableError, unavailable)

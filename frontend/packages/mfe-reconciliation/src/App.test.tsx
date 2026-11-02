@@ -49,9 +49,25 @@ describe('ReconciliationApp', () => {
     // Сопровождение может ввести «движений нет» по банку.
     expect(screen.getByRole('button', { name: /Движений нет/ })).toBeInTheDocument();
 
+    expect(screen.getByRole('link', { name: 'Закрытые дни' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('link', { name: 'Выписки' }));
     expect(await screen.findByRole('article', { name: 'Действующая выписка' })).toBeInTheDocument();
     expect(screen.getByRole('form', { name: 'Ввод выписки' })).toBeInTheDocument();
+  });
+
+  it('lets the admin reopen a closed day', async () => {
+    const fetchMock = vi.fn((path: string) => {
+      const body = path.endsWith('/portfolios')
+        ? PORTFOLIOS
+        : path.endsWith('/accounts')
+          ? ACCOUNTS
+          : fundDay({ closed: true, closed_through: '2026-12-02' });
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderInShell('admin');
+
+    expect(await screen.findByRole('form', { name: 'Открыть день заново' })).toBeInTheDocument();
   });
 
   it('shows the trader the day without actions', async () => {

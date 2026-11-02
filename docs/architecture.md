@@ -201,8 +201,7 @@ audience (`am-api`) и срок; роли берёт из `realm_access.roles`. 
    [design/07-repo-floaters-etf.md](design/07-repo-floaters-etf.md). *(сделано)*
 8. `reconciliation`: приём выписок, сверка, закрытие дня. Методика —
    [design/08-reconciliation.md](design/08-reconciliation.md), спецификация
-   приёмника — [api/statement-feed](api/statement-feed/README.md). *(часть 8.1 сделана:
-   выписки и сверка; часть 8.2 — закрытие дня — впереди)*
+   приёмника — [api/statement-feed](api/statement-feed/README.md). *(сделано)*
 9. `limits`.
 10. Второй этап: фьючерсы RUONIA и OIS, кривая RUONIA.
 

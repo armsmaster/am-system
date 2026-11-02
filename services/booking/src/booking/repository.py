@@ -12,9 +12,11 @@ from sqlalchemy import Row, Table, and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import distinct_on, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from am_common.clock import MOSCOW
 from booking.db import (
     day_snapshot,
     fee_rate,
+    fund_closing,
     operation,
     operation_version,
     recalc_queue,
@@ -24,6 +26,8 @@ from booking.db import (
 )
 
 CANCELLED = "cancelled"
+# Ключ блокировки фонда в Postgres — целое со знаком в 64 бита.
+LOCK_BITS = (1 << 63) - 1
 
 
 class NotFoundError(Exception):
@@ -31,6 +35,18 @@ class NotFoundError(Exception):
         super().__init__(f"{what} {key} not found")
         self.what = what
         self.key = key
+
+
+class ClosedPeriodError(Exception):
+    """Правка в закрытом дне: сначала день открывает администратор (решение 127)."""
+
+    def __init__(self, day: date, closed_at: datetime, what: str) -> None:
+        when = closed_at.astimezone(MOSCOW)
+        super().__init__(
+            f"{day:%d.%m.%Y} закрыт {when:%d.%m.%Y}. {what} можно после повторного открытия "
+            "дня — его открывает администратор."
+        )
+        self.message = str(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,7 +231,9 @@ class Repository:
     # --- очередь пересчёта ----------------------------------------------------
 
     async def mark_dirty(self, fund_id: UUID, since: date, now: datetime) -> None:
-        """Фонд надо пересчитать с ``since``: раньше отмеченная дата не теряется."""
+        """Фонд надо пересчитать с ``since``: раньше отмеченная дата не теряется.
+        Закрытые дни не пересчитываются — пересчёт с первого открытого (решение 128)."""
+        since = await self.open_since(fund_id, since)
         statement = insert(recalc_queue).values(fund_id=fund_id, since=since, marked_at=now)
         await self._session.execute(
             statement.on_conflict_do_update(
@@ -273,6 +291,57 @@ class Repository:
             )
         )
         return {row.fund_id: row.since for row in result}
+
+    # --- закрытый период ------------------------------------------------------
+
+    async def lock_fund(self, fund_id: UUID, *, shared: bool) -> None:
+        """Блокировка границы фонда до конца транзакции: правки — совместно, закрытие
+        и открытие — монопольно."""
+        lock = func.pg_advisory_xact_lock_shared if shared else func.pg_advisory_xact_lock
+        await self._session.execute(select(lock(fund_id.int & LOCK_BITS)))
+
+    async def closings(self, fund_id: UUID) -> list[Row[Any]]:
+        """Закрытия и повторные открытия фонда — по порядку."""
+        result = await self._session.execute(
+            select(fund_closing)
+            .where(fund_closing.c.fund_id == fund_id)
+            .order_by(fund_closing.c.seq)
+        )
+        return list(result)
+
+    async def add_closing(self, values: dict[str, Any]) -> None:
+        await self._session.execute(insert(fund_closing).values(**values))
+
+    async def open_since(self, fund_id: UUID, since: date) -> date:
+        """Не раньше первого открытого дня фонда."""
+        history = await self.closings(fund_id)
+        if not history:
+            return since
+        closed: date = history[-1].closed_through
+        return max(since, closed + timedelta(days=1))
+
+    async def ensure_open(self, fund_id: UUID, day: date, what: str) -> None:
+        """Правка с ``day`` — только в открытом периоде; проверка под блокировкой фонда,
+        в той же транзакции, что и правка."""
+        await self.lock_fund(fund_id, shared=True)
+        history = await self.closings(fund_id)
+        if not history or day > history[-1].closed_through:
+            return
+        # Когда закрыли: закрытие, которое закрыло этот день; день до начала истории —
+        # первое закрытие.
+        closes = [r for r in history if r.action == "close"]
+        covering = [r for r in closes if r.first_day <= day <= r.last_day]
+        raise ClosedPeriodError(day, (covering or closes)[-1 if covering else 0].created_at, what)
+
+    async def first_day(self, fund_id: UUID) -> date | None:
+        """Первый рассчитанный день фонда — начало его истории."""
+        result = await self._session.execute(
+            select(func.min(day_snapshot.c.day)).where(
+                day_snapshot.c.fund_id == fund_id, day_snapshot.c.replaced_at.is_(None)
+            )
+        )
+        found: date | None = result.scalar_one()
+        return found
 
     # --- снапшоты -------------------------------------------------------------
 

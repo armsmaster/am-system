@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -12,15 +12,20 @@ from httpx2 import Response
 from sqlalchemy import select
 
 from am_common.app import Resources
+from am_common.clock import MOSCOW
 from am_common.migrations import schema_diff
 from am_common.testing import TokenFactory
-from reconciliation.db import metadata, outbox
+from reconciliation.db import checkpoint, metadata, outbox
+from reconciliation.main import build_app
 from reconciliation.settings import ReconciliationSettings
 
 if TYPE_CHECKING:
     from conftest import World
 
 pytestmark = pytest.mark.integration
+
+# Пятница 04.12.2026, утро — как в conftest.
+NOW = datetime(2026, 12, 4, 9, 30, tzinfo=MOSCOW)
 
 # Те же номера, что в conftest: фонд «ОПИФ 1», его счета, ОФЗ 26238, сделки недели.
 FUND = UUID("00000000-0000-0000-0000-00000000f001")
@@ -143,19 +148,16 @@ def bank(day: str, opening: str, closing: str, *movements: dict[str, Any]) -> di
     }
 
 
+# Банк 26.11: расчёт по паям и перевод на брокерский счёт.
+BANK_FIRST_DAY = (
+    {"kind": "unit_settlement", "amount": "100000000", "comment": "Пайщики"},
+    {"kind": "transfer", "amount": "-60000000"},
+)
+
+
 def bank_week(ops: Api) -> None:
     """Выписки банка сопровождение вводит вручную; дни без движений — «движений нет»."""
-    ops.ok(
-        "POST",
-        "/statements",
-        bank(
-            "2026-11-26",
-            "0",
-            "40000000",
-            {"kind": "unit_settlement", "amount": "100000000", "comment": "Пайщики"},
-            {"kind": "transfer", "amount": "-60000000"},
-        ),
-    )
+    ops.ok("POST", "/statements", bank("2026-11-26", "0", "40000000", *BANK_FIRST_DAY))
     for day in ("2026-11-27", "2026-11-30", "2026-12-01", "2026-12-02"):
         ops.ok("POST", "/statements", bank(day, "40000000", "40000000"))
     ops.ok(
@@ -638,3 +640,134 @@ def test_booking_error_is_unavailable(trader: Api, world: World) -> None:
         503,
         "booking_unavailable",
     )
+
+
+# --- закрытие дня (часть 8.2) -------------------------------------------------
+
+
+def close(api: Api, day: str) -> Response:
+    return api.call("POST", f"/funds/{FUND}/close", {"date": day})
+
+
+async def test_closing_the_week(
+    feed: Api, ops: Api, trader: Api, world: World, resources: Resources
+) -> None:
+    feed.ok("POST", "/feed/v1/statements", {"source": "broker-x", "statements": broker_week()})
+    bank_week(ops)
+    world.ledger[BROKER][date(2026, 11, 27)]["trades"] = [world.trade(fee="0.00")]
+
+    first = close(ops, "2026-11-26").json()
+    assert (first["closed"], first["closed_through"], first["next_day"]) == (
+        True,
+        "2026-11-26",
+        "2026-11-27",
+    )
+    assert [(h["action"], h["last_day"], h["author"]) for h in first["history"]] == [
+        ("close", "2026-11-26", "ops")
+    ]
+    # 27.11 не закрыть, пока комиссия по покупке расходится с отчётом брокера.
+    refused = close(ops, "2026-11-27").json()["detail"]
+    assert (refused["code"], refused["message"]) == (
+        "not_reconciled",
+        "Закрыть 27.11.2026 нельзя: не все счета фонда сверены. OPIF1-BROKER — есть расхождения.",
+    )
+    world.ledger[BROKER][date(2026, 11, 27)]["trades"] = [world.trade()]
+    for day in ("2026-11-27", "2026-11-30", "2026-12-01"):
+        assert close(ops, day).is_success, day
+
+    # 02.12: купон принят — день закрывается, купон ждёт пары и после закрытия.
+    coupon = account(fund_day(trader, "2026-12-02"), "OPIF1-BROKER")["movements"][0]
+    ops.ok(
+        "POST",
+        "/acceptances",
+        {
+            "account_id": str(BROKER),
+            "date": "2026-12-02",
+            "line": coupon["line"],
+            "comment": "Купон ОФЗ 26238 брокер зачислит 03.12",
+        },
+    )
+    assert close(ops, "2026-12-02").is_success
+    async with resources.require_database().session() as session:
+        points = (await session.execute(select(checkpoint).order_by(checkpoint.c.seq))).all()
+    assert [(p.day, len(p.waiting)) for p in points if p.account_id == BROKER] == [
+        (date(2026, 11, 26), 0),
+        (date(2026, 11, 27), 0),
+        (date(2026, 11, 30), 0),
+        (date(2026, 12, 1), 0),
+        (date(2026, 12, 2), 1),
+    ]
+
+    # 03.12 считается от точки отсчёта 02.12, а не с начала истории.
+    world.days_asked.clear()
+    thursday = fund_day(trader, "2026-12-03")
+    assert {(f, last) for _, f, last in world.days_asked} == {
+        (date(2026, 12, 3), date(2026, 12, 3))
+    }
+    assert [(m["status"], m["paired"]) for m in account(thursday, "OPIF1-BROKER")["movements"]] == [
+        ("paired", "2026-12-02")
+    ]
+    assert (thursday["closed"], thursday["reconciled"]) == (False, True)
+
+    # Закрытый день не меняется: принять расхождение и закрыть ещё раз нельзя.
+    late = ops.call(
+        "POST",
+        "/acceptances",
+        {"account_id": str(BROKER), "date": "2026-12-02", "line": coupon["line"], "comment": "Ещё"},
+    ).json()["detail"]
+    assert (late["code"], late["message"]) == (
+        "day_closed",
+        "02.12.2026 закрыт: принять расхождение можно после повторного открытия дня — его "
+        "открывает администратор.",
+    )
+    again = close(ops, "2026-12-02").json()["detail"]
+    assert (again["code"], again["message"]) == ("day_closed", "02.12.2026 уже закрыт.")
+
+    # Администратор открыл 02.12: его точка отсчёта больше не действует, считаем с 01.12.
+    world.closed_through = date(2026, 12, 1)
+    world.days_asked.clear()
+    reopened = account(fund_day(trader, "2026-12-03"), "OPIF1-BROKER")
+    assert {(f, last) for _, f, last in world.days_asked} == {
+        (date(2026, 12, 2), date(2026, 12, 3))
+    }
+    assert reopened["movements"][0]["status"] == "paired"
+
+
+async def test_closing_refusals(
+    feed: Api, ops: Api, trader: Api, world: World, settings: ReconciliationSettings
+) -> None:
+    feed.ok("POST", "/feed/v1/statements", {"source": "broker-x", "statements": broker_week()})
+    bank_week(ops)
+    # Закрывает сопровождение.
+    assert close(trader, "2026-11-26").status_code == 403
+    # Keycloak не выдал токен сверки — закрыть нечем.
+    world.down.add("keycloak")
+    down = close(ops, "2026-11-26").json()["detail"]
+    assert (down["code"], down["message"]) == (
+        "keycloak_unavailable",
+        "Вход служебной учётной записи сверки недоступен. Повторите позже.",
+    )
+    world.down.clear()
+    # Отказ сервиса сделок — пользователю как есть.
+    world.close_refusal = {
+        "code": "recalculating",
+        "message": "Фонд пересчитывается с 26.11.2026: сначала пересчёт, потом сверка и закрытие.",
+    }
+    refused = close(ops, "2026-11-26").json()["detail"]
+    assert refused == world.close_refusal
+
+
+def test_closing_without_service_credentials(
+    settings: ReconciliationSettings, world: World, tokens: TokenFactory
+) -> None:
+    # Секрета служебной учётной записи нет — сверка есть, а закрыть день нечем.
+    bare = settings.model_copy(update={"keycloak_client_secret": None})
+    app = build_app(bare, http_transport=world.transport(), clock=lambda: NOW)
+    with TestClient(app) as client:
+        ops = Api(client, tokens, "ops", "operations")
+        ops.ok("POST", "/statements", bank("2026-11-26", "0", "40000000", *BANK_FIRST_DAY))
+        transfer = {"kind": "transfer", "amount": "60000000"}
+        to_broker = bank("2026-11-26", "0", "60000000", transfer) | {"account_id": str(BROKER)}
+        ops.ok("POST", "/statements", to_broker)
+        found = close(ops, "2026-11-26").json()["detail"]
+    assert found["code"] == "keycloak_unavailable"

@@ -281,26 +281,28 @@ def reconcile(
     days: Sequence[SystemDay],
     statements: Mapping[date, Statement],
     acceptances: Iterable[Acceptance],
+    waiting: Sequence[OpenItem] = (),
 ) -> list[DayReconciliation]:
-    """Дни счёта подряд: принятые расхождения переходят в следующие дни, пока не найдут пару."""
+    """Дни счёта подряд: принятые расхождения переходят в следующие дни, пока не найдут пару.
+    ``waiting`` — что ждало пары накануне первого дня: точка отсчёта на закрытом дне."""
     accepted: dict[tuple[date, str], Acceptance] = {}
     for item in sorted(acceptances, key=lambda a: a.accepted_at):
         accepted[(item.day, item.line)] = item  # действует последнее
-    waiting: list[OpenItem] = []
+    carried = list(waiting)
     result: list[DayReconciliation] = []
     for system in days:
         statement = statements.get(system.day)
         if statement is None:
-            result.append(DayReconciliation(system, None, waiting=tuple(waiting)))
+            result.append(DayReconciliation(system, None, waiting=tuple(carried)))
             continue
         mine = {line: a for (day, line), a in accepted.items() if day == system.day}
-        before = sum((w.discrepancy for w in waiting), ZERO)
+        before = sum((w.discrepancy for w in carried), ZERO)
         trades = [_accept(t, mine) for t in _trades(system.trades, statement.trades)]
         movements: list[MovementLine] = []
         for found in _movements(system.movements, statement.movements):
-            settled, waiting = _settle(found, waiting, mine)
+            settled, carried = _settle(found, carried, mine)
             movements.append(settled)
-        after = sum((w.discrepancy for w in waiting), ZERO)
+        after = sum((w.discrepancy for w in carried), ZERO)
         opening = _accept(
             _balance("balance:opening", system.opening, statement.opening, before), mine
         )
@@ -317,7 +319,7 @@ def reconcile(
                 movements=tuple(movements),
                 opening=opening,
                 closing=closing,
-                waiting=tuple(waiting),
+                waiting=tuple(carried),
                 lines=lines,
             )
         )

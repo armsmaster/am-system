@@ -10,12 +10,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from http import HTTPStatus
 from typing import Any, cast
 from uuid import UUID
 
 import httpx2
 
+from am_common.app import Resources
+from am_common.events import Actor
+from am_common.service_token import ServiceToken, ServiceTokenError, realm_token_url
 from reconciliation.matching import SystemDay, SystemMovement, SystemTrade
+from reconciliation.settings import ReconciliationSettings
 
 
 class ServiceUnavailableError(Exception):
@@ -26,6 +31,15 @@ class ServiceUnavailableError(Exception):
         self.service = service
 
 
+class RefusedError(Exception):
+    """Сосед отказал по правилам: сообщение — для пользователя."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
 class _Client:
     service = ""
 
@@ -34,12 +48,32 @@ class _Client:
         self._base = base_url.rstrip("/")
 
     async def _get(self, path: str, authorization: str, **params: str) -> Any:
+        return await self._send("GET", path, authorization, params=params)
+
+    async def _send(
+        self,
+        method: str,
+        path: str,
+        authorization: str,
+        *,
+        params: dict[str, str] | None = None,
+        body: Any = None,
+    ) -> Any:
+        """Запрос к соседу. Отказ по правилам (422) — его сообщение пользователю,
+        остальные ошибки — «сервис недоступен»."""
         try:
-            response = await self._http.get(
-                f"{self._base}{path}", params=params, headers={"Authorization": authorization}
+            response = await self._http.request(
+                method,
+                f"{self._base}{path}",
+                params=params,
+                json=body,
+                headers={"Authorization": authorization},
             )
         except httpx2.HTTPError as exc:
             raise ServiceUnavailableError(self.service, str(exc)) from exc
+        if response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY:
+            detail = response.json()["detail"]
+            raise RefusedError(detail["code"], detail["message"])
         if response.is_error:
             raise ServiceUnavailableError(self.service, f"{response.status_code} for {path}")
         return response.json()
@@ -116,8 +150,41 @@ class AccountDays:
     days: tuple[SystemDay, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class Closing:
+    """Граница закрытого периода фонда в сервисе сделок."""
+
+    closed_through: date | None
+    next_day: date | None
+    history: tuple[dict[str, Any], ...]
+
+
 class BookingClient(_Client):
     service = "booking"
+
+    def __init__(self, http: httpx2.AsyncClient, base_url: str, token: ServiceToken | None) -> None:
+        super().__init__(http, base_url)
+        self._token = token
+
+    async def closing(self, fund_id: UUID, authorization: str) -> Closing:
+        """По какой день фонд закрыт и какой день закрывать следующим."""
+        return _closing(await self._get(f"/funds/{fund_id}/closing", authorization))
+
+    async def close(self, fund_id: UUID, day: date, fund_code: str, actor: Actor) -> Closing:
+        """Закрыть день под служебной учётной записью сверки; кто закрывает — в теле."""
+        if self._token is None:
+            raise ServiceUnavailableError("keycloak", "service credentials are not configured")
+        try:
+            token = await self._token.get()
+        except ServiceTokenError as exc:
+            raise ServiceUnavailableError("keycloak", str(exc)) from exc
+        body = {
+            "day": day.isoformat(),
+            "fund_code": fund_code,
+            "closed_by": {"subject": actor.subject, "username": actor.username},
+        }
+        found = await self._send("POST", f"/funds/{fund_id}/close", f"Bearer {token}", body=body)
+        return _closing(found)
 
     async def days(
         self, account_id: UUID, first: date, last: date, authorization: str
@@ -147,6 +214,28 @@ class RefdataClient(_Client):
             for code in (item["secid"], item["isin"])
             if code
         }
+
+
+def service_token(resources: Resources) -> ServiceToken | None:
+    """Токен служебной учётной записи сверки; секрета нет — закрывать день нечем."""
+    settings = cast(ReconciliationSettings, resources.settings)
+    secret = settings.keycloak_client_secret
+    if secret is None:
+        return None
+    return ServiceToken(
+        resources.http,
+        token_url=realm_token_url(settings.keycloak_url, settings.keycloak_realm),
+        client_id=settings.keycloak_client_id,
+        client_secret=secret.get_secret_value(),
+    )
+
+
+def _closing(found: dict[str, Any]) -> Closing:
+    return Closing(
+        closed_through=_day(found["closed_through"]),
+        next_day=_day(found["next_day"]),
+        history=tuple(found["history"]),
+    )
 
 
 def _system_day(item: dict[str, Any]) -> SystemDay:

@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any
@@ -33,16 +33,19 @@ from am_common.outbox import Outbox
 from reconciliation.clients import (
     Account,
     BookingClient,
+    Closing,
     Portfolio,
     PortfolioClient,
     RefdataClient,
 )
-from reconciliation.db import acceptance, outbox, statement, statement_batch
+from reconciliation.db import acceptance, checkpoint, outbox, statement, statement_batch
 from reconciliation.matching import (
     RESOLVED,
     ZERO,
     Acceptance,
     DayReconciliation,
+    MovementKey,
+    OpenItem,
     Statement,
     StatementMovement,
     StatementTrade,
@@ -54,6 +57,14 @@ MANUAL = "manual"
 # Код обеспечения РЕПО с КСУ: бумаги нет (решение 117).
 KSU_CODES = frozenset({"KSU", "КСУ"})
 KOPECK = Decimal("0.01")
+ONE_DAY = timedelta(days=1)
+# Статусы счёта — словами, для отказа в закрытии дня.
+ACCOUNT_STATUSES: Mapping[str, str] = {
+    "discrepancies": "есть расхождения",
+    "no_statement": "нет выписки за день",
+    "recalculating": "фонд пересчитывается",
+    "not_calculated": "расчёта за день ещё нет",
+}
 
 
 class RuleViolationError(Exception):
@@ -175,6 +186,12 @@ class FundDay:
     fund: Portfolio
     day: date
     accounts: list[AccountReconciliation]
+    closing: Closing
+
+    @property
+    def closed(self) -> bool:
+        through = self.closing.closed_through
+        return through is not None and self.day <= through
 
     @property
     def trading(self) -> bool:
@@ -456,15 +473,56 @@ class Desk:
         }
         # Счета видимых physical сервис портфелей отдаёт всегда.
         mine = sorted((accounts[a] for a in used), key=lambda a: a.code)
-        found = [await self._reconcile(account, day) for account in mine]
-        return FundDay(fund, day, found)
+        closing = await self._booking.closing(fund_id, self._authorization)
+        found = [await self._reconcile(a, day, closing.closed_through) for a in mine]
+        return FundDay(fund, day, found, closing)
+
+    async def close(self, fund_id: UUID, day: date) -> FundDay:
+        """Закрыть день фонда: все счета сверены (решение 48). Точка отсчёта — что ждёт
+        пары на конец дня — пишется до закрытия: не закроется день — она не действует."""
+        found = await self.fund_day(fund_id, day)
+        if found.closed:
+            raise RuleViolationError("day_closed", f"{day:%d.%m.%Y} уже закрыт.")
+        if not found.reconciled:
+            pending = "; ".join(
+                f"{a.account.code} — {ACCOUNT_STATUSES[a.status]}"
+                for a in found.accounts
+                if a.status not in {"reconciled", "non_trading"}
+            )
+            raise RuleViolationError(
+                "not_reconciled",
+                f"Закрыть {day:%d.%m.%Y} нельзя: не все счета фонда сверены. {pending}.",
+            )
+        now = self._clock()
+        async with self._session.begin():
+            for a in found.accounts:
+                await self._session.execute(
+                    insert(checkpoint).values(
+                        account_id=a.account.id,
+                        fund_id=fund_id,
+                        day=day,
+                        waiting=[_item_json(w) for w in a.day.waiting],
+                        created_at=now,
+                    )
+                )
+        # Отказ сервиса сделок — по порядку дней, пересчёту — уходит пользователю как есть.
+        await self._booking.close(fund_id, day, found.fund.code, self._actor)
+        return await self.fund_day(fund_id, day)
 
     async def accept(
         self, account_id: UUID, day: date, line: str, comment: str
     ) -> AccountReconciliation:
-        """Принять строку сверки, которая не сошлась (решение 123)."""
+        """Принять строку сверки, которая не сошлась (решение 123). Закрытый день
+        не меняется: сначала его открывает администратор."""
         account = await self._account(account_id)
-        found = await self._reconcile(account, day)
+        closing = await self._booking.closing(account.fund_id, self._authorization)
+        if closing.closed_through is not None and day <= closing.closed_through:
+            raise RuleViolationError(
+                "day_closed",
+                f"{day:%d.%m.%Y} закрыт: принять расхождение можно после повторного открытия "
+                "дня — его открывает администратор.",
+            )
+        found = await self._reconcile(account, day, closing.closed_through)
         target = found.day.lines.get(line)
         if target is None:
             raise RuleViolationError(
@@ -506,7 +564,7 @@ class Desk:
                     comment=comment,
                 ),
             )
-        return await self._reconcile(account, day)
+        return await self._reconcile(account, day, closing.closed_through)
 
     async def _account(self, account_id: UUID) -> Account:
         accounts = await self._portfolios.accounts(self._authorization)
@@ -515,22 +573,29 @@ class Desk:
             raise NotFoundError("account", account_id)
         return found
 
-    async def _reconcile(self, account: Account, day: date) -> AccountReconciliation:
-        """Сверка счёта за день: подряд с самого раннего дня с принятыми расхождениями."""
+    async def _reconcile(
+        self, account: Account, day: date, closed_through: date | None
+    ) -> AccountReconciliation:
+        """Сверка счёта за день — подряд с точки отсчёта на последнем закрытом дне до дня;
+        точки нет — с самого раннего дня с принятыми расхождениями."""
         async with self._session.begin():
-            earliest = (
-                await self._session.execute(
-                    select(func.min(acceptance.c.day)).where(
-                        acceptance.c.account_id == account.id, acceptance.c.day < day
+            point = await self._checkpoint(account.id, day, closed_through)
+            if point is not None:
+                first, carried = point.day + ONE_DAY, [_item(w) for w in point.waiting]
+            else:
+                earliest = (
+                    await self._session.execute(
+                        select(func.min(acceptance.c.day)).where(
+                            acceptance.c.account_id == account.id, acceptance.c.day < day
+                        )
                     )
-                )
-            ).scalar_one_or_none()
-            first = day if earliest is None else earliest
+                ).scalar_one_or_none()
+                first, carried = (day if earliest is None else earliest), []
             accepted = await self._acceptances(account.id, first, day)
             statements = await self._statements(account.id, first, day)
             previous = await self._previous(account.id, day)
         found = await self._booking.days(account.id, first, day, self._authorization)
-        days = reconcile(found.days, statements, accepted)
+        days = reconcile(found.days, statements, accepted, carried)
         return AccountReconciliation(
             account=account,
             portfolios=found.portfolios,
@@ -538,6 +603,25 @@ class Desk:
             day=days[-1],
             previous=previous,
         )
+
+    async def _checkpoint(
+        self, account_id: UUID, day: date, closed_through: date | None
+    ) -> Row[Any] | None:
+        """Последняя точка отсчёта до дня на закрытом дне. Точки за дни, которые потом
+        открыли заново, не действуют: они позже границы."""
+        if closed_through is None:
+            return None
+        result = await self._session.execute(
+            select(checkpoint)
+            .where(
+                checkpoint.c.account_id == account_id,
+                checkpoint.c.day < day,
+                checkpoint.c.day <= closed_through,
+            )
+            .order_by(checkpoint.c.day.desc(), checkpoint.c.seq.desc())
+            .limit(1)
+        )
+        return result.one_or_none()
 
     async def _acceptances(self, account_id: UUID, first: date, last: date) -> list[Acceptance]:
         result = await self._session.execute(
@@ -631,6 +715,32 @@ def parse(row: Any) -> Statement:
         source=row.source,
         received_by=row.received_by,
         received_at=row.received_at,
+    )
+
+
+def _item_json(item: OpenItem) -> dict[str, Any]:
+    """Принятое расхождение, которое ждёт пары, — для точки отсчёта."""
+    return {
+        "day": item.day.isoformat(),
+        "kind": item.key.kind,
+        "trade": item.key.trade,
+        "instrument_id": None if item.key.instrument_id is None else str(item.key.instrument_id),
+        "discrepancy": str(item.discrepancy),
+        "comment": item.comment,
+        "secid": item.secid,
+    }
+
+
+def _item(found: Mapping[str, Any]) -> OpenItem:
+    instrument = found["instrument_id"]
+    return OpenItem(
+        day=date.fromisoformat(found["day"]),
+        key=MovementKey(
+            found["kind"], found["trade"], None if instrument is None else UUID(instrument)
+        ),
+        discrepancy=Decimal(found["discrepancy"]),
+        comment=found["comment"],
+        secid=found["secid"],
     )
 
 

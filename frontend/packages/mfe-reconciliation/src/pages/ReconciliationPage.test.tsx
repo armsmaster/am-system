@@ -15,8 +15,8 @@ import {
   renderReconciliation,
 } from '../test/fixtures';
 
-async function openDay(api = fakeApi(), isOperations = true) {
-  renderReconciliation(api, '/reconciliation', isOperations);
+async function openDay(api = fakeApi(), isOperations = true, isAdmin = false) {
+  renderReconciliation(api, '/reconciliation', isOperations, isAdmin);
   fireEvent.change(await screen.findByLabelText('День'), { target: { value: '2026-12-02' } });
   await screen.findByText(/OPIF1, 02.12.2026/);
   return api;
@@ -233,5 +233,65 @@ describe('ReconciliationPage', () => {
     renderReconciliation(api, '/reconciliation');
 
     expect(await screen.findByText('Нет фондов, к которым у вас есть доступ.')).toBeInTheDocument();
+  });
+  it('closes the next day when every account is reconciled', async () => {
+    const api = fakeApi();
+    api.day.mockResolvedValue(fundDay({ reconciled: true, accounts: [] }));
+    await openDay(api);
+
+    expect(screen.getByText('Фонд закрыт по 01.12.2026. Следующий к закрытию — 02.12.2026.')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Закрыть 02.12.2026' }));
+    expect(api.close).toHaveBeenCalledWith('p-fund', '2026-12-02');
+    expect(api.day).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not close a day with discrepancies or out of order', async () => {
+    const api = await openDay();
+    // Счета не сверены — закрыть нельзя.
+    expect(screen.getByRole('button', { name: 'Закрыть 02.12.2026' })).toBeDisabled();
+
+    api.day.mockResolvedValue(fundDay({ date: '2026-12-03', reconciled: true, accounts: [] }));
+    fireEvent.change(screen.getByLabelText('День'), { target: { value: '2026-12-03' } });
+    // Дни закрываются подряд: сначала 02.12.
+    expect(await screen.findByText(/OPIF1, 03.12.2026/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Закрыть/ })).not.toBeInTheDocument();
+  });
+
+  it('says when no day is closed', async () => {
+    const api = fakeApi();
+    api.day.mockResolvedValue(fundDay({ closed_through: null, next_day: null, accounts: [] }));
+    await openDay(api);
+
+    expect(screen.getByText('Закрытых дней нет.')).toBeInTheDocument();
+  });
+
+  it('lets the admin reopen a closed day that no longer matches', async () => {
+    const api = fakeApi();
+    api.day.mockResolvedValue(fundDay({ closed: true, closed_through: '2026-12-03' }));
+    api.reopen.mockRejectedValueOnce(
+      new ApiError(422, { detail: { code: 'day_not_closed', message: '02.12.2026 не закрыт.' } }),
+    );
+    await openDay(api, true, true);
+
+    expect(screen.getByText('02.12.2026 закрыт. Фонд закрыт по 03.12.2026.')).toBeInTheDocument();
+    expect(screen.getByText(/Закрытый день не сходится с выписками/)).toBeInTheDocument();
+    const form = screen.getByRole('form', { name: 'Открыть день заново' });
+    const submit = within(form).getByRole('button', { name: 'Открыть заново с 02.12.2026' });
+    expect(submit).toBeDisabled();
+    await userEvent.type(within(form).getByLabelText(/Почему/), 'Брокер исправил отчёт ');
+    await userEvent.click(submit);
+    expect(await screen.findByText('02.12.2026 не закрыт.')).toBeInTheDocument();
+    await userEvent.click(submit);
+    expect(api.reopen).toHaveBeenLastCalledWith('p-fund', '2026-12-02', 'Брокер исправил отчёт');
+  });
+
+  it('shows a closed reconciled day to operations without a reopen form', async () => {
+    const api = fakeApi();
+    api.day.mockResolvedValue(fundDay({ closed: true, reconciled: true, closed_through: '2026-12-02', accounts: [] }));
+    await openDay(api);
+
+    expect(screen.getByText('02.12.2026 закрыт. Фонд закрыт по 02.12.2026.')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByRole('form', { name: 'Открыть день заново' })).not.toBeInTheDocument();
   });
 });

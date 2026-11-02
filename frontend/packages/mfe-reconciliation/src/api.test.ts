@@ -29,6 +29,14 @@ describe('reconciliationApi', () => {
     ['batch', () => api.batch('b-1'), 'get', ['/api/reconciliation/batches/b-1']],
     ['enter', () => api.enter(body), 'post', ['/api/reconciliation/statements', body]],
     ['accept', () => api.accept(accept), 'post', ['/api/reconciliation/acceptances', accept]],
+    ['close', () => api.close('p-fund', '2026-12-02'), 'post', ['/api/reconciliation/funds/p-fund/close', { date: '2026-12-02' }]],
+    ['closing', () => api.closing('p-fund'), 'get', ['/api/booking/funds/p-fund/closing']],
+    [
+      'reopen',
+      () => api.reopen('p-fund', '2026-11-30', 'Брокер исправил отчёт'),
+      'post',
+      ['/api/booking/funds/p-fund/reopen', { day: '2026-11-30', comment: 'Брокер исправил отчёт' }],
+    ],
     [
       'confirm',
       () => api.confirm('t-1', 'Сошлась с выпиской за 27.11.2026'),

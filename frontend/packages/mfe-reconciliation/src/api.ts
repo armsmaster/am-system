@@ -177,6 +177,26 @@ export interface AccountDay {
   readonly waiting: readonly Waiting[];
 }
 
+/** Закрытие или повторное открытие дней фонда (design/08). */
+export interface ClosingRow {
+  readonly action: 'close' | 'reopen';
+  readonly first_day: string;
+  readonly last_day: string;
+  readonly closed_through: string;
+  readonly author: string;
+  readonly comment: string | null;
+  readonly created_at: string;
+}
+
+export interface Closing {
+  readonly fund_id: string;
+  /** Фонд закрыт по этот день включительно. */
+  readonly closed_through: string | null;
+  /** Следующий к закрытию: дни закрываются строго подряд (решение 39). */
+  readonly next_day: string | null;
+  readonly history: readonly ClosingRow[];
+}
+
 export interface FundDay {
   readonly fund_id: string;
   readonly code: string;
@@ -185,6 +205,10 @@ export interface FundDay {
   readonly trading: boolean;
   /** Все счета фонда сверены — день можно закрыть (решение 48). */
   readonly reconciled: boolean;
+  readonly closed: boolean;
+  readonly closed_through: string | null;
+  readonly next_day: string | null;
+  readonly history: readonly ClosingRow[];
   readonly accounts: readonly AccountDay[];
 }
 
@@ -240,6 +264,12 @@ export function reconciliationApi(client: ApiClient) {
     batch: (id: string) => client.get<Batch>(`${BASE}/batches/${id}`),
     enter: (body: StatementInput) => client.post<Received>(`${BASE}/statements`, body),
     accept: (body: AcceptInput) => client.post<AccountDay>(`${BASE}/acceptances`, body),
+    /** Закрыть день: сервис сверки проверит, что все счета сверены. */
+    close: (fundId: string, date: string) => client.post<FundDay>(`${BASE}/funds/${fundId}/close`, { date }),
+    /** Граница закрытого периода хранится в сервисе сделок; открывает заново администратор. */
+    closing: (fundId: string) => client.get<Closing>(`/api/booking/funds/${fundId}/closing`),
+    reopen: (fundId: string, day: string, comment: string) =>
+      client.post<Closing>(`/api/booking/funds/${fundId}/reopen`, { day, comment }),
     /** Сошедшуюся сделку подтверждает сервис сделок (решение 125). */
     confirm: (tradeId: string, comment: string) =>
       client.post<unknown>(`/api/booking/trades/${tradeId}/confirm`, { comment }),

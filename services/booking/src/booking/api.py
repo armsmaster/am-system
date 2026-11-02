@@ -22,6 +22,7 @@ from pydantic import (
 from am_common.app import AppResources, DbSession
 from am_common.auth import Principal, Role, require_any_role
 from am_common.clock import MOSCOW
+from am_common.events import Actor
 from booking.accounts import MAX_ACCOUNT_DAYS, AccountDay, AccountDays, account_days
 from booking.clients import (
     MarketdataClient,
@@ -32,6 +33,7 @@ from booking.clients import (
     physical_under,
     service_token,
 )
+from booking.closing import ClosingDesk, ClosingState
 from booking.imports import ImportItem, Result, TradeImport
 from booking.ladder import Ladder, ladder
 from booking.operations import OperationDesk, OperationInput, OperationView
@@ -45,7 +47,7 @@ from booking.queries import (
     positions,
     results,
 )
-from booking.repository import NotFoundError, Repository
+from booking.repository import ClosedPeriodError, NotFoundError, Repository
 from booking.roll import DayResult, Movement, OperationKind, Side
 from booking.settings import BookingSettings
 from booking.trades import (
@@ -60,6 +62,10 @@ from booking.trades import (
 # Сделки вводят все авторизованные пользователи (решение 25); скрипт цен — нет.
 Staff = Annotated[Principal, Depends(require_any_role(Role.TRADING, Role.OPERATIONS))]
 Operations = Annotated[Principal, Depends(require_any_role(Role.OPERATIONS))]
+# День закрывает сервис сверки, когда все счета фонда сверены (design/08); открывает
+# заново — администратор.
+DayCloser = Annotated[Principal, Depends(require_any_role(Role.CLOSE_DAY))]
+Admin = Annotated[Principal, Depends(require_any_role(Role.ADMIN))]
 # Импорт — пользователям и скрипту сделок (спецификация docs/api/trade-import).
 Feeder = Annotated[
     Principal, Depends(require_any_role(Role.TRADING, Role.OPERATIONS, Role.TRADE_FEED))
@@ -231,6 +237,8 @@ class TradeOut(BaseModel):
     created_at: datetime
     versions: list[VersionOut] = []
     warnings: list[str] = []
+    # Фонд закрыт по этот день: сделку с более ранней датой не изменить (design/08).
+    closed_through: date | None = None
 
 
 class DefaultsOut(BaseModel):
@@ -725,6 +733,41 @@ class AccountDaysOut(BaseModel):
     portfolios: list[LadderPortfolioOut]
     waiting_since: date | None
     days: list[AccountDayOut]
+
+
+class ClosedByIn(BaseModel):
+    subject: Text
+    username: Text
+
+
+class CloseIn(BaseModel):
+    """Закрыть день: сервис сверки передаёт, кто закрывает и код фонда для журнала."""
+
+    day: date
+    fund_code: Text
+    closed_by: ClosedByIn
+
+
+class ReopenIn(BaseModel):
+    day: date
+    comment: Comment
+
+
+class ClosingRowOut(BaseModel):
+    action: Literal["close", "reopen"]
+    first_day: date
+    last_day: date
+    closed_through: date
+    author: str
+    comment: str | None
+    created_at: datetime
+
+
+class ClosingOut(BaseModel):
+    fund_id: UUID
+    closed_through: date | None
+    next_day: date | None
+    history: list[ClosingRowOut]
 
 
 # --- сделки ---------------------------------------------------------------------
@@ -1235,6 +1278,72 @@ def _account_day_out(day: AccountDay, found: AccountDays) -> AccountDayOut:
     )
 
 
+# --- закрытый период -----------------------------------------------------------
+
+
+def closing_desk(session: DbSession, services: Services, now: Now) -> ClosingDesk:
+    return ClosingDesk(session, services.refdata, lambda: now)
+
+
+Closings = Annotated[ClosingDesk, Depends(closing_desk)]
+
+
+@router.get("/funds/{fund_id}/closing", tags=["closing"])
+async def get_closing(
+    fund_id: UUID,
+    _user: Staff,
+    *,
+    authorization: Authorization,
+    services: Services,
+    closings: Closings,
+) -> ClosingOut:
+    """По какой день фонд закрыт, какой день закрывать следующим, кто закрывал и открывал."""
+    await _fund_code(fund_id, services, authorization)
+    return _closing_out(await closings.state(fund_id))
+
+
+@router.post("/funds/{fund_id}/close", tags=["closing"])
+async def close_day(
+    fund_id: UUID, body: CloseIn, _service: DayCloser, *, closings: Closings
+) -> ClosingOut:
+    """Закрыть следующий день фонда. Зовёт только сервис сверки: он проверил, что все
+    счета фонда сверены, и передаёт, кто закрывает."""
+    actor = Actor(subject=body.closed_by.subject, username=body.closed_by.username)
+    return _closing_out(await closings.close(fund_id, body.day, actor, body.fund_code))
+
+
+@router.post("/funds/{fund_id}/reopen", tags=["closing"])
+async def reopen_day(
+    fund_id: UUID,
+    body: ReopenIn,
+    user: Admin,
+    *,
+    authorization: Authorization,
+    services: Services,
+    closings: Closings,
+) -> ClosingOut:
+    """Открыть день заново с комментарием — вместе со всеми закрытыми днями после него."""
+    code = await _fund_code(fund_id, services, authorization)
+    actor = Actor.from_principal(user)
+    return _closing_out(await closings.reopen(fund_id, body.day, body.comment, actor, code))
+
+
+async def _fund_code(fund_id: UUID, services: Clients, authorization: str) -> str:
+    fund = (await services.portfolios.visible(authorization)).get(fund_id)
+    if fund is None or not fund.is_fund:
+        raise NotFoundError("fund", fund_id)
+    return fund.code
+
+
+def _closing_out(state: ClosingState) -> ClosingOut:
+    return ClosingOut(
+        fund_id=state.fund_id,
+        closed_through=state.closed_through,
+        next_day=state.next_day,
+        history=[ClosingRowOut.model_validate(r, from_attributes=True) for r in state.history],
+    )
+
+
 # --- ошибки → ответы HTTP -------------------------------------------------------
 
 
@@ -1252,6 +1361,9 @@ def install_error_handlers(app: FastAPI) -> None:
         missing = cast(NotFoundError, exc)
         return problem(404, "not_found", f"Не найдено: {missing.what}")
 
+    async def closed(_request: Request, exc: Exception) -> Response:
+        return problem(422, "day_closed", cast(ClosedPeriodError, exc).message)
+
     async def unavailable(_request: Request, exc: Exception) -> Response:
         service = cast(ServiceUnavailableError, exc).service
         names = {
@@ -1265,6 +1377,7 @@ def install_error_handlers(app: FastAPI) -> None:
 
     app.add_exception_handler(RuleViolationError, rule_violation)
     app.add_exception_handler(NotFoundError, not_found)
+    app.add_exception_handler(ClosedPeriodError, closed)
     app.add_exception_handler(ServiceUnavailableError, unavailable)
 
 
@@ -1306,7 +1419,13 @@ def _trade_out(view: TradeView) -> TradeOut:
             )
         )
         previous = row
-    return out.model_copy(update={"versions": versions, "warnings": view.warnings})
+    return out.model_copy(
+        update={
+            "versions": versions,
+            "warnings": view.warnings,
+            "closed_through": view.closed_through,
+        }
+    )
 
 
 def _movement_out(m: Movement) -> MovementOut:

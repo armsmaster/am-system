@@ -91,6 +91,8 @@ export interface Trade {
   readonly created_at: string;
   readonly versions: readonly TradeVersion[];
   readonly warnings: readonly string[];
+  /** Фонд закрыт по этот день: сделку с более ранней датой не изменить (design/08). */
+  readonly closed_through: string | null;
 }
 
 export interface TradeInput {

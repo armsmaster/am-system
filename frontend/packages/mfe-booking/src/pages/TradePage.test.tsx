@@ -75,6 +75,27 @@ describe('TradePage', () => {
     expect(api.trade).toHaveBeenCalledTimes(2);
   });
 
+  it('keeps a trade of a closed day as it is', async () => {
+    const api = fakeApi();
+    // Фонд закрыт по 30.11, сделка — 27.11 (design/08).
+    api.trade.mockResolvedValue(trade({ closed_through: '2026-11-30' }));
+    renderBooking(api, '/booking/trades/t-1', true);
+
+    expect(await screen.findByText(/День сделки закрыт: фонд закрыт по 30.11.2026/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Подтвердить' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Исправить' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Отменить сделку' })).not.toBeInTheDocument();
+  });
+
+  it('lets a trade after the closed days be changed', async () => {
+    const api = fakeApi();
+    api.trade.mockResolvedValue(trade({ closed_through: '2026-11-26' }));
+    renderBooking(api, '/booking/trades/t-1', true);
+
+    expect(await screen.findByRole('button', { name: 'Исправить' })).toBeInTheDocument();
+    expect(screen.queryByText(/День сделки закрыт/)).not.toBeInTheDocument();
+  });
+
   it('shows why confirmation failed', async () => {
     const user = userEvent.setup();
     const api = fakeApi();

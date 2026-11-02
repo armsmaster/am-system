@@ -72,6 +72,10 @@ YEAR = Decimal(365)
 SECOND_AMOUNT_TOLERANCE = Decimal(1)
 
 
+# Что нельзя в закрытом дне — для сообщения об отказе (design/08).
+CHANGE = "Ввести, исправить, отменить или подтвердить сделку"
+
+
 class RuleViolationError(Exception):
     """Нарушено правило ввода сделки. ``status`` — код ответа HTTP."""
 
@@ -123,6 +127,7 @@ class TradeView:
     versions: list[Row[Any]]
     portfolio: PortfolioRef | None
     warnings: list[str] = field(default_factory=list)
+    closed_through: date | None = None  # фонд закрыт по этот день (design/08)
 
     @property
     def current(self) -> Row[Any]:
@@ -193,6 +198,7 @@ class TradeDesk:
         now = self._clock()
         source, source_key = key or (None, None)
         async with self._session.begin():
+            await self._repo.ensure_open(values["fund_id"], values["trade_date"], CHANGE)
             added = await self._repo.add_trade(
                 {
                     "id": trade_id,
@@ -221,7 +227,8 @@ class TradeDesk:
                 comment=entry.comment,
             )
             versions = await self._repo.versions(trade_id)
-        return TradeView(versions, visible.get(entry.portfolio_id), warnings)
+            closed = await self._closed(values["fund_id"])
+        return TradeView(versions, visible.get(entry.portfolio_id), warnings, closed)
 
     async def amend(self, trade_id: UUID, entry: TradeInput) -> TradeView:
         visible = await self.visible()
@@ -234,6 +241,9 @@ class TradeDesk:
             # Сделку могли изменить, пока шли проверки: проверяем ещё раз под блокировкой.
             before = await self._latest(trade_id, visible)
             self._check_change(before, visible)
+            since = min(before.trade_date, values["trade_date"])
+            for fund_id in {before.fund_id, values["fund_id"]}:
+                await self._repo.ensure_open(fund_id, since, CHANGE)
             version = self._version(
                 trade_id,
                 before.number + 1,
@@ -243,7 +253,6 @@ class TradeDesk:
                 now=now,
             )
             await self._repo.add_version(version)
-            since = min(before.trade_date, values["trade_date"])
             for fund_id in {before.fund_id, values["fund_id"]}:
                 await self._repo.mark_dirty(fund_id, since, now)
             await self._emit(
@@ -255,7 +264,8 @@ class TradeDesk:
                 comment=entry.comment,
             )
             versions = await self._repo.versions(trade_id)
-        return TradeView(versions, visible.get(entry.portfolio_id), warnings)
+            closed = await self._closed(values["fund_id"])
+        return TradeView(versions, visible.get(entry.portfolio_id), warnings, closed)
 
     async def cancel(self, trade_id: UUID, comment: str) -> TradeView:
         return await self._restate(trade_id, CANCELLED, "trade.cancelled", comment)
@@ -267,10 +277,11 @@ class TradeDesk:
         visible = await self.visible()
         async with self._session.begin():
             versions = await self._repo.versions(trade_id)
+            closed = await self._closed(versions[-1].fund_id)
         portfolio = visible.get(versions[-1].portfolio_id)
         if portfolio is None:
             raise RuleViolationError("trade_not_found", "Сделка не найдена.", 404)
-        return TradeView(versions, portfolio)
+        return TradeView(versions, portfolio, closed_through=closed)
 
     async def _restate(
         self, trade_id: UUID, status: str, event: str, comment: str | None
@@ -281,6 +292,7 @@ class TradeDesk:
         async with self._session.begin():
             before = await self._latest(trade_id, visible)
             self._check_change(before, visible)
+            await self._repo.ensure_open(before.fund_id, before.trade_date, CHANGE)
             if status == CONFIRMED and before.status == CONFIRMED:
                 raise RuleViolationError("already_confirmed", "Сделка уже подтверждена.")
             values = {
@@ -298,7 +310,12 @@ class TradeDesk:
                 event, trade_id, before=before, after=version, visible=visible, comment=comment
             )
             versions = await self._repo.versions(trade_id)
-        return TradeView(versions, visible.get(before.portfolio_id))
+            closed = await self._closed(before.fund_id)
+        return TradeView(versions, visible.get(before.portfolio_id), closed_through=closed)
+
+    async def _closed(self, fund_id: UUID) -> date | None:
+        history = await self._repo.closings(fund_id)
+        return history[-1].closed_through if history else None
 
     async def _latest(self, trade_id: UUID, visible: Mapping[UUID, PortfolioRef]) -> Row[Any]:
         latest = (await self._repo.versions(trade_id, lock=True))[-1]

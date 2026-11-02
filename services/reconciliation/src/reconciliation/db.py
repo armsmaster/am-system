@@ -81,4 +81,18 @@ acceptance = Table(
     Index("acceptance_account_day", "account_id", "day"),
 )
 
+# Точка отсчёта (design/08): при закрытии дня — какие принятые расхождения счёта
+# ждут пары на конец дня. Сверку следующих дней считают с неё, а не с начала истории.
+checkpoint = Table(
+    "checkpoint",
+    metadata,
+    Column("seq", BigInteger, Identity(), primary_key=True),
+    Column("account_id", Uuid, nullable=False),
+    Column("fund_id", Uuid, nullable=False),
+    Column("day", Date, nullable=False),
+    Column("waiting", JSONB, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Index("checkpoint_account_day", "account_id", "day", "seq"),
+)
+
 outbox = outbox_table(metadata)
