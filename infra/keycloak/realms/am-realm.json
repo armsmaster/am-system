@@ -40,6 +40,10 @@
       {
         "name": "trade_feed",
         "description": "Скрипт сделок: присылает пакеты сделок в booking и видит все портфели (служебная учётная запись)."
+      },
+      {
+        "name": "statement_feed",
+        "description": "Скрипт выписок брокера: присылает выписки по счетам в reconciliation и видит все счета (служебная учётная запись)."
       }
     ]
   },
@@ -142,6 +146,34 @@
       "publicClient": false,
       "clientAuthenticatorType": "client-secret",
       "secret": "trade-feed-dev",
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocolMappers": [
+        {
+          "name": "audience am-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "am-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "am-statement-feed",
+      "name": "Скрипт выписок брокера",
+      "description": "Служебная учётная запись: присылает выписки по счетам в reconciliation (роль statement_feed).",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "statement-feed-dev",
       "protocol": "openid-connect",
       "standardFlowEnabled": false,
       "implicitFlowEnabled": false,
@@ -299,6 +331,14 @@
       "serviceAccountClientId": "am-trade-feed",
       "realmRoles": [
         "trade_feed"
+      ]
+    },
+    {
+      "username": "service-account-am-statement-feed",
+      "enabled": true,
+      "serviceAccountClientId": "am-statement-feed",
+      "realmRoles": [
+        "statement_feed"
       ]
     },
     {

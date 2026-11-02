@@ -4,10 +4,11 @@
 и отмена — новые версии. Компенсационный взнос по РЕПО (решение 113) —
 операция портфеля сделки: деньги или бумаги между частями РЕПО; фонд
 пересчитывается с первой части, потому что проценты делятся по всему сроку.
-Паи и расходы проводятся в казначейский портфель фонда (решение 35), переводы —
-только между портфелями одного фонда (решение 37). Изменение, отметка «фонд
-пересчитать с даты» и событие для журнала пишутся одной транзакцией; запросы
-к соседям — до неё.
+Паи и вознаграждение проводятся в казначейский портфель фонда (решение 35),
+расход — в портфель, с чьего счёта платят, по умолчанию тоже в казначейский
+(решение 122). Переводы — только между портфелями одного фонда (решение 37).
+Изменение, отметка «фонд пересчитать с даты» и событие для журнала пишутся одной
+транзакцией; запросы к соседям — до неё.
 """
 
 from __future__ import annotations
@@ -51,7 +52,8 @@ class OperationInput:
     kind: OperationKind
     op_date: date
     fund_id: UUID | None = None  # паи и расходы
-    portfolio_id: UUID | None = None  # перевод: отправитель
+    # Перевод: отправитель. Расход: с чьего счёта платят; нет — казначейский (решение 122).
+    portfolio_id: UUID | None = None
     receiver_id: UUID | None = None  # перевод: получатель
     amount: Decimal | None = None
     units: Decimal | None = None
@@ -262,12 +264,16 @@ class OperationDesk:
     async def _fund_operation(
         self, entry: OperationInput, visible: Mapping[UUID, PortfolioRef]
     ) -> dict[str, Any]:
-        """Паи, расходы, вознаграждение — в казначейский портфель фонда (решение 35)."""
+        """Паи и вознаграждение — в казначейский портфель фонда (решение 35); расход —
+        в портфель, с чьего счёта платят, по умолчанию в казначейский (решение 122)."""
         fund = _treasury_fund(entry.fund_id, visible)
+        paying = fund.treasury_id
+        if entry.kind in EXPENSES and entry.portfolio_id is not None:
+            paying = _paying(entry.portfolio_id, fund, visible)
         values: dict[str, Any] = {
             "kind": entry.kind.value,
             "fund_id": fund.id,
-            "portfolio_id": fund.treasury_id,
+            "portfolio_id": paying,
             "op_date": entry.op_date,
             "amount": entry.amount,
         }
@@ -524,6 +530,17 @@ def _treasury_fund(fund_id: UUID | None, visible: Mapping[UUID, PortfolioRef]) -
             "операции фонда проводятся в него.",
         )
     return fund
+
+
+def _paying(portfolio_id: UUID, fund: PortfolioRef, visible: Mapping[UUID, PortfolioRef]) -> UUID:
+    """Портфель, с чьего счёта платят расход: physical того же фонда (решение 122)."""
+    found = visible.get(portfolio_id)
+    if found is None or found.kind != "physical" or found.fund_id != fund.id:
+        raise RuleViolationError(
+            "expense_portfolio",
+            f"Расход фонда {fund.code} проводят в его physical-портфель — с чьего счёта платят.",
+        )
+    return found.id
 
 
 def _values(row: Row[Any]) -> dict[str, Any]:

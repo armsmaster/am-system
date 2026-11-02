@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://am-system.local/api/statement-feed/v1/statements.schema.json",
+  "title": "Пакет выписок по счетам фондов, v1",
+  "description": "POST /api/reconciliation/feed/v1/statements. Выписка — всё, что произошло на счёте за день: остаток денег на начало и на конец, сделки дня, движения денег.",
+  "type": "object",
+  "required": ["source", "statements"],
+  "additionalProperties": false,
+  "properties": {
+    "source": {
+      "description": "Кто прислал пакет: код брокера или скрипта.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40
+    },
+    "statements": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1000,
+      "items": { "$ref": "#/$defs/statement" }
+    }
+  },
+  "$defs": {
+    "money": {
+      "description": "Рубли до копейки: число или строка.",
+      "type": ["number", "string"],
+      "pattern": "^-?\\d{1,18}(\\.\\d{1,2})?$"
+    },
+    "positive": {
+      "description": "Положительная сумма в рублях до копейки.",
+      "type": ["number", "string"],
+      "pattern": "^\\d{1,18}(\\.\\d{1,2})?$",
+      "exclusiveMinimum": 0
+    },
+    "code": { "type": "string", "minLength": 1, "maxLength": 40 },
+    "statement": {
+      "type": "object",
+      "required": ["account", "date", "opening_cash", "closing_cash"],
+      "additionalProperties": false,
+      "properties": {
+        "account": { "description": "Код счёта в системе.", "$ref": "#/$defs/code" },
+        "date": { "description": "День выписки.", "type": "string", "format": "date" },
+        "opening_cash": { "description": "Деньги на счёте на начало дня.", "$ref": "#/$defs/money" },
+        "closing_cash": { "description": "Деньги на счёте на конец дня.", "$ref": "#/$defs/money" },
+        "trades": {
+          "description": "Сделки, заключённые в этот день.",
+          "type": "array",
+          "maxItems": 5000,
+          "items": { "$ref": "#/$defs/trade" }
+        },
+        "movements": {
+          "description": "Деньги, которые в этот день пришли (+) или ушли (−).",
+          "type": "array",
+          "maxItems": 5000,
+          "items": { "$ref": "#/$defs/movement" }
+        }
+      }
+    },
+    "trade": {
+      "type": "object",
+      "required": ["external_id", "side", "security", "settle_date", "amount"],
+      "additionalProperties": false,
+      "properties": {
+        "external_id": { "description": "Номер сделки биржи.", "$ref": "#/$defs/code" },
+        "kind": { "enum": ["outright", "repo"], "default": "outright" },
+        "side": { "description": "У РЕПО — сторона первой части: sell — прямое.", "enum": ["buy", "sell"] },
+        "security": { "description": "SECID или ISIN; KSU — РЕПО с КСУ.", "$ref": "#/$defs/code" },
+        "settle_date": { "description": "Дата расчётов; у РЕПО — первой части.", "type": "string", "format": "date" },
+        "quantity": { "type": "integer", "minimum": 0, "default": 0 },
+        "price": {
+          "description": "Облигация — чистая цена в % от номинала, пай — ₽ за пай.",
+          "type": ["number", "string"],
+          "pattern": "^\\d{1,12}(\\.\\d{1,6})?$",
+          "minimum": 0,
+          "default": 0
+        },
+        "accrued": { "description": "НКД на одну бумагу, ₽.", "$ref": "#/$defs/money" },
+        "amount": { "description": "Сумма сделки; у РЕПО — первой части.", "$ref": "#/$defs/positive" },
+        "fee": { "description": "Комиссия брокера и биржи по сделке.", "$ref": "#/$defs/money", "default": 0 },
+        "repo_rate": { "description": "Ставка РЕПО, % годовых.", "type": ["number", "string"], "minimum": 0, "maximum": 100 },
+        "second_date": { "type": "string", "format": "date" },
+        "second_amount": { "$ref": "#/$defs/positive" }
+      },
+      "if": { "properties": { "kind": { "const": "repo" } }, "required": ["kind"] },
+      "then": { "required": ["repo_rate", "second_date", "second_amount"] },
+      "else": { "not": { "anyOf": [{ "required": ["repo_rate"] }, { "required": ["second_date"] }, { "required": ["second_amount"] }] } }
+    },
+    "movement": {
+      "type": "object",
+      "required": ["kind", "amount"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "settlement",
+            "fee",
+            "repo_first",
+            "repo_second",
+            "repo_contribution",
+            "coupon",
+            "amortization",
+            "redemption",
+            "transfer",
+            "unit_settlement",
+            "fee_payment",
+            "expense_payment",
+            "other"
+          ]
+        },
+        "amount": { "description": "+ пришли, − ушли; не ноль.", "$ref": "#/$defs/money", "not": { "const": 0 } },
+        "trade": { "description": "Номер сделки: расчёты, комиссия, части РЕПО, взнос; у купона — передача дохода по РЕПО.", "$ref": "#/$defs/code" },
+        "security": { "description": "Бумага: купон, амортизация, погашение.", "$ref": "#/$defs/code" },
+        "comment": { "type": "string", "maxLength": 200 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "enum": ["settlement", "fee", "repo_first", "repo_second", "repo_contribution"] } } },
+          "then": { "required": ["trade"], "not": { "required": ["security"] } }
+        },
+        {
+          "if": { "properties": { "kind": { "enum": ["coupon", "amortization", "redemption"] } } },
+          "then": { "required": ["security"] }
+        },
+        {
+          "if": { "properties": { "kind": { "enum": ["transfer", "unit_settlement", "fee_payment", "expense_payment", "other"] } } },
+          "then": { "not": { "anyOf": [{ "required": ["trade"] }, { "required": ["security"] }] } }
+        }
+      ]
+    }
+  }
+}

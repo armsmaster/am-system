@@ -1,0 +1,80 @@
+{
+  "source": "broker-x",
+  "statements": [
+    {
+      "account": "OPIF1-BROKER",
+      "date": "2026-11-26",
+      "opening_cash": 0,
+      "closing_cash": 60000000.00,
+      "movements": [
+        { "kind": "transfer", "amount": 60000000.00, "comment": "Перевод с банковского счёта фонда" }
+      ]
+    },
+    {
+      "account": "OPIF1-BROKER",
+      "date": "2026-11-27",
+      "opening_cash": 60000000.00,
+      "closing_cash": 60000000.00,
+      "trades": [
+        {
+          "external_id": "1000000001",
+          "side": "buy",
+          "security": "SU26238RMFS4",
+          "settle_date": "2026-11-30",
+          "quantity": 50000,
+          "price": 52.50,
+          "accrued": 35.01,
+          "amount": 28000500.00,
+          "fee": 2800.05
+        }
+      ]
+    },
+    {
+      "account": "OPIF1-BROKER",
+      "date": "2026-11-30",
+      "opening_cash": 60000000.00,
+      "closing_cash": 31996699.95,
+      "trades": [
+        {
+          "external_id": "1000000002",
+          "side": "sell",
+          "security": "SU26238RMFS4",
+          "settle_date": "2026-12-01",
+          "quantity": 25000,
+          "price": 52.60,
+          "accrued": 35.21,
+          "amount": 14030250.00,
+          "fee": 0
+        }
+      ],
+      "movements": [
+        { "kind": "settlement", "trade": "1000000001", "amount": -28000500.00 },
+        { "kind": "fee", "trade": "1000000001", "amount": -2800.05 }
+      ]
+    },
+    {
+      "account": "OPIF1-BROKER",
+      "date": "2026-12-01",
+      "opening_cash": 31996699.95,
+      "closing_cash": 46026949.95,
+      "movements": [
+        { "kind": "settlement", "trade": "1000000002", "amount": 14030250.00 }
+      ]
+    },
+    {
+      "account": "OPIF1-BROKER",
+      "date": "2026-12-02",
+      "opening_cash": 46026949.95,
+      "closing_cash": 46026949.95
+    },
+    {
+      "account": "OPIF1-BROKER",
+      "date": "2026-12-03",
+      "opening_cash": 46026949.95,
+      "closing_cash": 46911949.95,
+      "movements": [
+        { "kind": "coupon", "security": "SU26238RMFS4", "amount": 885000.00 }
+      ]
+    }
+  ]
+}

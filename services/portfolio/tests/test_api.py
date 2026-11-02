@@ -293,13 +293,29 @@ def test_user_sees_only_granted_subtree(
     assert [a["code"] for a in accounts] == ["A1"]
 
 
-def test_trade_feed_sees_every_portfolio(
-    admin: Api, ids: dict[str, str], client: TestClient, tokens: TokenFactory
+@pytest.mark.parametrize(
+    ("username", "role"),
+    [
+        ("service-account-am-trade-feed", "trade_feed"),
+        ("service-account-am-statement-feed", "statement_feed"),
+    ],
+)
+@pytest.mark.usefixtures("ids")
+def test_feeds_see_every_portfolio(
+    admin: Api,
+    client: TestClient,
+    tokens: TokenFactory,
+    username: str,
+    role: str,
 ) -> None:
-    # Скрипт сделок присылает сделки всех фондов (вопрос 100); менять портфели не может.
-    feed = Api(client, tokens, "service-account-am-trade-feed", "trade_feed")
+    # Скрипты сделок и выписок присылают данные всех фондов (вопрос 100); менять портфели
+    # не могут.
+    feed = Api(client, tokens, username, role)
 
     assert set(by_code(feed)) == set(by_code(admin))
+    assert [a["code"] for a in feed.ok("GET", "/accounts")] == [
+        a["code"] for a in admin.ok("GET", "/accounts")
+    ]
     assert feed.ok("GET", "/me")["sees_everything"] is True
     assert feed.call("POST", "/accounts", {}).status_code == 403
 

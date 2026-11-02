@@ -12,6 +12,7 @@
     "dev:refdata": "npm run dev -w @am/mfe-refdata",
     "dev:marketdata": "npm run dev -w @am/mfe-marketdata",
     "dev:booking": "npm run dev -w @am/mfe-booking",
+    "dev:reconciliation": "npm run dev -w @am/mfe-reconciliation",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "build": "npm run build --workspaces --if-present"

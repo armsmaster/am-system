@@ -123,7 +123,17 @@ describe('OperationsPage', () => {
         await user.selectOptions(within(form).getByLabelText('Вид расхода'), 'auditor');
         await user.type(within(form).getByLabelText('Сумма, ₽'), '30000');
       },
-      { kind: 'expense_payment', fund_id: 'p-fund', expense_kind: 'auditor', amount: '30000' },
+      { kind: 'expense_payment', fund_id: 'p-fund', portfolio_id: null, expense_kind: 'auditor', amount: '30000' },
+    ],
+    [
+      'начисление расхода',
+      async (form: HTMLElement, user: ReturnType<typeof userEvent.setup>) => {
+        // Плату за депозитарий брокер списывает с брокерского счёта.
+        await user.selectOptions(within(form).getByLabelText('С чьего счёта платят'), 'p-bonds');
+        await user.selectOptions(within(form).getByLabelText('Вид расхода'), 'exchange_broker');
+        await user.type(within(form).getByLabelText('Сумма, ₽'), '1500');
+      },
+      { kind: 'expense_accrual', fund_id: 'p-fund', portfolio_id: 'p-bonds', expense_kind: 'exchange_broker', amount: '1500' },
     ],
     [
       'выплата вознаграждения',

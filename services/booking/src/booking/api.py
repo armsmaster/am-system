@@ -22,6 +22,7 @@ from pydantic import (
 from am_common.app import AppResources, DbSession
 from am_common.auth import Principal, Role, require_any_role
 from am_common.clock import MOSCOW
+from booking.accounts import MAX_ACCOUNT_DAYS, AccountDay, AccountDays, account_days
 from booking.clients import (
     MarketdataClient,
     PortfolioClient,
@@ -421,6 +422,8 @@ class UnitsIn(_OperationBase):
 class ExpenseIn(_OperationBase):
     kind: Literal["expense_accrual", "expense_payment"]
     fund_id: UUID
+    # С чьего счёта платят: physical фонда; нет — казначейский (решение 122).
+    portfolio_id: UUID | None = None
     expense_kind: Literal["specdep", "registrar", "auditor", "exchange_broker", "other"]
     amount: Money
 
@@ -667,6 +670,61 @@ class LadderOut(BaseModel):
     instruments: list[InstrumentOut]
     days: list[LadderDayOut]
     forecasts: list[ForecastOut] = []
+
+
+class AccountTradeOut(BaseModel):
+    """Сделка дня на счёте — для сверки с отчётом брокера (design/08)."""
+
+    trade_id: UUID
+    version: int
+    status: str
+    portfolio_code: str
+    external_id: str | None
+    kind: str
+    side: str
+    instrument_id: UUID | None
+    instrument_kind: str
+    secid: str
+    short_name: str
+    quantity: int
+    price: Decimal
+    accrued: Decimal | None
+    amount: Decimal
+    fee: Decimal
+    settle_date: date
+    repo_rate: Decimal | None
+    second_date: date | None
+    second_amount: Decimal | None
+
+
+class AccountMovementOut(BaseModel):
+    """Движение денег дня: у движения по сделке — её номер, у выплаты — бумага."""
+
+    portfolio_code: str
+    kind: str
+    cash: Decimal
+    trade_id: UUID | None
+    external_id: str | None
+    instrument_id: UUID | None
+    secid: str | None
+
+
+class AccountDayOut(BaseModel):
+    date: date
+    trading: bool
+    calculated: bool
+    opening_cash: Decimal
+    closing_cash: Decimal
+    trades: list[AccountTradeOut]
+    movements: list[AccountMovementOut]
+
+
+class AccountDaysOut(BaseModel):
+    account_id: UUID
+    fund_id: UUID
+    portfolios: list[LadderPortfolioOut]
+    waiting_since: date | None
+    days: list[AccountDayOut]
 
 
 # --- сделки ---------------------------------------------------------------------
@@ -929,7 +987,8 @@ async def enter_operation(
     services: Services,
     now: Now,
 ) -> OperationOut:
-    """Паи и расходы — в казначейский портфель фонда; перевод — внутри фонда."""
+    """Паи и вознаграждение — в казначейский портфель фонда, расход — в портфель, с чьего
+    счёта платят; перевод — внутри фонда."""
     entry = OperationInput(**(body.model_dump() | {"kind": OperationKind(body.kind)}))
     view = await operation_desk(session, user, authorization, services, now).enter(entry)
     return _operation_out(view)
@@ -1099,6 +1158,81 @@ async def get_ladder(
     if found is None:
         raise NotFoundError("account", account_id)
     return _ladder_out(found)
+
+
+# --- день счёта для сверки -----------------------------------------------------
+
+
+@router.get("/accounts/{account_id}/days", tags=["positions"])
+async def get_account_days(
+    account_id: UUID,
+    _user: Staff,
+    *,
+    session: DbSession,
+    authorization: Authorization,
+    services: Services,
+    first: Annotated[date, Query(alias="from")],
+    last: Annotated[date, Query(alias="till")],
+) -> AccountDaysOut:
+    """Сделки дня, движения и остатки денег счёта по дням — с чем сверка сравнит выписку."""
+    if last < first or (last - first).days >= MAX_ACCOUNT_DAYS:
+        raise RuleViolationError(
+            "bad_period",
+            f"Период — от одного дня до {MAX_ACCOUNT_DAYS} дней, конец не раньше начала.",
+        )
+    visible = await services.portfolios.visible(authorization)
+    found = await account_days(
+        session, services.refdata, visible, account_id, first=first, last=last
+    )
+    if found is None:
+        raise NotFoundError("account", account_id)
+    return AccountDaysOut(
+        account_id=found.account_id,
+        fund_id=found.fund_id,
+        portfolios=[
+            LadderPortfolioOut(id=p.id, code=p.code, name=p.name) for p in found.portfolios
+        ],
+        waiting_since=found.waiting_since,
+        days=[_account_day_out(d, found) for d in found.days],
+    )
+
+
+def _account_day_out(day: AccountDay, found: AccountDays) -> AccountDayOut:
+    return AccountDayOut(
+        date=day.day,
+        trading=day.trading,
+        calculated=day.calculated,
+        opening_cash=day.opening,
+        closing_cash=day.closing,
+        trades=[
+            AccountTradeOut.model_validate(
+                {
+                    **t._mapping,
+                    "version": t.number,
+                    "portfolio_code": next(
+                        p.code for p in found.portfolios if p.id == t.portfolio_id
+                    ),
+                }
+            )
+            for t in day.trades
+        ],
+        movements=[
+            AccountMovementOut(
+                portfolio_code=portfolio.code,
+                kind=movement.kind.value,
+                cash=movement.cash,
+                trade_id=movement.trade_id,
+                external_id=None
+                if movement.trade_id is None
+                else found.deals[movement.trade_id].external_id,
+                instrument_id=movement.instrument_id,
+                secid=None
+                if movement.instrument_id is None
+                else found.names[movement.instrument_id].secid,
+            )
+            for portfolio, movement in day.movements
+        ],
+    )
 
 
 # --- ошибки → ответы HTTP -------------------------------------------------------

@@ -439,6 +439,8 @@ export type OperationInput =
   | (OperationBase & {
       readonly kind: 'expense_accrual' | 'expense_payment';
       readonly fund_id: string;
+      /** С чьего счёта платят; null — казначейский портфель (решение 122). */
+      readonly portfolio_id: string | null;
       readonly expense_kind: ExpenseKind;
       readonly amount: string;
     })

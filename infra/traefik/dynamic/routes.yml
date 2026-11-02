@@ -36,6 +36,12 @@ http:
       service: booking
       entryPoints: [web]
 
+    reconciliation-api:
+      rule: PathPrefix(`/api/reconciliation`)
+      middlewares: [strip-reconciliation]
+      service: reconciliation
+      entryPoints: [web]
+
     audit-api:
       rule: PathPrefix(`/api/audit`)
       middlewares: [strip-audit]
@@ -66,6 +72,12 @@ http:
       service: mfe-booking
       entryPoints: [web]
 
+    mfe-reconciliation:
+      rule: PathPrefix(`/mfe/reconciliation`)
+      middlewares: [strip-mfe-reconciliation]
+      service: mfe-reconciliation
+      entryPoints: [web]
+
     mfe-audit:
       rule: PathPrefix(`/mfe/audit`)
       middlewares: [strip-mfe-audit]
@@ -91,6 +103,9 @@ http:
     strip-marketdata:
       stripPrefix:
         prefixes: ["/api/marketdata"]
+    strip-reconciliation:
+      stripPrefix:
+        prefixes: ["/api/reconciliation"]
     strip-audit:
       stripPrefix:
         prefixes: ["/api/audit"]
@@ -109,6 +124,9 @@ http:
     strip-mfe-marketdata:
       stripPrefix:
         prefixes: ["/mfe/marketdata"]
+    strip-mfe-reconciliation:
+      stripPrefix:
+        prefixes: ["/mfe/reconciliation"]
 
   services:
     keycloak:
@@ -138,6 +156,12 @@ http:
         healthCheck:
           path: /health
           interval: 10s
+    reconciliation:
+      loadBalancer:
+        servers: [{ url: "http://reconciliation:8000" }]
+        healthCheck:
+          path: /health
+          interval: 10s
     audit:
       loadBalancer:
         servers: [{ url: "http://audit:8000" }]
@@ -159,6 +183,9 @@ http:
     mfe-marketdata:
       loadBalancer:
         servers: [{ url: "http://mfe-marketdata:80" }]
+    mfe-reconciliation:
+      loadBalancer:
+        servers: [{ url: "http://mfe-reconciliation:80" }]
     shell:
       loadBalancer:
         servers: [{ url: "http://shell:80" }]

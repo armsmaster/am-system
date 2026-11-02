@@ -13,6 +13,7 @@ interface Draft {
   fund_id: string;
   portfolio_id: string;
   receiver_id: string;
+  paying_id: string;
   op_date: string;
   units: string;
   amount: string;
@@ -65,7 +66,14 @@ function body(draft: Draft): OperationInput {
     };
   }
   if (kind === 'expense_accrual' || kind === 'expense_payment') {
-    return { ...common, kind, fund_id: draft.fund_id, expense_kind: draft.expense_kind, amount: decimalInput(draft.amount) };
+    return {
+      ...common,
+      kind,
+      fund_id: draft.fund_id,
+      portfolio_id: draft.paying_id || null,
+      expense_kind: draft.expense_kind,
+      amount: decimalInput(draft.amount),
+    };
   }
   if (kind === 'fee_payment') {
     return {
@@ -97,8 +105,10 @@ function body(draft: Draft): OperationInput {
 }
 
 /**
- * Операция фонда или перевод. Паи и расходы проводятся в казначейский портфель
- * фонда (решение 35); переводят только между портфелями одного фонда (решение 37).
+ * Операция фонда или перевод. Паи и вознаграждение проводятся в казначейский
+ * портфель фонда (решение 35), расход — в портфель, с чьего счёта платят, по умолчанию
+ * тоже в казначейский (решение 122); переводят только между портфелями одного фонда
+ * (решение 37).
  */
 export function OperationForm({
   context,
@@ -117,6 +127,7 @@ export function OperationForm({
     fund_id: funds[0]?.id ?? '',
     portfolio_id: physical[0]?.id ?? '',
     receiver_id: physical[1]?.id ?? '',
+    paying_id: '',
     op_date: today,
     units: '',
     amount: '',
@@ -212,6 +223,21 @@ export function OperationForm({
               />
             </label>
           </>
+        )}
+        {kind === 'expense' && (
+          <label>
+            С чьего счёта платят
+            <select value={draft.paying_id} onChange={(e) => set('paying_id', e.target.value)}>
+              <option value="">казначейский портфель фонда</option>
+              {physical
+                .filter((p) => p.fund_id === draft.fund_id)
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.code}
+                  </option>
+                ))}
+            </select>
+          </label>
         )}
         {kind === 'expense' && (
           <label>

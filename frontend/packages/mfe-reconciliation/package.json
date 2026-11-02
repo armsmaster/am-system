@@ -1,0 +1,20 @@
+{
+  "name": "@am/mfe-reconciliation",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Микрофронтенд сверки: сделки, движения и остатки денег фонда за день против выписок брокера и банка, ввод выписок, принятие расхождений",
+  "type": "module",
+  "scripts": {
+    "dev": "rsbuild dev",
+    "build": "rsbuild build",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@am/platform": "*",
+    "@am/ui": "*",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-router": "^7.18.4"
+  }
+}

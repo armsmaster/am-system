@@ -35,6 +35,7 @@ class Role(StrEnum):
     ADMIN = "admin"
     PRICE_FEED = "price_feed"  # скрипт цен — служебная учётная запись, не человек
     TRADE_FEED = "trade_feed"  # скрипт сделок — служебная учётная запись, не человек
+    STATEMENT_FEED = "statement_feed"  # скрипт выписок брокера — служебная учётная запись
 
 
 @dataclass(frozen=True, slots=True)

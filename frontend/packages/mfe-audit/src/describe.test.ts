@@ -238,6 +238,46 @@ describe('changes', () => {
     expect(objectLabel(event('fee_rate.set', { fund: {} }))).toBe('');
   });
 
+  it('describes statements and accepted discrepancies', () => {
+    const received = event('statement.received', {
+      account: { code: 'OPIF1-BROKER' },
+      date: '2026-12-02',
+      before: { opening_cash: '46026949.95', closing_cash: '46026949.95', trades: 0, movements: 0 },
+      after: { opening_cash: '46026949.95', closing_cash: '46911949.95', trades: 0, movements: 1 },
+    });
+    const accepted = event('discrepancy.accepted', {
+      account: { code: 'OPIF1-BROKER' },
+      date: '2026-12-02',
+      before: null,
+      after: { line: 'movement:coupon::i-1', status: 'not_in_statement', system: '885000', statement: null },
+    });
+
+    expect([actionLabel(received.type), objectLabel(received)]).toEqual([
+      'Получена выписка по счёту',
+      'OPIF1-BROKER, 02.12.2026',
+    ]);
+    expect(changes(received)).toEqual([
+      { field: 'Остаток на конец', before: '46026949.95', after: '46911949.95' },
+      { field: 'Движений денег', before: '0', after: '1' },
+    ]);
+    expect([actionLabel(accepted.type), objectLabel(accepted)]).toEqual([
+      'Принято расхождение сверки',
+      'OPIF1-BROKER, 02.12.2026',
+    ]);
+    expect(changes(accepted)).toEqual([
+      { field: 'Статус', before: '—', after: 'нет в выписке' },
+      { field: 'Строка сверки', before: '—', after: 'movement:coupon::i-1' },
+      { field: 'В системе', before: '—', after: '885000' },
+      { field: 'В выписке', before: '—', after: '—' },
+    ]);
+    expect(objectLabel(event('statement.received', { account: {}, date: '2026-12-02' }))).toBe(', 02.12.2026');
+    expect(['matched', 'mismatched', 'not_in_system'].map((status) => changes(event('x', { after: { status } }))[0]?.after)).toEqual([
+      'сходится',
+      'расходится',
+      'нет в системе',
+    ]);
+  });
+
   it('describes prices for past days', () => {
     const backfilled = event('prices.backfilled', {
       since: '2026-10-22',

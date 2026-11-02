@@ -31,6 +31,8 @@ const ACTIONS: Readonly<Record<string, string>> = {
   'operation.settled': 'Отмечен расчёт по паям',
   'operation.cancelled': 'Отменена операция фонда',
   'fee_rate.set': 'Изменена ставка комиссии от СЧА',
+  'statement.received': 'Получена выписка по счёту',
+  'discrepancy.accepted': 'Принято расхождение сверки',
 };
 
 const FIELDS: Readonly<Record<string, string>> = {
@@ -97,6 +99,13 @@ const FIELDS: Readonly<Record<string, string>> = {
   second_date: 'Вторая часть: дата',
   second_amount: 'Вторая часть: сумма',
   direction: 'Кто платит',
+  opening_cash: 'Остаток на начало',
+  closing_cash: 'Остаток на конец',
+  trades: 'Сделок',
+  movements: 'Движений денег',
+  line: 'Строка сверки',
+  system: 'В системе',
+  statement: 'В выписке',
 };
 
 /** Значения перечислений — словами. */
@@ -134,6 +143,10 @@ const VALUES: Readonly<Record<string, string>> = {
   repo_contribution: 'компенсационный взнос по РЕПО',
   in: 'НКЦ — фонду',
   out: 'фонд — НКЦ',
+  matched: 'сходится',
+  mismatched: 'расходится',
+  not_in_system: 'нет в системе',
+  not_in_statement: 'нет в выписке',
 };
 
 /** Порядок полей — как в FIELDS: база данных хранит ключи события в своём порядке. */
@@ -173,6 +186,8 @@ export function objectLabel(event: AuditEvent): string {
     operation?: { readonly kind: string; readonly portfolio: string | null };
     instruments?: readonly { readonly secid: string }[];
     fund?: Ref;
+    account?: Ref;
+    date?: string;
     since?: string;
     version?: number;
     day?: string;
@@ -182,6 +197,10 @@ export function objectLabel(event: AuditEvent): string {
   }
   if (data.fund) {
     return `${data.fund.code ?? ''}`;
+  }
+  if (data.account && data.date) {
+    // Сверка: выписка или принятое расхождение — по счёту за день.
+    return `${data.account.code ?? ''}, ${show(data.date)}`;
   }
   if (data.instruments && data.since) {
     // Цены за прошлые дни: по ним сервис сделок пересчитывает оценку позиций.

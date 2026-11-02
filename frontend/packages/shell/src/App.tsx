@@ -8,6 +8,7 @@ import {
   loadAudit,
   loadBooking,
   loadMarketdata,
+  loadReconciliation,
   loadRefdata,
   type MicrofrontendLoader,
 } from './microfrontends';
@@ -19,6 +20,7 @@ export interface Loaders {
   readonly refdata: MicrofrontendLoader;
   readonly marketdata: MicrofrontendLoader;
   readonly booking: MicrofrontendLoader;
+  readonly reconciliation: MicrofrontendLoader;
 }
 
 interface AppProps {
@@ -32,6 +34,7 @@ const LOADERS: Loaders = {
   refdata: loadRefdata,
   marketdata: loadMarketdata,
   booking: loadBooking,
+  reconciliation: loadReconciliation,
 };
 
 export function App({ session, loaders = LOADERS }: AppProps) {
@@ -68,6 +71,20 @@ export function AppRoutes({ session, loaders }: Required<AppProps>) {
           element={
             books ? (
               <Microfrontend load={loaders.booking} session={session} basePath="/booking" />
+            ) : (
+              <p role="alert">Раздел доступен трейдингу и сопровождению.</p>
+            )
+          }
+        />
+        <Route
+          path="/reconciliation/*"
+          element={
+            books ? (
+              <Microfrontend
+                load={loaders.reconciliation}
+                session={session}
+                basePath="/reconciliation"
+              />
             ) : (
               <p role="alert">Раздел доступен трейдингу и сопровождению.</p>
             )
@@ -115,6 +132,7 @@ function Layout({
           <NavLink to="/refdata">Справочник</NavLink>
           <NavLink to="/marketdata">Цены</NavLink>
           {books && <NavLink to="/booking">Сделки</NavLink>}
+          {books && <NavLink to="/reconciliation">Сверка</NavLink>}
           {isAdmin && <NavLink to="/admin">Администрирование</NavLink>}
           {isAdmin && <NavLink to="/audit">Журнал</NavLink>}
         </nav>
