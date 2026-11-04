@@ -9,6 +9,7 @@ members = [
     "am-system",
     "audit",
     "booking",
+    "limits",
     "marketdata",
     "portfolio",
     "reconciliation",
@@ -74,6 +75,7 @@ dependencies = [
     { name = "am-quant" },
     { name = "audit" },
     { name = "booking" },
+    { name = "limits" },
     { name = "marketdata" },
     { name = "portfolio" },
     { name = "reconciliation" },
@@ -98,6 +100,7 @@ requires-dist = [
     { name = "am-quant", editable = "libs/am-quant" },
     { name = "audit", editable = "services/audit" },
     { name = "booking", editable = "services/booking" },
+    { name = "limits", editable = "services/limits" },
     { name = "marketdata", editable = "services/marketdata" },
     { name = "portfolio", editable = "services/portfolio" },
     { name = "reconciliation", editable = "services/reconciliation" },
@@ -609,6 +612,21 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/93/93/303b8592909bd583f83f02818ffbea3f7647ca1e22b1cd5465d04b8145fe/librt-0.16.0-cp313-cp313-win32.whl", hash = "sha256:02d89c813d5ff74b17df72d3a34819d132cd168e56b81bf755b809bd9e46b8c4", size = 106236, upload-time = "2026-09-29T00:53:27.43Z" },
     { url = "https://files.pythonhosted.org/packages/cf/24/80bbb463c60ed18e29cb26aba386ddb76609580e4e7160710e550587018c/librt-0.16.0-cp313-cp313-win_amd64.whl", hash = "sha256:14ed6ebe3e4f85f326d7920011ad30ff49ed9334e62cf88caef9ba973d9e3a92", size = 126180, upload-time = "2026-09-29T00:53:28.7Z" },
     { url = "https://files.pythonhosted.org/packages/43/80/b1a6fbdd7da825cdd55c71aa81eb6cfa82c513c360774152eacb50b4a771/librt-0.16.0-cp313-cp313-win_arm64.whl", hash = "sha256:83d4041a3d9b2fd053a8a4e1f22878b3e5833e2712956382d5c048d791454e91", size = 116557, upload-time = "2026-09-29T00:53:30.012Z" },
+]
+
+[[package]]
+name = "limits"
+version = "0.1.0"
+source = { editable = "services/limits" }
+dependencies = [
+    { name = "am-common" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "am-common", editable = "libs/am-common" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.54" },
 ]
 
 [[package]]

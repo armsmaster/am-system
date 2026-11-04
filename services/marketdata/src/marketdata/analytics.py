@@ -38,6 +38,7 @@ from am_quant.spread import (
     linker_flows,
     linker_spread,
     price_at_spread,
+    reset_duration,
 )
 from marketdata.prices import Choice
 from marketdata.queries import (
@@ -83,6 +84,7 @@ class Terms:
     bond: Bond
     type: BondType
     floater: FloaterSpec | None = None
+    frequency: int | None = None  # купонов в год по условиям выпуска
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +109,8 @@ class SpreadView:
     funding: RatePoint  # RUONIA
     index: RatePoint | None  # ставка индекса флоатера; у линкера — нет
     terms: Terms
+    # Модифицированная дюрация до ближайшего купона — для лимитов (design/09); у линкера — нет.
+    reset_duration: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -286,7 +290,7 @@ def bond_terms(params: dict[str, Any]) -> Terms:
         margin=Decimal(floater["margin_bp"]) / BASIS_POINTS,
         capitalized=bool(floater["capitalized"]),
     )
-    return Terms(bond, BondType.FLOATER, spec)
+    return Terms(bond, BondType.FLOATER, spec, params.get("coupon_frequency"))
 
 
 def _coupons(params: dict[str, Any]) -> tuple[Coupon, ...]:
@@ -399,11 +403,12 @@ def _spread(setup: _Setup, dirty: Decimal) -> SpreadView:
     if terms.floater is None:
         result = linker_spread(terms.bond, setup.settle, horizon, face_value=setup.face, **common)
         return SpreadView(result, funding, None, terms)
-    result = floater_spread(
-        terms.bond,
-        setup.settle,
-        horizon,
-        terms=_floater_terms(terms.floater, setup.rates),
-        **common,
+    floater = _floater_terms(terms.floater, setup.rates)
+    result = floater_spread(terms.bond, setup.settle, horizon, terms=floater, **common)
+    return SpreadView(
+        result,
+        funding,
+        setup.rates[terms.floater.rate],
+        terms,
+        reset_duration(terms.bond, setup.settle, floater, terms.frequency),
     )
-    return SpreadView(result, funding, setup.rates[terms.floater.rate], terms)

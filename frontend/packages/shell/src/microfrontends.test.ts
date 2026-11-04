@@ -12,6 +12,7 @@ const {
   loadAudit,
   loadMarketdata,
   loadBooking,
+  loadLimits,
   loadReconciliation,
   loadRefdata,
   microfrontendRemotes,
@@ -30,11 +31,12 @@ describe('microfrontendRemotes', () => {
         name: 'mfe_reconciliation',
         entry: 'https://am.example/mfe/reconciliation/mf-manifest.json',
       },
+      { name: 'mfe_limits', entry: 'https://am.example/mfe/limits/mf-manifest.json' },
     ]);
   });
 
   it('can point a remote to its dev server', () => {
-    const [admin, audit, refdata, marketdata, booking, reconciliation] = microfrontendRemotes(
+    const [admin, audit, refdata, marketdata, booking, reconciliation, limits] = microfrontendRemotes(
       {
         PUBLIC_MFE_ADMIN_URL: 'http://localhost:3001/',
         PUBLIC_MFE_AUDIT_URL: 'http://localhost:3002/',
@@ -42,6 +44,7 @@ describe('microfrontendRemotes', () => {
         PUBLIC_MFE_MARKETDATA_URL: 'http://localhost:3004/',
         PUBLIC_MFE_BOOKING_URL: 'http://localhost:3005/',
         PUBLIC_MFE_RECONCILIATION_URL: 'http://localhost:3006/',
+        PUBLIC_MFE_LIMITS_URL: 'http://localhost:3007/',
       },
       'http://localhost:3000',
     );
@@ -52,6 +55,7 @@ describe('microfrontendRemotes', () => {
     expect(marketdata?.entry).toBe('http://localhost:3004/mf-manifest.json');
     expect(booking?.entry).toBe('http://localhost:3005/mf-manifest.json');
     expect(reconciliation?.entry).toBe('http://localhost:3006/mf-manifest.json');
+    expect(limits?.entry).toBe('http://localhost:3007/mf-manifest.json');
   });
 });
 
@@ -77,6 +81,7 @@ describe('loading', () => {
     expect(await loadMarketdata()).toBe(module);
     expect(await loadBooking()).toBe(module);
     expect(await loadReconciliation()).toBe(module);
+    expect(await loadLimits()).toBe(module);
     expect(runtime.loadRemote.mock.calls).toEqual([
       ['mfe_admin/App'],
       ['mfe_audit/App'],
@@ -84,6 +89,7 @@ describe('loading', () => {
       ['mfe_marketdata/App'],
       ['mfe_booking/App'],
       ['mfe_reconciliation/App'],
+      ['mfe_limits/App'],
     ]);
   });
 

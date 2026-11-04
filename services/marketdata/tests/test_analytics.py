@@ -238,6 +238,8 @@ async def test_key_rate_floater(api: Api, resources: Resources, world: World) ->
         "0.010405",
     )
     assert spread["yield_percent"] == "15.724468"
+    # Для лимитов — дюрация до купона 12.11: 14 дней от расчётов 29.10, прогноз КС 14% + 1,3%.
+    assert spread["reset_duration"] == "0.032946"
 
 
 async def test_floater_what_if_spread(api: Api, resources: Resources, world: World) -> None:
@@ -275,6 +277,7 @@ async def test_veb_linker(api_now: Api, resources: Resources) -> None:
         "2.188054",
         "0.234609",
     )
+    assert spread["reset_duration"] is None
     # «Что если»: цена по спреду — обратная задача.
     back = api_now.analytics(LINKER, spread="224.8461")["price"]["clean"]
     assert abs(Decimal(back) - Decimal("99.75")) < Decimal("0.0001")

@@ -7,7 +7,13 @@ from decimal import Decimal
 import pytest
 
 from am_quant.bond import Bond, Coupon, Horizon, HorizonKind, Principal, QuantError
-from am_quant.spread import FloaterTerms, floater_spread, linker_flows, linker_spread
+from am_quant.spread import (
+    FloaterTerms,
+    floater_spread,
+    linker_flows,
+    linker_spread,
+    reset_duration,
+)
 
 SETTLE = date(2026, 10, 29)
 RUONIA = Decimal("0.139")
@@ -113,3 +119,48 @@ def test_no_coupons_before_the_horizon() -> None:
     with pytest.raises(QuantError) as error:
         spread(bond, terms, Decimal(990))
     assert error.value.code == "no_coupons"
+
+
+# --- дюрация флоатера до ближайшего купона (design/09) -------------------------
+
+# Эмитент А из примера шага 9: КС 14,00% + 1,30%, купон раз в месяц, до выплаты 20 дней.
+MONTHLY = Bond(
+    face_value=Decimal(1000),
+    maturity=date(2027, 11, 30),
+    coupons=(
+        Coupon(date(2026, 11, 1), date(2026, 12, 1)),
+        Coupon(date(2026, 12, 1), date(2026, 12, 31)),
+    ),
+)
+KEY_RATE = FloaterTerms(index=Decimal("0.14"), margin=Decimal("0.013"), capitalized=False)
+
+
+def test_reset_duration_of_the_methodology_example() -> None:
+    # t = 20/365 = 0,0548; y = (1 + 0,153/12)^12 − 1 = 16,42%; MD = 0,0548 / 1,1642.
+    found = reset_duration(MONTHLY, date(2026, 11, 11), KEY_RATE, frequency=12)
+
+    assert round(found, 6) == Decimal("0.047066")
+
+
+def test_reset_duration_takes_the_announced_coupon() -> None:
+    # Объявленная ставка важнее прогноза; объявлена только сумма — ставка из суммы.
+    rate = replace(MONTHLY, coupons=(replace(MONTHLY.coupons[0], rate=Decimal("0.2")),))
+    amount = replace(MONTHLY, coupons=(replace(MONTHLY.coupons[0], amount=Decimal("16.44")),))
+    settle = date(2026, 11, 11)
+
+    by_rate = reset_duration(rate, settle, KEY_RATE, frequency=12)
+    by_amount = reset_duration(amount, settle, KEY_RATE, frequency=12)
+
+    assert by_rate < reset_duration(MONTHLY, settle, KEY_RATE, frequency=12)
+    # 16,44 ₽ за 30 дней на 1 000 ₽ — 20% годовых: как объявленная ставка 20%.
+    assert round(by_amount, 4) == round(by_rate, 4)
+
+
+def test_reset_duration_without_frequency_and_without_coupons() -> None:
+    # Без условий выпуска число выплат в год — по длине периода: 365 / 30.
+    found = reset_duration(MONTHLY, date(2026, 11, 11), KEY_RATE)
+    assert round(found, 3) == Decimal("0.047")
+
+    with pytest.raises(QuantError) as refused:
+        reset_duration(MONTHLY, date(2026, 12, 31), KEY_RATE)
+    assert refused.value.code == "no_coupon"

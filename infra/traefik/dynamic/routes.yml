@@ -42,6 +42,12 @@ http:
       service: reconciliation
       entryPoints: [web]
 
+    limits-api:
+      rule: PathPrefix(`/api/limits`)
+      middlewares: [strip-limits]
+      service: limits
+      entryPoints: [web]
+
     audit-api:
       rule: PathPrefix(`/api/audit`)
       middlewares: [strip-audit]
@@ -78,6 +84,12 @@ http:
       service: mfe-reconciliation
       entryPoints: [web]
 
+    mfe-limits:
+      rule: PathPrefix(`/mfe/limits`)
+      middlewares: [strip-mfe-limits]
+      service: mfe-limits
+      entryPoints: [web]
+
     mfe-audit:
       rule: PathPrefix(`/mfe/audit`)
       middlewares: [strip-mfe-audit]
@@ -106,6 +118,9 @@ http:
     strip-reconciliation:
       stripPrefix:
         prefixes: ["/api/reconciliation"]
+    strip-limits:
+      stripPrefix:
+        prefixes: ["/api/limits"]
     strip-audit:
       stripPrefix:
         prefixes: ["/api/audit"]
@@ -127,6 +142,9 @@ http:
     strip-mfe-reconciliation:
       stripPrefix:
         prefixes: ["/mfe/reconciliation"]
+    strip-mfe-limits:
+      stripPrefix:
+        prefixes: ["/mfe/limits"]
 
   services:
     keycloak:
@@ -162,6 +180,12 @@ http:
         healthCheck:
           path: /health
           interval: 10s
+    limits:
+      loadBalancer:
+        servers: [{ url: "http://limits:8000" }]
+        healthCheck:
+          path: /health
+          interval: 10s
     audit:
       loadBalancer:
         servers: [{ url: "http://audit:8000" }]
@@ -186,6 +210,9 @@ http:
     mfe-reconciliation:
       loadBalancer:
         servers: [{ url: "http://mfe-reconciliation:80" }]
+    mfe-limits:
+      loadBalancer:
+        servers: [{ url: "http://mfe-limits:80" }]
     shell:
       loadBalancer:
         servers: [{ url: "http://shell:80" }]

@@ -418,3 +418,40 @@ div.inline {
 .rule-types button {
   padding: 0 8px;
 }
+
+/* Лимиты (design/09): фильтры страницы, показатели фонда, строки по статусу. */
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+
+.figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 4px 16px;
+  margin: 12px 0;
+}
+
+.figures dt {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.figures dd {
+  margin: 0 0 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+table.data tr.status-breach td {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+table.data tr.status-warning td,
+table.data tr.status-no_data td {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+}

@@ -199,6 +199,18 @@ def test_positions_with_valuation_and_dv01(trader: Api) -> None:
 
 
 @pytest.mark.usefixtures("week")
+def test_risk_management_reads_but_does_not_trade(client: TestClient, tokens: TokenFactory) -> None:
+    # По позициям, СЧА и сделкам дня считаются лимиты (design/09); сделки вводит трейдинг.
+    risk = Api(client, tokens, "risk", "risk")
+
+    [ofz] = risk.ok("GET", "/positions", portfolio_id=str(BONDS), date="2026-11-30")["lines"]
+    assert (ofz["duration"], ofz["reset_duration"]) == ("5.89", None)
+    assert risk.ok("GET", "/nav", fund_id=str(FUND), **{"from": "2026-11-30", "till": "2026-11-30"})
+    assert risk.ok("GET", "/trades", portfolio_id=str(FUND), date="2026-11-30")
+    assert risk.call("POST", "/trades", trade()).status_code == 403
+
+
+@pytest.mark.usefixtures("week")
 def test_past_period_and_a_day_without_a_calculation(trader: Api) -> None:
     found = trader.ok(
         "GET", "/results", portfolio_id=str(BONDS), **{"from": "2026-11-26", "till": "2026-11-30"}

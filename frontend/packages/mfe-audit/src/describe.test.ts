@@ -368,6 +368,20 @@ describe('changes', () => {
     expect(actionLabel('classifier.value_renamed')).toBe('Переименовано значение классификатора');
   });
 
+  it('describes a saved version of a limit set', () => {
+    const saved = event('limit_set.saved', {
+      fund: { code: 'DOHOD2' },
+      before: { version: 1, valid_from: '2026-11-01', document: 'Политика 1.0', limits: 'Л1, Л2' },
+      after: { version: 2, valid_from: '2026-11-12', document: 'Политика 1.0', limits: 'Л1, Л2' },
+    });
+
+    expect([actionLabel(saved.type), objectLabel(saved)]).toEqual(['Сохранена версия набора лимитов', 'DOHOD2']);
+    expect(changes(saved)).toEqual([
+      { field: 'Действует с', before: '01.11.2026', after: '12.11.2026' },
+      { field: 'Версия', before: '1', after: '2' },
+    ]);
+  });
+
   it('describes prices for past days', () => {
     const backfilled = event('prices.backfilled', {
       since: '2026-10-22',

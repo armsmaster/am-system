@@ -93,6 +93,35 @@ def floater_flows(
     return cash_flows(bond, settle, horizon, coupon)
 
 
+def reset_duration(
+    bond: Bond, settle: date, terms: FloaterTerms, frequency: int | None = None
+) -> Decimal:
+    """Модифицированная дюрация флоатера до ближайшей выплаты купона (design/09):
+
+        MD = t / (1 + y),   y = (1 + c/f)^f − 1
+
+    t — лет до ближайшей выплаты (ACT/365), c — ставка текущего купона: объявленная,
+    по объявленной сумме или прогноз по текущей ставке индекса; f — выплат в год,
+    без условий выпуска — по длине текущего периода. На рост ставок флоатер отвечает
+    только до ближайшей выплаты: дальше купон догонит ставку.
+    """
+    coupon = next((c for c in bond.coupons if c.end > settle), None)
+    if coupon is None:
+        raise QuantError("no_coupon", "Впереди нет купонов — дюрацию до купона не посчитать.")
+    with localcontext() as context:
+        context.prec = PRECISION
+        tau = Decimal(coupon.days) / DAYS
+        if coupon.rate is not None:
+            rate = coupon.rate
+        elif coupon.amount is not None:
+            rate = coupon.amount / (bond.outstanding(coupon.start) * tau)
+        else:
+            rate = terms.index + terms.margin
+        per_year = Decimal(frequency) if frequency else DAYS / Decimal(coupon.days)
+        effective = power(ONE + rate / per_year, per_year) - ONE
+        return Decimal((coupon.end - settle).days) / DAYS / (ONE + effective)
+
+
 def linker_flows(
     bond: Bond, settle: date, horizon: Horizon, face_value: Decimal, ruonia: Decimal
 ) -> tuple[CashFlow, ...]:

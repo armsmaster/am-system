@@ -187,8 +187,12 @@ class MarketdataClient(_ServiceClient):
             return None
         if found["spread"] is not None:
             spread = found["spread"]
+            reset = spread.get("reset_duration")
             return Metrics(
-                "spread", Decimal(spread["spread_dv01"]), Decimal(spread["spread_duration"])
+                "spread",
+                Decimal(spread["spread_dv01"]),
+                Decimal(spread["spread_duration"]),
+                None if reset is None else Decimal(reset),
             )
         for item in found["yields"]:
             if item["dv01"] is not None:
@@ -203,6 +207,8 @@ class Metrics:
     basis: str
     dv01: Decimal  # ₽ на бумагу за 1 бп
     duration: Decimal  # модифицированная, лет
+    # Флоатер: модифицированная дюрация до ближайшего купона — для лимитов (design/09).
+    reset_duration: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -61,6 +61,8 @@ from booking.trades import (
 
 # Сделки вводят все авторизованные пользователи (решение 25); скрипт цен — нет.
 Staff = Annotated[Principal, Depends(require_any_role(Role.TRADING, Role.OPERATIONS))]
+# Позиции, СЧА и сделки читает и риск-менеджмент: по ним считаются лимиты (design/09).
+Viewer = Annotated[Principal, Depends(require_any_role(Role.TRADING, Role.OPERATIONS, Role.RISK))]
 Operations = Annotated[Principal, Depends(require_any_role(Role.OPERATIONS))]
 # День закрывает сервис сверки, когда все счета фонда сверены (design/08); открывает
 # заново — администратор.
@@ -289,6 +291,8 @@ class LineOut(BaseModel):
     dv01: Decimal | None = None
     duration: Decimal | None = None
     metrics_basis: str | None = None
+    # Флоатер: модифицированная дюрация до ближайшего купона — для лимитов (design/09).
+    reset_duration: Decimal | None = None
 
 
 class MovementOut(BaseModel):
@@ -807,7 +811,7 @@ async def enter_trade(
 
 @router.get("/trades", tags=["trades"])
 async def list_trades(
-    user: Staff,
+    user: Viewer,
     *,
     session: DbSession,
     authorization: Authorization,
@@ -920,7 +924,7 @@ async def import_trades(
 
 @router.get("/positions", tags=["positions"])
 async def get_positions(
-    _user: Staff,
+    _user: Viewer,
     *,
     session: DbSession,
     authorization: Authorization,
@@ -1142,7 +1146,7 @@ async def set_fee_rate(
 
 @router.get("/nav", tags=["nav"])
 async def get_nav(
-    _user: Staff,
+    _user: Viewer,
     *,
     session: DbSession,
     authorization: Authorization,
@@ -1656,5 +1660,6 @@ def _line_out(line: PositionLine) -> LineOut:
         flags=[f.value for f in line.flags],
         dv01=None if line.dv01 is None else line.dv01.quantize(Decimal("0.01")),
         duration=None if line.metrics is None else line.metrics.duration,
+        reset_duration=None if line.metrics is None else line.metrics.reset_duration,
         metrics_basis=None if line.metrics is None else line.metrics.basis,
     )

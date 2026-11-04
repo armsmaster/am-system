@@ -10,6 +10,7 @@ dependencies = [
     "am-quant",
     "audit",
     "booking",
+    "limits",
     "marketdata",
     "portfolio",
     "reconciliation",
@@ -39,6 +40,7 @@ am-common = { workspace = true }
 am-quant = { workspace = true }
 audit = { workspace = true }
 booking = { workspace = true }
+limits = { workspace = true }
 marketdata = { workspace = true }
 portfolio = { workspace = true }
 reconciliation = { workspace = true }
@@ -87,6 +89,7 @@ source = [
     "am_quant",
     "audit",
     "booking",
+    "limits",
     "marketdata",
     "portfolio",
     "reconciliation",

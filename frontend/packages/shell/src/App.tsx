@@ -7,6 +7,7 @@ import {
   loadAdmin,
   loadAudit,
   loadBooking,
+  loadLimits,
   loadMarketdata,
   loadReconciliation,
   loadRefdata,
@@ -21,6 +22,7 @@ export interface Loaders {
   readonly marketdata: MicrofrontendLoader;
   readonly booking: MicrofrontendLoader;
   readonly reconciliation: MicrofrontendLoader;
+  readonly limits: MicrofrontendLoader;
 }
 
 interface AppProps {
@@ -35,6 +37,7 @@ const LOADERS: Loaders = {
   marketdata: loadMarketdata,
   booking: loadBooking,
   reconciliation: loadReconciliation,
+  limits: loadLimits,
 };
 
 export function App({ session, loaders = LOADERS }: AppProps) {
@@ -51,9 +54,11 @@ export function AppRoutes({ session, loaders }: Required<AppProps>) {
     isAdmin ? page : <p role="alert">Раздел доступен только администратору.</p>;
   // Сделки вводят все авторизованные пользователи (решение 25): трейдинг, сопровождение, админ.
   const books = hasRole(session, 'trading') || hasRole(session, 'operations');
+  // Лимиты смотрят и риск-менеджмент: он ведёт набор лимитов (design/09).
+  const limits = books || hasRole(session, 'risk');
 
   return (
-    <Layout session={session} isAdmin={isAdmin} books={books}>
+    <Layout session={session} isAdmin={isAdmin} books={books} limits={limits}>
       <Routes>
         <Route path="/" element={<Home session={session} />} />
         <Route
@@ -91,6 +96,16 @@ export function AppRoutes({ session, loaders }: Required<AppProps>) {
           }
         />
         <Route
+          path="/limits/*"
+          element={
+            limits ? (
+              <Microfrontend load={loaders.limits} session={session} basePath="/limits" />
+            ) : (
+              <p role="alert">Раздел доступен трейдингу, сопровождению и риск-менеджменту.</p>
+            )
+          }
+        />
+        <Route
           path="/admin/*"
           element={adminOnly(
             <Microfrontend load={loaders.admin} session={session} basePath="/admin" />,
@@ -112,11 +127,13 @@ function Layout({
   session,
   isAdmin,
   books,
+  limits,
   children,
 }: {
   readonly session: Session;
   readonly isAdmin: boolean;
   readonly books: boolean;
+  readonly limits: boolean;
   readonly children: ReactNode;
 }) {
   const roles = [...session.roles].map((role) => ROLE_LABELS[role]).join(', ');
@@ -133,6 +150,7 @@ function Layout({
           <NavLink to="/marketdata">Цены</NavLink>
           {books && <NavLink to="/booking">Сделки</NavLink>}
           {books && <NavLink to="/reconciliation">Сверка</NavLink>}
+          {limits && <NavLink to="/limits">Лимиты</NavLink>}
           {isAdmin && <NavLink to="/admin">Администрирование</NavLink>}
           {isAdmin && <NavLink to="/audit">Журнал</NavLink>}
         </nav>

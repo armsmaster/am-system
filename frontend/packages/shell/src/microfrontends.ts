@@ -24,6 +24,7 @@ export function microfrontendRemotes(
     | 'PUBLIC_MFE_MARKETDATA_URL'
     | 'PUBLIC_MFE_BOOKING_URL'
     | 'PUBLIC_MFE_RECONCILIATION_URL'
+    | 'PUBLIC_MFE_LIMITS_URL'
   > = import.meta.env,
   origin: string = window.location.origin,
 ) {
@@ -42,6 +43,7 @@ export function microfrontendRemotes(
       name: 'mfe_reconciliation',
       entry: manifest(env.PUBLIC_MFE_RECONCILIATION_URL, '/mfe/reconciliation/'),
     },
+    { name: 'mfe_limits', entry: manifest(env.PUBLIC_MFE_LIMITS_URL, '/mfe/limits/') },
   ];
 }
 
@@ -55,6 +57,7 @@ export const loadRefdata: MicrofrontendLoader = () => load('mfe_refdata/App');
 export const loadMarketdata: MicrofrontendLoader = () => load('mfe_marketdata/App');
 export const loadBooking: MicrofrontendLoader = () => load('mfe_booking/App');
 export const loadReconciliation: MicrofrontendLoader = () => load('mfe_reconciliation/App');
+export const loadLimits: MicrofrontendLoader = () => load('mfe_limits/App');
 
 async function load(id: string): Promise<MicrofrontendModule> {
   const module = await loadRemote<MicrofrontendModule>(id);

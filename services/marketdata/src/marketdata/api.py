@@ -234,6 +234,8 @@ class SpreadOut(BaseModel):
     breakdown: BreakdownOut
     spread_duration: Decimal
     spread_dv01: Decimal  # ₽ на бумагу за 1 бп спреда
+    # Флоатер: модифицированная дюрация до ближайшего купона — для лимитов (design/09).
+    reset_duration: Decimal | None = None
 
 
 class PriceUsedOut(BaseModel):
@@ -710,6 +712,7 @@ def _spread_out(view: SpreadView) -> SpreadOut:
         ),
         spread_duration=_six(result.risk.modified),
         spread_dv01=_six(result.risk.dv01),
+        reset_duration=None if view.reset_duration is None else _six(view.reset_duration),
     )
 
 

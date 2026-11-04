@@ -43,6 +43,7 @@ const ACTIONS: Readonly<Record<string, string>> = {
   'classifier.value_renamed': 'Переименовано значение классификатора',
   'classification.set': 'Задано значение классификатора',
   'classification.cancelled': 'Отменено значение классификатора',
+  'limit_set.saved': 'Сохранена версия набора лимитов',
 };
 
 const FIELDS: Readonly<Record<string, string>> = {
@@ -126,6 +127,9 @@ const FIELDS: Readonly<Record<string, string>> = {
   values: 'Значения',
   description: 'Описание',
   class_value: 'Значение',
+  version: 'Версия',
+  document: 'Документ',
+  limits: 'Лимиты',
 };
 
 /** Значения перечислений — словами. */

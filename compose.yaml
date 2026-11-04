@@ -182,6 +182,19 @@ services:
     depends_on: *service-depends
     healthcheck: *service-healthcheck
 
+  limits:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE: limits
+    environment:
+      <<: *service-env
+      AM_DATABASE_URL: postgresql+asyncpg://svc_limits:${SERVICES_DB_PASSWORD:-services-dev}@postgres:5432/am
+    depends_on: *service-depends
+    healthcheck: *service-healthcheck
+
   audit:
     restart: unless-stopped
     build:
@@ -236,6 +249,12 @@ services:
     build:
       context: frontend
       dockerfile: packages/mfe-reconciliation/Dockerfile
+
+  mfe-limits:
+    restart: unless-stopped
+    build:
+      context: frontend
+      dockerfile: packages/mfe-limits/Dockerfile
 
 volumes:
   postgres-data:

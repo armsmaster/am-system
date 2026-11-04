@@ -28,6 +28,7 @@ const loaders: Loaders = {
   marketdata: remote('marketdata'),
   booking: remote('booking'),
   reconciliation: remote('reconciliation'),
+  limits: remote('limits'),
 };
 
 function renderAt(path: string, session = fakeSession('admin')) {
@@ -113,6 +114,23 @@ describe('App', () => {
       expect(screen.getByRole('link', { name: 'Сверка' })).toBeInTheDocument();
     },
   );
+
+  it.each([['trading'], ['operations'], ['risk'], ['admin']] as const)(
+    'opens the limits for %s',
+    async (...roles) => {
+      renderAt('/limits/sets', fakeSession(...roles));
+
+      expect(await screen.findByText('limits remote at /limits')).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: 'Лимиты' })).toBeInTheDocument();
+    },
+  );
+
+  it('hides the limits from a user without a role', () => {
+    renderAt('/limits', fakeSession());
+
+    expect(screen.queryByRole('link', { name: 'Лимиты' })).not.toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('трейдингу, сопровождению и риск-менеджменту');
+  });
 
   it('hides the reconciliation from a user without a role', () => {
     renderAt('/reconciliation', fakeSession());

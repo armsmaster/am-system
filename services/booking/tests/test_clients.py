@@ -199,11 +199,22 @@ async def test_marks_for_valuation() -> None:
                 "spread": None,
                 "yields": [{"dv01": None}, {"dv01": "0.326", "modified_duration": "5.89"}],
             },
-            ("yield", Decimal("0.326"), Decimal("5.89")),
+            ("yield", Decimal("0.326"), Decimal("5.89"), None),
         ),
         (
             {"spread": {"spread_dv01": "0.04", "spread_duration": "0.41"}, "yields": []},
-            ("spread", Decimal("0.04"), Decimal("0.41")),
+            ("spread", Decimal("0.04"), Decimal("0.41"), None),
+        ),
+        (
+            {
+                "spread": {
+                    "spread_dv01": "0.01",
+                    "spread_duration": "0.1",
+                    "reset_duration": "0.03",
+                },
+                "yields": [],
+            },
+            ("spread", Decimal("0.01"), Decimal("0.1"), Decimal("0.03")),
         ),
         ({"spread": None, "yields": [{"dv01": None}]}, None),
         (None, None),
@@ -214,7 +225,9 @@ async def test_metrics(answer: Any, expected: Any) -> None:
         return httpx2.Response(404) if answer is None else httpx2.Response(200, json=answer)
 
     found = await marketdata_with(handler).metrics(BOND, datetime(2026, 11, 30, tzinfo=UTC))
-    assert (None if found is None else (found.basis, found.dv01, found.duration)) == expected
+    assert (
+        None if found is None else (found.basis, found.dv01, found.duration, found.reset_duration)
+    ) == expected
 
 
 def ref(number: int, kind: str, *parents: int) -> PortfolioRef:
