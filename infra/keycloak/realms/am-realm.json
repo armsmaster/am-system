@@ -52,6 +52,10 @@
       {
         "name": "close_day",
         "description": "Закрывает день фонда в booking — только служебная учётная запись сервиса сверки."
+      },
+      {
+        "name": "fund_reader",
+        "description": "Читает позиции, СЧА и сделки любого фонда — только служебная учётная запись сервиса лимитов."
       }
     ]
   },
@@ -285,6 +289,34 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "am-limits",
+      "name": "Сервис limits: проверка сделки до ввода",
+      "description": "Служебная учётная запись: сервис лимитов читает позиции, СЧА и сделки фонда для проверки сделки трейдера, который ведёт только портфель фонда (роль fund_reader).",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "limits-dev-secret",
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocolMappers": [
+        {
+          "name": "audience am-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "am-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
     }
   ],
   "users": [
@@ -411,6 +443,14 @@
       "serviceAccountClientId": "am-reconciliation",
       "realmRoles": [
         "close_day"
+      ]
+    },
+    {
+      "username": "service-account-am-limits",
+      "enabled": true,
+      "serviceAccountClientId": "am-limits",
+      "realmRoles": [
+        "fund_reader"
       ]
     }
   ]

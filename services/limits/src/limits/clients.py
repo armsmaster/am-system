@@ -14,6 +14,7 @@ from uuid import UUID
 
 import httpx2
 
+from am_common.service_token import ServiceToken, ServiceTokenError
 from limits.engine import Attributes, Classifier, Deal, Figures, Issuer, Paper, Position, Rated
 
 
@@ -22,6 +23,14 @@ class ServiceUnavailableError(Exception):
 
     def __init__(self, service: str, detail: str) -> None:
         super().__init__(f"{service}: {detail}")
+        self.service = service
+
+
+class ServiceRefusedError(Exception):
+    """Соседний сервис отказал в доступе: данных этого фонда тому, кто спрашивает, не видно."""
+
+    def __init__(self, service: str) -> None:
+        super().__init__(service)
         self.service = service
 
 
@@ -39,6 +48,9 @@ class _Client:
             )
         except httpx2.HTTPError as exc:
             raise ServiceUnavailableError(self.service, str(exc)) from exc
+        # Отказ в доступе — не поломка соседа: так и говорим.
+        if response.status_code in {403, 404}:
+            raise ServiceRefusedError(self.service)
         if response.is_error:
             raise ServiceUnavailableError(self.service, f"{response.status_code} for {path}")
         return response.json()
@@ -62,6 +74,14 @@ class PortfolioClient(_Client):
             for item in payload
             if item["is_fund"]
         }
+
+    async def access(self, fund_id: UUID, authorization: str) -> str | None:
+        """Что пользователь видит: fund — сам фонд, portfolio — только портфель фонда,
+        None — ничего (решение 147)."""
+        payload = cast(list[dict[str, Any]], await self._get("/portfolios", authorization))
+        if any(item["is_fund"] and item["id"] == str(fund_id) for item in payload):
+            return "fund"
+        return "portfolio" if any(item["fund_id"] == str(fund_id) for item in payload) else None
 
 
 class BookingClient(_Client):
@@ -179,6 +199,16 @@ class RefdataClient(_Client):
         """Коды агентств, рейтинги которых ведёт справочник."""
         scale = await self._get("/ratings/scale", authorization)
         return {a["code"] for a in scale["agencies"]}
+
+
+async def service_authorization(token: ServiceToken | None) -> str:
+    """Заголовок Authorization служебной учётной записи am-limits."""
+    if token is None:
+        raise ServiceUnavailableError("keycloak", "service credentials are not configured")
+    try:
+        return f"Bearer {await token.get()}"
+    except ServiceTokenError as exc:
+        raise ServiceUnavailableError("keycloak", str(exc)) from exc
 
 
 def _classes(found: dict[str, str]) -> dict[UUID, UUID]:

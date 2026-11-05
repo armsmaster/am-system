@@ -19,6 +19,7 @@ import type {
   Positions,
   Results,
   Trade,
+  WhatIf,
 } from '../api';
 
 export function session(...roles: Role[]): Session {
@@ -429,6 +430,32 @@ export function ladder(fields: Partial<Ladder> = {}): Ladder {
   };
 }
 
+/** Покупка облигаций Эмитента А 13.11 (пример методики шага 9): Л3 на эмитента нарушен. */
+export function whatIf(fields: Partial<WhatIf> = {}): WhatIf {
+  return {
+    limit_set: { version: 1 },
+    calculated: true,
+    changes: [
+      {
+        code: 'Л3',
+        name: 'Корпоративные облигации AAA и AA+',
+        label: 'на эмитента',
+        type: 'share',
+        metric: null,
+        group: 'Эмитент А',
+        before: '9.6429',
+        after: '10.1786',
+        before_status: 'warning',
+        after_status: 'breach',
+        maximum: '10',
+        minimum: null,
+        reasons: [],
+      },
+    ],
+    ...fields,
+  };
+}
+
 /** Подменный API: отвечает фиксированными данными, вызовы запоминает. */
 export function fakeApi() {
   const answer = <T,>(value: T) => vi.fn((..._args: unknown[]) => Promise.resolve(value));
@@ -455,6 +482,7 @@ export function fakeApi() {
     settleOperation: answer(operation({ settled_date: '2026-11-27' })),
     cancelOperation: answer(operation({ status: 'cancelled' })),
     ladder: answer(ladder()),
+    limitsCheck: answer<WhatIf>(whatIf()),
     results: answer<Results>(results()),
     nav: answer<Nav>(nav()),
     feeRates: answer<FeeRate[]>(FEE_RATES),
@@ -497,7 +525,12 @@ export function refused(message: string): ApiError {
 }
 
 /** Раздел «Сделки» под /booking, как в shell; адрес страницы — в элементе «Адрес». */
-export function renderBooking(api: FakeApi = fakeApi(), path = '/booking', isOperations = false) {
+export function renderBooking(
+  api: FakeApi = fakeApi(),
+  path = '/booking',
+  isOperations = false,
+  seesLimits = false,
+) {
   render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
@@ -505,7 +538,7 @@ export function renderBooking(api: FakeApi = fakeApi(), path = '/booking', isOpe
           path="/booking/*"
           element={
             <>
-              <Booking api={asApi(api)} basePath="/booking" isOperations={isOperations} />
+              <Booking api={asApi(api)} basePath="/booking" isOperations={isOperations} seesLimits={seesLimits} />
               <Where />
             </>
           }

@@ -62,7 +62,11 @@ from booking.trades import (
 # Сделки вводят все авторизованные пользователи (решение 25); скрипт цен — нет.
 Staff = Annotated[Principal, Depends(require_any_role(Role.TRADING, Role.OPERATIONS))]
 # Позиции, СЧА и сделки читает и риск-менеджмент: по ним считаются лимиты (design/09).
-Viewer = Annotated[Principal, Depends(require_any_role(Role.TRADING, Role.OPERATIONS, Role.RISK))]
+# Сервис лимитов читает их и сам — для проверки сделки до ввода (решение 147).
+Viewer = Annotated[
+    Principal,
+    Depends(require_any_role(Role.TRADING, Role.OPERATIONS, Role.RISK, Role.FUND_READER)),
+]
 Operations = Annotated[Principal, Depends(require_any_role(Role.OPERATIONS))]
 # День закрывает сервис сверки, когда все счета фонда сверены (design/08); открывает
 # заново — администратор.

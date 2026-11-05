@@ -10,27 +10,32 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, FastAPI, Header, Path, Query, Request, Response, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from am_common.app import AppResources, DbSession
 from am_common.auth import Principal, Role, require_any_role
 from am_common.events import Actor
+from am_common.service_token import ServiceToken, realm_token_url
 from limits.clients import (
     BookingClient,
     Fund,
     PortfolioClient,
     RefdataClient,
+    ServiceRefusedError,
     ServiceUnavailableError,
 )
-from limits.desk import BreachView, DayView, Desk, ReportView, SetRecord
-from limits.engine import CheckResult, Status
+from limits.desk import BreachView, CheckView, DayView, Desk, ReportView, SetRecord
+from limits.engine import CheckResult, Status, Totals
 from limits.errors import NotFoundError, RuleViolationError
 from limits.model import SetBody
 from limits.settings import LimitsSettings
+from limits.whatif import Change, Trade
 
 # Лимиты смотрят трейдинг, сопровождение и риск-менеджмент; набор ведёт риск-менеджмент.
 Viewer = Annotated[Principal, Depends(require_any_role(Role.TRADING, Role.OPERATIONS, Role.RISK))]
 Risk = Annotated[Principal, Depends(require_any_role(Role.RISK))]
+# Проверку сделки до ввода видят трейдинг и риск-менеджмент.
+Trader = Annotated[Principal, Depends(require_any_role(Role.TRADING, Role.RISK))]
 Authorization = Annotated[str, Header()]
 Comment = Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=500)]
 Decision = Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=200)]
@@ -45,6 +50,7 @@ SERVICE_NAMES = {
     "portfolio": "Сервис портфелей",
     "booking": "Сервис сделок",
     "refdata": "Справочник",
+    "keycloak": "Вход служебной учётной записи лимитов",
 }
 FOUR = Decimal("0.0001")
 TWO = Decimal("0.01")
@@ -58,7 +64,26 @@ def get_desk(request: Request, resources: AppResources, session: DbSession) -> D
         portfolio=PortfolioClient(resources.http, settings.portfolio_url),
         booking=BookingClient(resources.http, settings.booking_url),
         refdata=RefdataClient(resources.http, settings.refdata_url),
+        service_token=_service_token(request, resources, settings),
     )
+
+
+def _service_token(
+    request: Request, resources: AppResources, settings: LimitsSettings
+) -> ServiceToken | None:
+    """Токен am-limits — один на приложение: Keycloak не спрашиваем на каждую проверку."""
+    secret = settings.keycloak_client_secret
+    if secret is None:
+        return None
+    state = request.app.state
+    if getattr(state, "service_token", None) is None:
+        state.service_token = ServiceToken(
+            resources.http,
+            token_url=realm_token_url(settings.keycloak_url, settings.keycloak_realm),
+            client_id=settings.keycloak_client_id,
+            client_secret=secret.get_secret_value(),
+        )
+    return cast(ServiceToken, state.service_token)
 
 
 Desks = Annotated[Desk, Depends(get_desk)]
@@ -193,6 +218,50 @@ class ExtensionIn(BaseModel):
     comment: Comment
 
 
+class TradeIn(BaseModel):
+    """Сделка из формы — ещё не введённая."""
+
+    fund_id: UUID
+    kind: Literal["outright", "repo"]
+    side: Literal["buy", "sell"]  # у РЕПО: buy — обратное, sell — прямое
+    amount: Annotated[Decimal, Field(gt=0)]  # у РЕПО — сумма первой части
+    instrument_id: UUID | None = None
+    secid: Annotated[str, StringConstraints(max_length=50)] = ""
+    quantity: Annotated[int, Field(ge=0)] = 0
+
+    @model_validator(mode="after")
+    def _paper(self) -> TradeIn:
+        if self.kind == "outright" and self.instrument_id is None:
+            raise ValueError("У покупки и продажи нужна бумага.")
+        return self
+
+
+class ChangeOut(BaseModel):
+    code: str
+    name: str
+    label: str | None
+    type: str
+    metric: str | None
+    group: str | None  # группа бумаги сделки: эмитент, выпуск, все бумаги проверки
+    before: Decimal | None
+    after: Decimal | None
+    before_status: Status
+    after_status: Status
+    maximum: Decimal | None
+    minimum: Decimal | None
+    reasons: list[str]
+
+
+class WhatIfOut(BaseModel):
+    fund_id: UUID  # код фонда трейдер может не видеть: доступ бывает только к портфелю
+    date: date
+    limit_set: SetHeader | None  # нет набора — проверять нечем
+    calculated: bool  # есть ли расчёт фонда за сегодня
+    before: TotalsOut | None
+    after: TotalsOut | None
+    changes: list[ChangeOut]  # только проверки, которые сделка меняет
+
+
 class ReportOut(BaseModel):
     month: str
     day: DayOut  # использование на конец месяца — или на вчера, если месяц идёт
@@ -284,6 +353,21 @@ async def extension(
     return _breach_out(found)
 
 
+@router.post("/check", tags=["limits"])
+async def check(
+    body: TradeIn, _user: Trader, desk: Desks, authorization: Authorization
+) -> WhatIfOut:
+    """Лимиты после сделки, «что если»: только информация — сделку не запрещает."""
+    trade = Trade(
+        side=body.side,
+        amount=body.amount,
+        instrument_id=body.instrument_id if body.kind == "outright" else None,
+        secid=body.secid,
+        quantity=body.quantity,
+    )
+    return _what_if_out(await desk.check(body.fund_id, trade, authorization))
+
+
 @router.get("/funds/{fund_id}/reports/{month}", tags=["limits"])
 async def report(
     fund_id: UUID, month: Month, _user: Viewer, desk: Desks, authorization: Authorization
@@ -316,9 +400,18 @@ def install_error_handlers(app: FastAPI) -> None:
             f"{SERVICE_NAMES.get(service, service)} недоступен. Повторите позже.",
         )
 
+    async def refused(_request: Request, exc: Exception) -> Response:
+        service = cast(ServiceRefusedError, exc).service
+        return problem(
+            403,
+            f"{service}_refused",
+            f"{SERVICE_NAMES.get(service, service)} не отдал данные фонда: к ним нет доступа.",
+        )
+
     app.add_exception_handler(RuleViolationError, rule_violation)
     app.add_exception_handler(NotFoundError, not_found)
     app.add_exception_handler(ServiceUnavailableError, unavailable)
+    app.add_exception_handler(ServiceRefusedError, refused)
 
 
 # --- вспомогательное ------------------------------------------------------------
@@ -385,18 +478,51 @@ def _day_out(view: DayView) -> DayOut:
         today=view.today,
         limit_set=None if view.limit_set is None else SetHeader(**_header(view.limit_set)),
         calculated=usage is not None,
-        totals=None
-        if usage is None
-        else TotalsOut(
-            assets=usage.totals.assets.quantize(TWO),
-            liabilities=usage.totals.liabilities.quantize(TWO),
-            nav=usage.totals.nav.quantize(TWO),
-            leverage=_round(usage.totals.leverage),
-            duration=_round(usage.totals.duration),
-        ),
+        totals=None if usage is None else _totals_out(usage.totals),
         checks=[] if usage is None else [_check_out(c) for c in usage.checks],
         open_breaches=view.open_breaches,
         overdue_breaches=view.overdue_breaches,
+    )
+
+
+def _totals_out(totals: Totals) -> TotalsOut:
+    return TotalsOut(
+        assets=totals.assets.quantize(TWO),
+        liabilities=totals.liabilities.quantize(TWO),
+        nav=totals.nav.quantize(TWO),
+        leverage=_round(totals.leverage),
+        duration=_round(totals.duration),
+    )
+
+
+def _change_out(change: Change) -> ChangeOut:
+    found = change.check
+    return ChangeOut(
+        code=found.code,
+        name=found.name,
+        label=found.label,
+        type=found.type,
+        metric=found.metric,
+        group=change.group,
+        before=_round(change.before),
+        after=_round(change.after),
+        before_status=change.before_status,
+        after_status=change.after_status,
+        maximum=found.maximum,
+        minimum=found.minimum,
+        reasons=change.reasons,
+    )
+
+
+def _what_if_out(view: CheckView) -> WhatIfOut:
+    return WhatIfOut(
+        fund_id=view.fund_id,
+        date=view.day,
+        limit_set=None if view.limit_set is None else SetHeader(**_header(view.limit_set)),
+        calculated=view.before is not None,
+        before=None if view.before is None else _totals_out(view.before.totals),
+        after=None if view.after is None else _totals_out(view.after.totals),
+        changes=[_change_out(c) for c in view.changes],
     )
 
 

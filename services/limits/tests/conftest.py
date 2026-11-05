@@ -515,6 +515,11 @@ class World:
         self.not_calculated: set[date] = set()
         self.blank: dict[date, frozenset[UUID]] = {}  # рейтинги эмитентов ещё не введены
         self.now = NOW  # часы сервиса: журнал проверяет прошедшие дни
+        self.keycloak_down = False
+        # Портфели показывают все фонды, а сервис сделок прячет по hidden: так проверяем
+        # отказ в доступе у соседа.
+        self.visible_funds = False
+        self.tokens_issued = 0  # сколько раз служебная учётная запись брала токен
         # Трейдер второй фонд не видит.
         self.hidden = {"trading": {str(OTHER_FUND)}}
 
@@ -534,6 +539,15 @@ class World:
         url, path = str(request.url), request.url.path
         if path.endswith("/protocol/openid-connect/certs"):
             return httpx2.Response(200, json=self.tokens.jwks())
+        if path.endswith("/protocol/openid-connect/token"):
+            # Служебная учётная запись am-limits: роль fund_reader.
+            if self.keycloak_down:
+                raise httpx2.ConnectError("keycloak is down", request=request)
+            self.tokens_issued += 1
+            token = self.tokens.issue(
+                subject="svc-limits", username="service-account-am-limits", roles=["fund_reader"]
+            )
+            return httpx2.Response(200, json={"access_token": token, "expires_in": 300})
         for name, base in (
             ("portfolio", PORTFOLIO_URL),
             ("booking", BOOKING_URL),
@@ -549,20 +563,37 @@ class World:
                 return response
         raise AssertionError(f"unexpected request {url}")
 
+    @staticmethod
+    def _roles(request: httpx2.Request) -> list[str]:
+        token = request.headers["Authorization"].removeprefix("Bearer ")
+        found: list[str] = jwt.decode(token, options={"verify_signature": False})["realm_access"][
+            "roles"
+        ]
+        return found
+
     def _portfolio(self, request: httpx2.Request, path: str) -> httpx2.Response:
         assert path == "/portfolios"
-        token = request.headers["Authorization"].removeprefix("Bearer ")
-        roles = jwt.decode(token, options={"verify_signature": False})["realm_access"]["roles"]
+        roles = self._roles(request)
         hidden = {h for role in roles for h in self.hidden.get(role, set())}
+        if self.visible_funds:
+            hidden = set()
         items = [
             {"id": str(FUND), "code": "DOHOD2", "name": "Доход 2", "is_fund": True},
             {"id": str(OTHER_FUND), "code": "OPIF1", "name": "ОПИФ 1", "is_fund": True},
             {"id": str(BONDS), "code": "DOHOD2-BONDS", "name": "Облигации", "is_fund": False},
         ]
+        for item in items:
+            item["fund_id"] = None if item["is_fund"] else str(FUND)
         return httpx2.Response(200, json=[i for i in items if i["id"] not in hidden])
 
     def _booking(self, request: httpx2.Request, path: str) -> httpx2.Response:
         params = request.url.params
+        # Сервис сделок сам проверяет доступ: чужой фонд — «не найден».
+        roles = self._roles(request)
+        asked = params.get("fund_id") or params.get("portfolio_id")
+        hidden = {h for role in roles for h in self.hidden.get(role, set())}
+        if "fund_reader" not in roles and asked in hidden:
+            return httpx2.Response(404, json={"detail": "not found"})
         if path == "/nav":
             day = date.fromisoformat(params["from"])
             days = [] if day in self.not_calculated else [self._nav(day)]
@@ -706,6 +737,8 @@ def bare_settings(postgres_url: str, redis_url: str, schema: str) -> LimitsSetti
         portfolio_url=PORTFOLIO_URL,
         booking_url=BOOKING_URL,
         refdata_url=REFDATA_URL,
+        keycloak_url="http://keycloak.test/auth",
+        keycloak_client_secret=SecretStr("limits-test-secret"),
     )
 
 

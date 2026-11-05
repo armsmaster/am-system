@@ -535,6 +535,46 @@ export interface ImportReport {
   }[];
 }
 
+// --- лимиты после сделки (design/09, часть 9.4) --------------------------------------
+
+/** Сделка из формы — ещё не введённая; сумма у РЕПО — первой части. */
+export interface LimitsTrade {
+  readonly fund_id: string;
+  readonly kind: TradeKind;
+  /** У РЕПО: buy — обратное, sell — прямое. */
+  readonly side: Side;
+  readonly amount: Decimal;
+  readonly instrument_id: string | null;
+  readonly secid: string;
+  readonly quantity: number;
+}
+
+export type LimitStatus = 'ok' | 'warning' | 'breach' | 'no_data';
+
+export interface LimitChange {
+  readonly code: string;
+  readonly name: string;
+  readonly label: string | null;
+  readonly type: 'metric' | 'share' | 'eligible' | 'purchase';
+  readonly metric: string | null;
+  /** Группа бумаги сделки: эмитент, выпуск, все бумаги проверки. */
+  readonly group: string | null;
+  readonly before: Decimal | null;
+  readonly after: Decimal | null;
+  readonly before_status: LimitStatus;
+  readonly after_status: LimitStatus;
+  readonly maximum: Decimal | null;
+  readonly minimum: Decimal | null;
+  readonly reasons: readonly string[];
+}
+
+export interface WhatIf {
+  readonly limit_set: { readonly version: number } | null;
+  readonly calculated: boolean;
+  /** Только проверки, которые сделка меняет. */
+  readonly changes: readonly LimitChange[];
+}
+
 const BASE = '/api/booking';
 
 /** Вызовы API сделок; портфели — из сервиса портфелей, бумаги — из справочника. */
@@ -575,6 +615,7 @@ export function bookingApi(client: ApiClient) {
     /** Пакет — как в файле: форму проверяет сервис по спецификации. */
     importTrades: (batch: unknown) => client.post<ImportReport>(`${BASE}/feed/v1/trades`, batch),
     ladder: (accountId: string) => client.get<Ladder>(`${BASE}/ladder${query({ account_id: accountId })}`),
+    limitsCheck: (trade: LimitsTrade) => client.post<WhatIf>('/api/limits/check', trade),
   };
 }
 

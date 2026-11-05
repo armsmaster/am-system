@@ -20,7 +20,14 @@ import { TradesPage } from './pages/TradesPage';
 export default function BookingApp({ session, basePath }: MicrofrontendProps) {
   const api = useMemo(() => bookingApi(createApiClient(session)), [session]);
   // Сервер всё равно проверит права; здесь — только чтобы не показывать лишнего.
-  return <Booking api={api} basePath={basePath} isOperations={hasRole(session, 'operations')} />;
+  return (
+    <Booking
+      api={api}
+      basePath={basePath}
+      isOperations={hasRole(session, 'operations')}
+      seesLimits={hasRole(session, 'trading') || hasRole(session, 'risk')}
+    />
+  );
 }
 
 export interface Context {
@@ -30,16 +37,20 @@ export interface Context {
   readonly instruments: readonly Instrument[];
   /** Сопровождение: подтверждает и правит подтверждённые сделки (решение 95), проводит операции фонда. */
   readonly isOperations: boolean;
+  /** Лимиты после сделки в форме — трейдингу и риск-менеджменту (design/09, часть 9.4). */
+  readonly seesLimits: boolean;
 }
 
 export function Booking({
   api,
   basePath,
   isOperations,
+  seesLimits = false,
 }: {
   readonly api: BookingApi;
   readonly basePath: string;
   readonly isOperations: boolean;
+  readonly seesLimits?: boolean;
 }) {
   const load = useCallback(() => Promise.all([api.portfolios(), api.instruments()]), [api]);
   const [state] = useLoad(load);
@@ -60,7 +71,7 @@ export function Booking({
       </nav>
       <LoadedView state={state}>
         {([portfolios, instruments]) => {
-          const context: Context = { api, basePath, portfolios, instruments, isOperations };
+          const context: Context = { api, basePath, portfolios, instruments, isOperations, seesLimits };
           return (
             <Routes>
               <Route index element={<TradesPage context={context} />} />

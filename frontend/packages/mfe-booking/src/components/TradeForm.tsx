@@ -5,6 +5,7 @@ import { useState, type FormEvent } from 'react';
 import type { Context } from '../App';
 import type { Side, Trade, TradeInput, TradeKind } from '../api';
 import { decimalInput, formatMoney, fromMoscowInput, moscowInput, secondAmount } from '../format';
+import { LimitsCheck, tradeForCheck } from './LimitsCheck';
 
 /** Обеспечение РЕПО с КСУ: бумаги нет, только деньги (решение 117). */
 const KSU = 'ksu';
@@ -113,6 +114,21 @@ export function TradeForm({
   const isBond = !ksu && instrument?.kind !== 'fund_share';
   const choices = repo ? context.instruments.filter((i) => i.kind === 'bond') : context.instruments;
   const expected = ksu ? secondAmount(draft.amount, draft.repo_rate, draft.settle_date, draft.second_date) : null;
+  // Лимиты после сделки — только для новой: исправление уже сидит в позициях.
+  const limits =
+    context.seesLimits && !initial
+      ? tradeForCheck({
+          kind: draft.kind,
+          side: draft.side,
+          fundId: physical.find((p) => p.id === draft.portfolio_id)?.fund_id ?? null,
+          instrument: ksu || !instrument ? null : instrument,
+          quantity: draft.quantity,
+          price: draft.price,
+          faceValue: draft.face_value,
+          accrued: draft.accrued,
+          amount: draft.amount,
+        })
+      : undefined;
 
   function set<K extends keyof Draft>(field: K, value: Draft[K]) {
     setDraft((current) => ({ ...current, [field]: value }));
@@ -344,6 +360,7 @@ export function TradeForm({
         </p>
       )}
       {hint && <p className="notice notice-warning">{hint}</p>}
+      {limits !== undefined && <LimitsCheck api={context.api} trade={limits} />}
       <button type="submit" disabled={busy}>
         {initial ? 'Сохранить версию' : 'Ввести сделку'}
       </button>{' '}

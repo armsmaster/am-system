@@ -293,6 +293,14 @@ def test_neighbour_error_is_unavailable(risk: Api, world: World, model: ModuleTy
     )
 
 
+def test_neighbour_refusal_is_not_an_outage(risk: Api, world: World, model: ModuleType) -> None:
+    save(risk, model)
+    # Сервис сделок не видит у риск-менеджмента доступа к фонду — так и говорим.
+    world.hidden["risk"] = {str(model.FUND)}
+    world.visible_funds = True
+    assert risk.refused("GET", f"/funds/{model.FUND}/days/2026-11-10") == (403, "booking_refused")
+
+
 @pytest.fixture
 def stream(settings: LimitsSettings) -> redis.Redis:
     assert settings.redis_url is not None

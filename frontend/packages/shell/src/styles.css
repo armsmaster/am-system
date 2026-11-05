@@ -455,3 +455,31 @@ table.data tr.status-no_data td {
   background: var(--warning-bg);
   color: var(--warning-text);
 }
+
+/* Лимиты после сделки в форме сделки (design/09, часть 9.4). */
+.limits-check {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.limits-check h4 {
+  margin: 0 0 6px;
+}
+
+.limits-check li {
+  padding: 4px 6px;
+  border-radius: 4px;
+}
+
+.limits-check li.status-breach {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+.limits-check li.status-warning,
+.limits-check li.status-no_data {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+}

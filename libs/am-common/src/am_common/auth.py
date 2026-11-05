@@ -38,6 +38,9 @@ class Role(StrEnum):
     TRADE_FEED = "trade_feed"  # скрипт сделок — служебная учётная запись, не человек
     STATEMENT_FEED = "statement_feed"  # скрипт выписок брокера — служебная учётная запись
     CLOSE_DAY = "close_day"  # сервис сверки закрывает день фонда в booking
+    # Сервис лимитов читает позиции, СЧА и сделки любого фонда — для проверки сделки
+    # до ввода у трейдера, который ведёт только портфель фонда (решение 147).
+    FUND_READER = "fund_reader"
 
 
 @dataclass(frozen=True, slots=True)

@@ -298,6 +298,7 @@ def test_user_sees_only_granted_subtree(
     [
         ("service-account-am-trade-feed", "trade_feed"),
         ("service-account-am-statement-feed", "statement_feed"),
+        ("service-account-am-limits", "fund_reader"),
     ],
 )
 @pytest.mark.usefixtures("ids")
@@ -308,8 +309,8 @@ def test_feeds_see_every_portfolio(
     username: str,
     role: str,
 ) -> None:
-    # Скрипты сделок и выписок присылают данные всех фондов (вопрос 100); менять портфели
-    # не могут.
+    # Скрипты сделок и выписок присылают данные всех фондов (вопрос 100), сервис лимитов
+    # их читает (решение 147); менять портфели не могут.
     feed = Api(client, tokens, username, role)
 
     assert set(by_code(feed)) == set(by_code(admin))

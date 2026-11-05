@@ -192,6 +192,9 @@ services:
     environment:
       <<: *service-env
       AM_DATABASE_URL: postgresql+asyncpg://svc_limits:${SERVICES_DB_PASSWORD:-services-dev}@postgres:5432/am
+      # Данные фонда для проверки сделки трейдера портфеля — под учётной записью am-limits.
+      AM_KEYCLOAK_URL: http://keycloak:8080/auth
+      AM_KEYCLOAK_CLIENT_SECRET: ${LIMITS_KEYCLOAK_SECRET:-limits-dev-secret}
     depends_on: *service-depends
     healthcheck: *service-healthcheck
 

@@ -4,6 +4,16 @@ import { describe, expect, it, vi } from 'vitest';
 import { bookingApi, type OperationInput, type TradeInput } from './api';
 
 /** Каждый вызов — с методом и путём, которые ждут сервисы. */
+const LIMITS_TRADE = {
+  fund_id: 'p-fund',
+  kind: 'outright',
+  side: 'buy',
+  amount: '15000000.00',
+  instrument_id: 'i-ofz',
+  secid: 'SU26238RMFS4',
+  quantity: 15000,
+} as const;
+
 describe('bookingApi', () => {
   const client = {
     get: vi.fn((..._args: unknown[]) => Promise.resolve(null)),
@@ -55,6 +65,7 @@ describe('bookingApi', () => {
       ['/api/booking/operations/o-1/cancel', { comment: 'ошибка' }],
     ],
     ['ladder', () => api.ladder('a-1'), 'get', ['/api/booking/ladder?account_id=a-1']],
+    ['limitsCheck', () => api.limitsCheck(LIMITS_TRADE), 'post', ['/api/limits/check', LIMITS_TRADE]],
     ['nav', () => api.nav('f-1', '2026-11-01', '2026-11-30'), 'get', ['/api/booking/nav?fund_id=f-1&from=2026-11-01&till=2026-11-30']],
     ['feeRates', () => api.feeRates('f-1'), 'get', ['/api/booking/funds/f-1/fee-rates']],
     ['setFeeRate', () => api.setFeeRate('f-1', rate), 'post', ['/api/booking/funds/f-1/fee-rates', rate]],

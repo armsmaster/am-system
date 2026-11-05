@@ -10,7 +10,8 @@
 сделки или поздняя цена пересчитают фонд, и сохранённое стало бы неправдой.
 
 Сохраняются нарушения (часть 9.3): чтение прошедшего дня проверяет его и пропущенные
-дни до него и пишет журнал — limits.journal.
+дни до него и пишет журнал — limits.journal. Проверка сделки до ввода (часть 9.4)
+ничего не сохраняет — limits.whatif.
 """
 
 from __future__ import annotations
@@ -26,12 +27,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from am_common.events import Actor, Event
 from am_common.outbox import Outbox
-from limits.clients import BookingClient, Fund, PortfolioClient, RefdataClient
+from am_common.service_token import ServiceToken
+from limits.clients import (
+    BookingClient,
+    Fund,
+    PortfolioClient,
+    RefdataClient,
+    service_authorization,
+)
 from limits.db import limit_set, outbox
-from limits.engine import Attributes, Usage, evaluate
+from limits.engine import Attributes, Deal, Figures, Position, Usage, evaluate
 from limits.errors import NotFoundError, RuleViolationError
 from limits.journal import LOCK_BITS, OVERDUE, BreachRecord, Journal, month_bounds, overlaps
 from limits.model import Condition, EligibleCheck, PurchaseCheck, SetBody, ShareCheck
+from limits.whatif import Change, Trade, apply, compare
 
 SERVICE = "limits"
 GAP_DAYS = 31  # сколько пропущенных дней до прочитанного проверяет чтение
@@ -70,6 +79,29 @@ class BreachView:
 
 
 @dataclass(frozen=True, slots=True)
+class CheckView:
+    """Лимиты до и после сделки — по позициям и ценам на сейчас."""
+
+    fund_id: UUID
+    day: date
+    limit_set: SetRecord | None  # нет набора — проверять нечем
+    before: Usage | None  # нет расчёта фонда за сегодня — не по чему
+    after: Usage | None
+    changes: list[Change] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
+class Inputs:
+    """Данные дня для расчёта: состав СЧА, позиции, сделки, признаки бумаг."""
+
+    figures: Figures
+    positions: list[Position]
+    deals: list[Deal]
+    traded_any: bool
+    attributes: Attributes
+
+
+@dataclass(frozen=True, slots=True)
 class ReportView:
     month: str
     view: DayView  # использование на конец месяца — или на вчера, если месяц идёт
@@ -85,8 +117,10 @@ class Desk:
         portfolio: PortfolioClient,
         booking: BookingClient,
         refdata: RefdataClient,
+        service_token: ServiceToken | None = None,
     ) -> None:
         self._session = session
+        self._service_token = service_token
         self._clock = clock
         self._portfolio = portfolio
         self._booking = booking
@@ -248,6 +282,39 @@ class Desk:
         )
         return BreachView(fund, updated, updated.state(self._journal.today()))
 
+    async def check(self, fund_id: UUID, trade: Trade, authorization: str) -> CheckView:
+        """Лимиты после сделки, «что если» (решение 142): только информация, журнал не трогает.
+
+        Трейдер ведёт портфель фонда — ему видно, как сделка меняет лимиты всего фонда,
+        даже если доступа к самому фонду нет (решение 147).
+        """
+        access = await self._portfolio.access(fund_id, authorization)
+        if access is None:
+            raise NotFoundError("fund")
+        # Фонд пользователю не виден — данные фонда читаем под учётной записью сервиса.
+        reader = (
+            authorization if access == "fund" else await service_authorization(self._service_token)
+        )
+        today = self._journal.today()
+        history = await self._sets(fund_id)
+        await self._session.commit()
+        record = _set_on(history, today)
+        found = (
+            None
+            if record is None
+            else await self._inputs(fund_id, today, authorization, reader=reader)
+        )
+        if record is None or found is None:
+            return CheckView(fund_id, today, record, None, None)
+        body, attributes = record.body, found.attributes
+        before = evaluate(body, found.figures, found.positions, found.deals, attributes)
+        figures, positions, deals = apply(
+            trade, found.figures, found.positions, found.deals, attributes
+        )
+        after = evaluate(body, figures, positions, deals, attributes)
+        changes = compare(before, after, trade, attributes, body.settings.warn_at)
+        return CheckView(fund_id, today, record, before, after, changes)
+
     async def report(self, fund_id: UUID, month: str, authorization: str) -> ReportView:
         """Отчёт за месяц (п. 8.8): использование на конец месяца и нарушения месяца."""
         first, last = month_bounds(month)
@@ -282,13 +349,24 @@ class Desk:
         self, fund: Fund, day: date, record: SetRecord, authorization: str
     ) -> tuple[Usage, bool] | None:
         """Расчёт дня и были ли сделки; None — расчёта фонда за день нет."""
-        figures = await self._booking.figures(fund.id, day, authorization)
+        found = await self._inputs(fund.id, day, authorization)
+        if found is None:
+            return None
+        usage = evaluate(record.body, found.figures, found.positions, found.deals, found.attributes)
+        return usage, found.traded_any
+
+    async def _inputs(
+        self, fund_id: UUID, day: date, authorization: str, *, reader: str | None = None
+    ) -> Inputs | None:
+        """reader — чей токен у сервиса сделок; по умолчанию — пользователя."""
+        booking = reader or authorization
+        figures = await self._booking.figures(fund_id, day, booking)
         if figures is None:
             return None
-        positions = await self._booking.positions(fund.id, day, authorization)
-        deals, traded_any = await self._booking.deals(fund.id, day, authorization)
+        positions = await self._booking.positions(fund_id, day, booking)
+        deals, traded_any = await self._booking.deals(fund_id, day, booking)
         attributes = await self._refdata.attributes(day, authorization)
-        return evaluate(record.body, figures, positions, deals, attributes), traded_any
+        return Inputs(figures, positions, deals, traded_any, attributes)
 
     async def _record(
         self,
