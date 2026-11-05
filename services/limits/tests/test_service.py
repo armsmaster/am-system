@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import redis
 from fastapi.testclient import TestClient
-from httpx2 import Response
 
 from am_common.migrations import schema_diff
 from am_common.testing import TokenFactory
@@ -19,40 +18,9 @@ from limits.db import metadata
 from limits.settings import LimitsSettings
 
 if TYPE_CHECKING:
-    from conftest import World
+    from conftest import Api, World
 
 pytestmark = pytest.mark.integration
-
-
-class Api:
-    def __init__(self, client: TestClient, tokens: TokenFactory, role: str) -> None:
-        self._client = client
-        token = tokens.issue(subject=f"u-{role}", username=role, roles=[role])
-        self._headers = {"Authorization": f"Bearer {token}"}
-
-    def call(self, method: str, path: str, body: Any = None) -> Response:
-        return self._client.request(method, path, json=body, headers=self._headers)
-
-    def ok(self, method: str, path: str, body: Any = None) -> Any:
-        response = self.call(method, path, body)
-        assert response.is_success, response.text
-        return response.json()
-
-    def refused(self, method: str, path: str, body: Any = None) -> tuple[int, str]:
-        response = self.call(method, path, body)
-        assert response.is_error, response.text
-        detail = response.json()["detail"]
-        return response.status_code, detail["code"] if isinstance(detail, dict) else "invalid"
-
-
-@pytest.fixture
-def risk(client: TestClient, tokens: TokenFactory) -> Api:
-    return Api(client, tokens, "risk")
-
-
-@pytest.fixture
-def trader(client: TestClient, tokens: TokenFactory) -> Api:
-    return Api(client, tokens, "trading")
 
 
 def save(api: Api, model: ModuleType, **changes: Any) -> Any:
@@ -207,7 +175,7 @@ def test_who_may_do_what(
     body = {"valid_from": "2026-11-01", "comment": "Политика", "body": model.model_set()}
     path = f"/funds/{model.FUND}/sets"
     assert trader.call("POST", path, body).status_code == 403
-    assert Api(client, tokens, "price_feed").call("GET", path).status_code == 403
+    assert model.Api(client, tokens, "price_feed").call("GET", path).status_code == 403
     assert [f["code"] for f in trader.ok("GET", "/funds")] == ["DOHOD2"]
     assert [f["code"] for f in risk.ok("GET", "/funds")] == ["DOHOD2", "OPIF1"]
     # Второй фонд трейдер не видит; портфель — не фонд.

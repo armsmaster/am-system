@@ -1,22 +1,52 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  breachLimit,
+  breachValue,
   checkText,
   conditionText,
   filterText,
   formatDate,
   formatNumber,
   formatTime,
+  monthText,
   names,
   plain,
   ratingText,
+  reportMonth,
   thresholdText,
   todayInMoscow,
   usageText,
   valueText,
   years,
 } from './format';
-import { BODY, check, CLASSIFIERS, INSTRUMENTS, ISSUERS } from './test/fixtures';
+import { BODY, breach, check, CLASSIFIERS, INSTRUMENTS, ISSUERS } from './test/fixtures';
+
+describe('breaches', () => {
+  it('names the limit and tells the value against the bound', () => {
+    expect(breachLimit(breach())).toBe('Л4, на эмитента');
+    expect(breachLimit(breach({ limit_code: 'Л1', label: '' }))).toBe('Л1');
+    expect(breachValue(breach())).toBe('2,68% при лимите 2,5%');
+    expect(breachValue(breach({ check_type: 'metric', value: '4.2', maximum: '4' }))).toBe('4,20 при лимите 4');
+    expect(breachValue(breach({ check_type: 'metric', value: '0.9', maximum: null, minimum: '1' }))).toBe(
+      '0,90 при минимуме 1',
+    );
+    expect(breachValue(breach({ check_type: 'metric', value: '0.9', maximum: null }))).toBe('0,90 при минимуме 0');
+    const rule = breach({ check_type: 'eligible', value: null, maximum: null });
+    expect(breachValue({ ...rule, reason: 'позиция не подходит ни под одно правило' })).toBe(
+      'позиция не подходит ни под одно правило',
+    );
+    expect(breachValue(rule)).toBe('—');
+  });
+
+  it('names the month of the report', () => {
+    expect(monthText('2026-11')).toBe('ноябрь 2026');
+    expect(reportMonth('2026-11-17')).toBe('2026-11');
+    // 1-го числа прошедших дней месяца ещё нет — отчёт за прошлый месяц.
+    expect(reportMonth('2026-12-01')).toBe('2026-11');
+    expect(reportMonth('2027-01-01')).toBe('2026-12');
+  });
+});
 
 const N = names(CLASSIFIERS, ISSUERS, INSTRUMENTS);
 

@@ -150,6 +150,67 @@ export interface FundDay {
   readonly calculated: boolean;
   readonly totals: Totals | null;
   readonly checks: readonly CheckUsage[];
+  /** Открытые нарушения фонда в журнале, с просроченными. */
+  readonly open_breaches: number;
+  readonly overdue_breaches: number;
+}
+
+// --- журнал нарушений (часть 9.3) -------------------------------------------------------
+
+export type BreachKind = 'active' | 'passive';
+export type BreachState = 'open' | 'overdue' | 'eliminated';
+
+export interface Note {
+  readonly by: string;
+  readonly at: string;
+  readonly text: string;
+  /** Вид, который подтвердил риск-менеджмент. */
+  readonly kind?: BreachKind | null;
+}
+
+export interface Extension {
+  readonly deadline: IsoDate;
+  /** Номер и дата решения генерального директора. */
+  readonly decision: string;
+  readonly comment: string;
+  readonly by: string;
+  readonly at: string;
+}
+
+export interface Breach {
+  readonly id: string;
+  readonly fund: Fund;
+  readonly limit_code: string;
+  readonly label: string;
+  readonly check_type: Check['type'];
+  readonly key: string;
+  /** Группа: эмитент, выпуск, бумага; у показателя фонда — «фонд». */
+  readonly name: string;
+  readonly reason: string | null;
+  readonly first_day: IsoDate;
+  readonly last_day: IsoDate;
+  readonly detected_on: IsoDate;
+  readonly value: Decimal | null;
+  readonly peak: Decimal | null;
+  readonly maximum: Decimal | null;
+  readonly minimum: Decimal | null;
+  readonly suggested: BreachKind;
+  readonly kind: BreachKind;
+  /** Кто подтвердил вид; нет — предложение системы. */
+  readonly kind_by: string | null;
+  readonly deadline: IsoDate;
+  readonly state: BreachState;
+  readonly eliminated_on: IsoDate | null;
+  readonly notes: readonly Note[];
+  readonly extensions: readonly Extension[];
+}
+
+export interface Report {
+  readonly month: string;
+  /** Использование на конец месяца — или на вчера, если месяц идёт. */
+  readonly day: FundDay;
+  /** Нарушения, открытые хотя бы день месяца. */
+  readonly breaches: readonly Breach[];
 }
 
 // --- имена из справочника: чтобы набор читался словами ----------------------------------
@@ -182,6 +243,13 @@ export function limitsApi(client: ApiClient) {
     sets: (fundId: string) => client.get<LimitSet[]>(`${BASE}/funds/${fundId}/sets`),
     saveSet: (fundId: string, body: { valid_from: IsoDate; comment: string; body: SetBody }) =>
       client.post<LimitSet>(`${BASE}/funds/${fundId}/sets`, body),
+    breaches: (fundId: string, status?: 'open' | 'overdue' | 'eliminated') =>
+      client.get<Breach[]>(`${BASE}/breaches?fund_id=${fundId}${status ? `&status=${status}` : ''}`),
+    review: (id: string, body: { kind: BreachKind; comment: string }) =>
+      client.post<Breach>(`${BASE}/breaches/${id}/review`, body),
+    extend: (id: string, body: { deadline: IsoDate; decision: string; comment: string }) =>
+      client.post<Breach>(`${BASE}/breaches/${id}/extension`, body),
+    report: (fundId: string, month: string) => client.get<Report>(`${BASE}/funds/${fundId}/reports/${month}`),
 
     classifiers: () => client.get<Classifier[]>(`${REFDATA}/classifiers`),
     issuers: () => client.get<Issuer[]>(`${REFDATA}/issuers`),

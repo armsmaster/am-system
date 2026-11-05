@@ -197,6 +197,31 @@ def test_share_without_assets() -> None:
     assert (found.value, found.status) == (ZERO, Status.OK)
 
 
+def test_share_counts_the_day_deals() -> None:
+    """Вклад сделок дня в группу: по нему журнал предлагает вид нарушения."""
+    check = {
+        "type": "share",
+        "filter": [cond(f"class:{SENIORITY}", SENIOR)],
+        "group": "issuer",
+        "max": "50",
+        "exclude_issuers": [str(QUIET)],
+    }
+    deals = [
+        Deal(CORP, "CORP", "buy", Decimal(20)),
+        Deal(CORP, "CORP", "sell", Decimal(5)),
+        Deal(SILENT, "SILENT", "buy", Decimal(10)),  # эмитент исключён
+        Deal(ORPHAN, "ORPHAN", "buy", Decimal(1)),  # эмитента нет — группы нет
+        Deal(SUB_BOND, "SUB", "buy", Decimal(3)),  # не под фильтром
+        Deal(uuid4(), "GHOST", "buy", Decimal(1)),  # бумаги нет в справочнике
+    ]
+    [found] = run(
+        body(check), [position(CORP, "CORP", "60"), position(SILENT, "SILENT", "40")], deals
+    )
+    assert [(g.name, g.value, g.status, g.traded) for g in found.groups] == [
+        ("Хороший", Decimal(60), Status.BREACH, Decimal(15))
+    ]
+
+
 def test_eligible_positions_and_deals() -> None:
     check = {
         "type": "eligible",
@@ -219,10 +244,10 @@ def test_eligible_positions_and_deals() -> None:
     [found] = run(body(check), held, deals)
 
     assert (found.status, found.value) == (Status.BREACH, Decimal(3))
-    assert [(v.secid, v.reason) for v in found.violations] == [
-        ("CORP", "короткая позиция: правило «старший долг» её не разрешает"),
-        ("SUB", "позиция не подходит ни под одно правило"),
-        ("SUB", "сделка с бумагой не по правилам"),
+    assert [(v.secid, v.reason, v.by_deal) for v in found.violations] == [
+        ("CORP", "короткая позиция: правило «старший долг» её не разрешает", False),
+        ("SUB", "позиция не подходит ни под одно правило", False),
+        ("SUB", "сделка с бумагой не по правилам", True),
     ]
     assert [(m.secid, m.reason) for m in found.missing] == [
         ("ORPHAN", "тип бумаги ISS неизвестен — сверьте бумагу с MOEX ISS"),
@@ -246,8 +271,8 @@ def test_purchase_condition() -> None:
     ]
     [found] = run(body(check), [], deals)
 
-    assert [(v.secid, v.reason) for v in found.violations] == [
-        ("SUB", "покупка: не выполнено «НКЦ»: да; «Очерёдность»: не субординированная")
+    assert [(v.secid, v.reason, v.by_deal) for v in found.violations] == [
+        ("SUB", "покупка: не выполнено «НКЦ»: да; «Очерёдность»: не субординированная", True)
     ]
     # У ORPHAN не задано ни «НКЦ», ни «Очерёдность».
     assert [m.secid for m in found.missing] == ["ORPHAN", "ORPHAN", "GHOST"]

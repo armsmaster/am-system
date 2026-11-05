@@ -111,16 +111,21 @@ class BookingClient(_Client):
             for line in found["lines"]
         ]
 
-    async def deals(self, fund_id: UUID, day: date, authorization: str) -> list[Deal]:
-        """Покупки и продажи бумаг за день; отменённые сделки и РЕПО — не в счёт."""
+    async def deals(self, fund_id: UUID, day: date, authorization: str) -> tuple[list[Deal], bool]:
+        """Покупки и продажи бумаг за день и были ли сделки вообще, с РЕПО.
+
+        Отменённые сделки не в счёт. Плечо и дюрацию меняют и РЕПО, доли — только бумаги.
+        """
         found = await self._get(
             "/trades", authorization, portfolio_id=str(fund_id), date=day.isoformat()
         )
-        return [
-            Deal(UUID(t["instrument_id"]), t["secid"], t["side"])
-            for t in found
-            if t["kind"] == "outright" and t["status"] != "cancelled" and t["instrument_id"]
+        live = [t for t in found if t["status"] != "cancelled"]
+        deals = [
+            Deal(UUID(t["instrument_id"]), t["secid"], t["side"], Decimal(t["amount"]))
+            for t in live
+            if t["kind"] == "outright" and t["instrument_id"]
         ]
+        return deals, bool(live)
 
 
 class RefdataClient(_Client):
@@ -162,6 +167,13 @@ class RefdataClient(_Client):
             },
             grades=tuple(scale["grades"]),
         )
+
+    async def add_trading_days(self, day: date, days: int, authorization: str) -> date:
+        """Дата через N торговых дней календаря справочника — для сроков нарушений."""
+        found = await self._get(
+            "/calendar/add-trading-days", authorization, date=day.isoformat(), days=str(days)
+        )
+        return date.fromisoformat(found["date"])
 
     async def agencies(self, authorization: str) -> set[str]:
         """Коды агентств, рейтинги которых ведёт справочник."""

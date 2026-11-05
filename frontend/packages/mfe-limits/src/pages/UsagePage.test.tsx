@@ -72,6 +72,21 @@ describe('UsagePage', () => {
     expect(api.day).toHaveBeenLastCalledWith('f-opif', '2026-11-17');
   });
 
+  it('tells about open and overdue breaches in the journal', async () => {
+    const api = fakeApi();
+    api.day.mockResolvedValueOnce(fundDay({ open_breaches: 2, overdue_breaches: 1 }));
+    renderLimits(api);
+
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'DOHOD2: открытых нарушений в журнале — 2, из них просрочено — 1. Журнал нарушений',
+    );
+    api.day.mockResolvedValueOnce(fundDay({ open_breaches: 1 }));
+    fireEvent.change(screen.getByLabelText('День'), { target: { value: '2026-11-12' } });
+    expect(await screen.findByText(/открытых нарушений в журнале — 1\./)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('link', { name: 'Журнал нарушений' }));
+    expect(await screen.findByRole('table', { name: 'Журнал нарушений' })).toBeInTheDocument();
+  });
+
   it('says when there is no set or no calculation for the day', async () => {
     const api = fakeApi();
     api.day.mockResolvedValueOnce(fundDay({ limit_set: null, calculated: false, totals: null, checks: [] }));

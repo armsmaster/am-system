@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from collections.abc import Iterator
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from types import ModuleType
 from typing import Any
@@ -31,6 +31,7 @@ from limits.main import build_app
 from limits.settings import LimitsSettings
 
 MLN = 1_000_000
+SATURDAY = 5
 
 
 def _id(prefix: str, number: int) -> UUID:
@@ -186,9 +187,9 @@ def _rated(ratings: list[tuple[str, str]] | None, *, unrated: bool = False) -> d
     return {"status": "unrated" if unrated else "unknown", "ratings": []}
 
 
-def attributes(day: date) -> dict[str, Any]:
-    """Ответ справочника GET /attributes на день."""
-    issuer_ratings = _issuer_ratings(day)
+def attributes(day: date, blank: frozenset[UUID] = frozenset()) -> dict[str, Any]:
+    """Ответ справочника GET /attributes на день; blank — эмитенты без записей рейтингов."""
+    issuer_ratings = {k: v for k, v in _issuer_ratings(day).items() if k not in blank}
     issuer_classes = {issuer: {ISSUER_KIND: OTHERS} for issuer in ISSUER_NAMES}
     issuer_classes[BANK_D] = {ISSUER_KIND: BANK}
     return {
@@ -244,7 +245,7 @@ def attributes(day: date) -> dict[str, Any]:
                 "id": str(issuer),
                 "name": name,
                 "classes": {str(k): str(v) for k, v in issuer_classes[issuer].items()},
-                "ratings": _rated(issuer_ratings.get(issuer), unrated=True),
+                "ratings": _rated(issuer_ratings.get(issuer), unrated=issuer not in blank),
             }
             for issuer, name in ISSUER_NAMES.items()
         ],
@@ -512,6 +513,8 @@ class World:
         self.cash: dict[date, str] = {}
         self.deals: dict[date, list[dict[str, Any]]] = {}
         self.not_calculated: set[date] = set()
+        self.blank: dict[date, frozenset[UUID]] = {}  # рейтинги эмитентов ещё не введены
+        self.now = NOW  # часы сервиса: журнал проверяет прошедшие дни
         # Трейдер второй фонд не видит.
         self.hidden = {"trading": {str(OTHER_FUND)}}
 
@@ -613,22 +616,66 @@ class World:
         }
 
     def _refdata(self, request: httpx2.Request, path: str) -> httpx2.Response:
+        params = request.url.params
         if path == "/ratings/scale":
             return httpx2.Response(200, json=scale())
+        if path == "/calendar/add-trading-days":
+            # Торговые дни — будни: в ноябре 2026 после 4.11 праздников нет.
+            day = date.fromisoformat(params["date"])
+            for _ in range(int(params["days"])):
+                day += timedelta(days=1)
+                while day.weekday() >= SATURDAY:
+                    day += timedelta(days=1)
+            return httpx2.Response(200, json={"date": day.isoformat()})
         assert path == "/attributes"
-        return httpx2.Response(200, json=attributes(date.fromisoformat(request.url.params["date"])))
+        day = date.fromisoformat(params["date"])
+        return httpx2.Response(200, json=attributes(day, self.blank.get(day, frozenset())))
 
 
-def deal(secid: str, side: str = "buy", **changes: Any) -> dict[str, Any]:
-    """Сделка дня, как её отдаёт сервис сделок."""
+def deal(secid: str, side: str = "buy", amount: str = "15", **changes: Any) -> dict[str, Any]:
+    """Сделка дня, как её отдаёт сервис сделок; сумма — млн ₽."""
     return {
         "instrument_id": str(PAPER[secid]["id"]),
         "secid": secid,
         "side": side,
+        "amount": str(Decimal(amount) * MLN),
         "kind": "outright",
         "status": "entered",
         **changes,
     }
+
+
+class Api:
+    """Пользователь с ролью: запросы к сервису с его токеном."""
+
+    def __init__(self, client: TestClient, tokens: TokenFactory, role: str) -> None:
+        self._client = client
+        token = tokens.issue(subject=f"u-{role}", username=role, roles=[role])
+        self._headers = {"Authorization": f"Bearer {token}"}
+
+    def call(self, method: str, path: str, body: Any = None) -> httpx2.Response:
+        return self._client.request(method, path, json=body, headers=self._headers)
+
+    def ok(self, method: str, path: str, body: Any = None) -> Any:
+        response = self.call(method, path, body)
+        assert response.is_success, response.text
+        return response.json()
+
+    def refused(self, method: str, path: str, body: Any = None) -> tuple[int, str]:
+        response = self.call(method, path, body)
+        assert response.is_error, response.text
+        detail = response.json()["detail"]
+        return response.status_code, detail["code"] if isinstance(detail, dict) else "invalid"
+
+
+@pytest.fixture
+def risk(client: TestClient, tokens: TokenFactory) -> Api:
+    return Api(client, tokens, "risk")
+
+
+@pytest.fixture
+def trader(client: TestClient, tokens: TokenFactory) -> Api:
+    return Api(client, tokens, "trading")
 
 
 @pytest.fixture(scope="session")
@@ -670,6 +717,6 @@ async def settings(bare_settings: LimitsSettings) -> LimitsSettings:
 
 @pytest.fixture
 def client(settings: LimitsSettings, world: World) -> Iterator[TestClient]:
-    app = build_app(settings, http_transport=world.transport(), clock=lambda: NOW)
+    app = build_app(settings, http_transport=world.transport(), clock=lambda: world.now)
     with TestClient(app) as test_client:
         yield test_client

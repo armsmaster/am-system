@@ -44,6 +44,10 @@ const ACTIONS: Readonly<Record<string, string>> = {
   'classification.set': 'Задано значение классификатора',
   'classification.cancelled': 'Отменено значение классификатора',
   'limit_set.saved': 'Сохранена версия набора лимитов',
+  'breach.detected': 'Выявлено нарушение лимита',
+  'breach.eliminated': 'Устранено нарушение лимита',
+  'breach.reviewed': 'Записан вид нарушения',
+  'breach.extended': 'Продлён срок устранения нарушения',
 };
 
 const FIELDS: Readonly<Record<string, string>> = {
@@ -130,6 +134,16 @@ const FIELDS: Readonly<Record<string, string>> = {
   version: 'Версия',
   document: 'Документ',
   limits: 'Лимиты',
+  measured: 'Значение',
+  breach_kind: 'Вид нарушения',
+  deadline: 'Срок устранения',
+  decision: 'Решение',
+  eliminated_on: 'Устранено',
+};
+
+/** Значения, которые зависят от поля: «active» у нарушения — не «действует». */
+const FIELD_VALUES: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  breach_kind: { active: 'активное', passive: 'пассивное' },
 };
 
 /** Значения перечислений — словами. */
@@ -180,6 +194,8 @@ const VALUES: Readonly<Record<string, string>> = {
   nra: 'НРА',
   instrument: 'бумага',
   issuer: 'эмитент',
+  open: 'открыто',
+  eliminated: 'устранено',
 };
 
 /** Порядок полей — как в FIELDS: база данных хранит ключи события в своём порядке. */
@@ -218,6 +234,7 @@ export function objectLabel(event: AuditEvent): string {
     issuer?: { readonly name: string };
     classifier?: { readonly name: string };
     trade?: { readonly secid: string; readonly portfolio: string | null };
+    breach?: { readonly limit: string; readonly name: string };
     operation?: { readonly kind: string; readonly portfolio: string | null };
     instruments?: readonly { readonly secid: string }[];
     fund?: Ref;
@@ -229,6 +246,9 @@ export function objectLabel(event: AuditEvent): string {
   };
   if (data.trade) {
     return `${data.trade.portfolio ?? '—'}: ${data.trade.secid}`;
+  }
+  if (data.breach) {
+    return `${data.fund?.code ?? '—'}: ${data.breach.limit} — ${data.breach.name}`;
   }
   // Рейтинги и классификаторы: бумага или эмитент, у значения — ещё и классификатор.
   const subject = data.instrument?.secid ?? data.issuer?.name;
@@ -283,8 +303,8 @@ export function changes(event: AuditEvent): Change[] {
     .filter((key) => JSON.stringify(before?.[key]) !== JSON.stringify(after?.[key]))
     .map((key) => ({
       field: FIELDS[key] ?? key,
-      before: before ? show(before[key]) : '—',
-      after: after ? show(after[key]) : '—',
+      before: before ? show(before[key], key) : '—',
+      after: after ? show(after[key], key) : '—',
     }));
 }
 
@@ -297,9 +317,13 @@ function byFieldOrder(a: string, b: string): number {
   return rank(a) - rank(b) || a.localeCompare(b);
 }
 
-function show(value: unknown): string {
+function show(value: unknown, key?: string): string {
   if (value === null || value === undefined || value === '') {
     return '—';
+  }
+  const special = key ? FIELD_VALUES[key]?.[String(value)] : undefined;
+  if (special) {
+    return special;
   }
   if (typeof value === 'boolean') {
     return value ? 'да' : 'нет';

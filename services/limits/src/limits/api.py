@@ -5,10 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, FastAPI, Header, Request, Response, status
+from fastapi import APIRouter, Depends, FastAPI, Header, Path, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, StringConstraints
 
@@ -22,8 +22,9 @@ from limits.clients import (
     RefdataClient,
     ServiceUnavailableError,
 )
-from limits.desk import DayView, Desk, NotFoundError, RuleViolationError, SetRecord
+from limits.desk import BreachView, DayView, Desk, ReportView, SetRecord
 from limits.engine import CheckResult, Status
+from limits.errors import NotFoundError, RuleViolationError
 from limits.model import SetBody
 from limits.settings import LimitsSettings
 
@@ -32,6 +33,11 @@ Viewer = Annotated[Principal, Depends(require_any_role(Role.TRADING, Role.OPERAT
 Risk = Annotated[Principal, Depends(require_any_role(Role.RISK))]
 Authorization = Annotated[str, Header()]
 Comment = Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=500)]
+Decision = Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=200)]
+Month = Annotated[str, Path(pattern=r"^\d{4}-\d{2}$")]
+
+# Отбор журнала: открытые — вместе с просроченными.
+STATES = {"open": {"open", "overdue"}, "overdue": {"overdue"}, "eliminated": {"eliminated"}}
 
 router = APIRouter()
 
@@ -131,6 +137,66 @@ class DayOut(BaseModel):
     calculated: bool  # есть ли расчёт фонда за день
     totals: TotalsOut | None
     checks: list[CheckOut]
+    open_breaches: int  # открытые нарушения фонда в журнале, с просроченными
+    overdue_breaches: int
+
+
+class NoteOut(BaseModel):
+    by: str
+    at: datetime
+    text: str
+    kind: str | None = None  # вид, который подтвердил риск-менеджмент
+
+
+class ExtensionOut(BaseModel):
+    deadline: date
+    decision: str
+    comment: str
+    by: str
+    at: datetime
+
+
+class BreachOut(BaseModel):
+    id: UUID
+    fund: FundOut
+    limit_code: str
+    label: str
+    check_type: str
+    key: str
+    name: str  # группа: эмитент, выпуск, бумага; у показателя — «фонд»
+    reason: str | None
+    first_day: date
+    last_day: date
+    detected_on: date
+    value: Decimal | None
+    peak: Decimal | None
+    maximum: Decimal | None
+    minimum: Decimal | None
+    suggested: str
+    kind: str
+    kind_by: str | None
+    deadline: date
+    state: str  # open | overdue | eliminated
+    eliminated_on: date | None
+    notes: list[NoteOut]
+    extensions: list[ExtensionOut]
+
+
+class ReviewIn(BaseModel):
+    kind: Literal["active", "passive"]
+    comment: Comment
+
+
+class ExtensionIn(BaseModel):
+    deadline: date
+    decision: Decision  # номер и дата решения генерального директора
+    comment: Comment
+
+
+class ReportOut(BaseModel):
+    month: str
+    day: DayOut  # использование на конец месяца — или на вчера, если месяц идёт
+    breaches: list[BreachOut]  # нарушения, открытые хотя бы день месяца
 
 
 # --- маршруты -------------------------------------------------------------------
@@ -172,6 +238,58 @@ async def fund_day(
 ) -> DayOut:
     """Использование лимитов за день: сегодня — по текущим ценам."""
     return _day_out(await desk.day(fund_id, day, authorization))
+
+
+@router.get("/breaches", tags=["breaches"])
+async def breaches(
+    fund_id: UUID,
+    _user: Viewer,
+    desk: Desks,
+    authorization: Authorization,
+    state: Annotated[Literal["open", "overdue", "eliminated"] | None, Query(alias="status")] = None,
+) -> list[BreachOut]:
+    """Журнал нарушений фонда: открытые — с просроченными; без отбора — все."""
+    found = await desk.breaches(fund_id, None if state is None else STATES[state], authorization)
+    return [_breach_out(b) for b in found]
+
+
+@router.post("/breaches/{breach_id}/review", tags=["breaches"])
+async def review(
+    breach_id: UUID, body: ReviewIn, user: Risk, desk: Desks, authorization: Authorization
+) -> BreachOut:
+    """Вид нарушения и комментарий — риск-менеджмент."""
+    found = await desk.review(
+        breach_id,
+        kind=body.kind,
+        comment=body.comment,
+        actor=Actor.from_principal(user),
+        authorization=authorization,
+    )
+    return _breach_out(found)
+
+
+@router.post("/breaches/{breach_id}/extension", tags=["breaches"])
+async def extension(
+    breach_id: UUID, body: ExtensionIn, user: Risk, desk: Desks, authorization: Authorization
+) -> BreachOut:
+    """Продление срока пассивного нарушения по решению генерального директора (п. 8.5)."""
+    found = await desk.extend(
+        breach_id,
+        deadline=body.deadline,
+        decision=body.decision,
+        comment=body.comment,
+        actor=Actor.from_principal(user),
+        authorization=authorization,
+    )
+    return _breach_out(found)
+
+
+@router.get("/funds/{fund_id}/reports/{month}", tags=["limits"])
+async def report(
+    fund_id: UUID, month: Month, _user: Viewer, desk: Desks, authorization: Authorization
+) -> ReportOut:
+    """Отчёт за месяц: использование на конец месяца и нарушения месяца (п. 8.8)."""
+    return _report_out(await desk.report(fund_id, month, authorization))
 
 
 # --- ошибки → ответы HTTP -------------------------------------------------------
@@ -229,6 +347,14 @@ def _round(value: Decimal | None, step: Decimal = FOUR) -> Decimal | None:
     return None if value is None else value.quantize(step)
 
 
+def _plain(value: Decimal | None) -> Decimal | None:
+    """Порог, как в наборе: 2.500000 из базы → 2.5, 10.000000 → 10."""
+    if value is None:
+        return None
+    found = value.normalize()
+    return found.quantize(Decimal(1)) if found == found.to_integral_value() else found
+
+
 def _check_out(result: CheckResult) -> CheckOut:
     return CheckOut(
         code=result.code,
@@ -269,4 +395,43 @@ def _day_out(view: DayView) -> DayOut:
             duration=_round(usage.totals.duration),
         ),
         checks=[] if usage is None else [_check_out(c) for c in usage.checks],
+        open_breaches=view.open_breaches,
+        overdue_breaches=view.overdue_breaches,
+    )
+
+
+def _breach_out(view: BreachView) -> BreachOut:
+    record = view.record
+    return BreachOut(
+        id=record.id,
+        fund=_fund_out(view.fund),
+        limit_code=record.limit_code,
+        label=record.label,
+        check_type=record.check_type,
+        key=record.key,
+        name=record.name,
+        reason=record.reason,
+        first_day=record.first_day,
+        last_day=record.last_day,
+        detected_on=record.detected_on,
+        value=_round(record.value),
+        peak=_round(record.peak),
+        maximum=_plain(record.maximum),
+        minimum=_plain(record.minimum),
+        suggested=record.suggested,
+        kind=record.kind,
+        kind_by=record.kind_by,
+        deadline=record.deadline,
+        state=view.state,
+        eliminated_on=record.eliminated_on,
+        notes=[NoteOut.model_validate(n) for n in record.notes],
+        extensions=[ExtensionOut.model_validate(e) for e in record.extensions],
+    )
+
+
+def _report_out(found: ReportView) -> ReportOut:
+    return ReportOut(
+        month=found.month,
+        day=_day_out(found.view),
+        breaches=[_breach_out(b) for b in found.breaches],
     )

@@ -1,4 +1,16 @@
-import type { Check, CheckUsage, Classifier, Condition, Decimal, IsoDate, SetBody, Status } from './api';
+import type {
+  Breach,
+  BreachKind,
+  BreachState,
+  Check,
+  CheckUsage,
+  Classifier,
+  Condition,
+  Decimal,
+  IsoDate,
+  SetBody,
+  Status,
+} from './api';
 
 const NO_VALUE = '—';
 
@@ -7,6 +19,14 @@ export const STATUS_LABELS: Readonly<Record<Status, string>> = {
   warning: 'близко к лимиту',
   breach: 'нарушение',
   no_data: 'нет данных',
+};
+
+export const KIND_LABELS: Readonly<Record<BreachKind, string>> = { active: 'активное', passive: 'пассивное' };
+
+export const STATE_LABELS: Readonly<Record<BreachState, string>> = {
+  open: 'открыто',
+  overdue: 'просрочено',
+  eliminated: 'устранено',
 };
 
 export const AGENCY_LABELS: Readonly<Record<string, string>> = {
@@ -107,6 +127,57 @@ export function thresholdText(check: CheckUsage): string {
 
 export function usageText(usage: Decimal | null): string {
   return usage === null ? NO_VALUE : `${Math.round(Number(usage))}%`;
+}
+
+// --- журнал нарушений ---------------------------------------------------------------------
+
+/** «Л4, на эмитента». */
+export function breachLimit(breach: Breach): string {
+  return [breach.limit_code, breach.label].filter(Boolean).join(', ');
+}
+
+/** «2,68% при лимите 2,5%», «4,20 при лимите 4,0», у правил — что не так. */
+export function breachValue(breach: Breach): string {
+  if (breach.value === null) {
+    return breach.reason ?? NO_VALUE;
+  }
+  const unit = breach.check_type === 'share' ? '%' : '';
+  const bound =
+    breach.maximum !== null
+      ? `при лимите ${plain(breach.maximum)}${unit}`
+      : `при минимуме ${plain(breach.minimum ?? '0')}${unit}`;
+  return `${formatNumber(breach.value)}${unit} ${bound}`;
+}
+
+const MONTHS = [
+  'январь',
+  'февраль',
+  'март',
+  'апрель',
+  'май',
+  'июнь',
+  'июль',
+  'август',
+  'сентябрь',
+  'октябрь',
+  'ноябрь',
+  'декабрь',
+];
+
+/** 2026-11 → «ноябрь 2026». */
+export function monthText(month: string): string {
+  const [year, number] = month.split('-');
+  return `${MONTHS[Number(number) - 1]} ${year}`;
+}
+
+/** Первый месяц, который уже можно показать в отчёте: текущий, а 1-го числа — прошлый. */
+export function reportMonth(today: IsoDate): string {
+  const [year = '', month = '', day = ''] = today.split('-');
+  if (day !== '01') {
+    return `${year}-${month}`;
+  }
+  const previous = new Date(Date.UTC(Number(year), Number(month) - 2, 1));
+  return previous.toISOString().slice(0, 7);
 }
 
 // --- набор словами -------------------------------------------------------------------------

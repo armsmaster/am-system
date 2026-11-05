@@ -52,6 +52,15 @@ describe('LimitsApp', () => {
     expect(await screen.findByRole('table', { name: 'Лимиты' })).toBeInTheDocument();
   });
 
+  it('opens the breaches and the monthly report', async () => {
+    renderLimits();
+
+    await userEvent.click(await screen.findByRole('link', { name: 'Нарушения' }));
+    expect(await screen.findByRole('table', { name: 'Журнал нарушений' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('link', { name: 'Отчёт за месяц' }));
+    expect(await screen.findByRole('button', { name: 'Скачать для Excel' })).toBeInTheDocument();
+  });
+
   it('shows the set to the trader without the editor', async () => {
     stubServices();
     renderInShell('trading');

@@ -8,42 +8,35 @@
 Использование считается при чтении: позиции, состав СЧА и сделки дня — у сервиса
 сделок, признаки бумаг — у справочника. Сохранять результат незачем: правка
 сделки или поздняя цена пересчитают фонд, и сохранённое стало бы неправдой.
+
+Сохраняются нарушения (часть 9.3): чтение прошедшего дня проверяет его и пропущенные
+дни до него и пишет журнал — limits.journal.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
-from datetime import date, datetime
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import Row, func, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from am_common.clock import MOSCOW
 from am_common.events import Actor, Event
 from am_common.outbox import Outbox
 from limits.clients import BookingClient, Fund, PortfolioClient, RefdataClient
 from limits.db import limit_set, outbox
 from limits.engine import Attributes, Usage, evaluate
+from limits.errors import NotFoundError, RuleViolationError
+from limits.journal import LOCK_BITS, OVERDUE, BreachRecord, Journal, month_bounds, overlaps
 from limits.model import Condition, EligibleCheck, PurchaseCheck, SetBody, ShareCheck
 
 SERVICE = "limits"
-LOCK_BITS = (1 << 63) - 1  # ключ advisory-блокировки — 64 бита со знаком
+GAP_DAYS = 31  # сколько пропущенных дней до прочитанного проверяет чтение
 
-
-class RuleViolationError(Exception):
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
-
-
-class NotFoundError(Exception):
-    def __init__(self, what: str) -> None:
-        super().__init__(what)
-        self.what = what
+__all__ = ["Desk", "NotFoundError", "RuleViolationError"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +58,22 @@ class DayView:
     today: bool  # сегодня — по текущим ценам, как СЧА
     limit_set: SetRecord | None  # набор, действующий на день; нет — проверять нечем
     usage: Usage | None  # None — расчёта фонда за день ещё нет
+    open_breaches: int = 0  # открытые нарушения фонда в журнале, с просроченными
+    overdue_breaches: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class BreachView:
+    fund: Fund
+    record: BreachRecord
+    state: str  # open | overdue | eliminated
+
+
+@dataclass(frozen=True, slots=True)
+class ReportView:
+    month: str
+    view: DayView  # использование на конец месяца — или на вчера, если месяц идёт
+    breaches: list[BreachView] = field(default_factory=list)
 
 
 class Desk:
@@ -83,6 +92,7 @@ class Desk:
         self._booking = booking
         self._refdata = refdata
         self._outbox = Outbox(outbox)
+        self._journal = Journal(session, clock, refdata)
 
     async def funds(self, authorization: str) -> list[Fund]:
         found = await self._portfolio.funds(authorization)
@@ -159,20 +169,156 @@ class Desk:
         return record
 
     async def day(self, fund_id: UUID, day: date, authorization: str) -> DayView:
-        """Использование лимитов за день по набору, действующему на этот день."""
+        """Использование лимитов за день по набору, действующему на этот день.
+
+        Прошедший день ещё и проверяется в журнал — вместе с пропущенными днями до него.
+        """
         fund = await self._fund(fund_id, authorization)
-        today = day == self._clock().astimezone(MOSCOW).date()
-        record = next((s for s in reversed(await self._sets(fund_id)) if s.valid_from <= day), None)
-        if record is None:
-            return DayView(fund, day, today, None, None)
-        figures = await self._booking.figures(fund_id, day, authorization)
+        today = self._journal.today()
+        history = await self._sets(fund_id)
+        await self._session.commit()
+        if day < today:
+            await self._check_gap(fund, day, history, authorization)
+        record = _set_on(history, day)
+        usage = None
+        if record is not None:
+            found = await self._evaluate(fund, day, record, authorization)
+            if found is not None:
+                usage = found[0]
+                if day < today:
+                    await self._record(fund, day, record, found, authorization)
+        states = [b.state(today) for b in await self._journal.breaches(fund_id, open_only=True)]
+        await self._session.commit()
+        return DayView(
+            fund,
+            day,
+            day == today,
+            record,
+            usage,
+            open_breaches=len(states),
+            overdue_breaches=states.count(OVERDUE),
+        )
+
+    async def breaches(
+        self, fund_id: UUID, states: set[str] | None, authorization: str
+    ) -> list[BreachView]:
+        """Журнал нарушений фонда; states — отбор: open, overdue, eliminated."""
+        fund = await self._fund(fund_id, authorization)
+        today = self._journal.today()
+        found = [BreachView(fund, b, b.state(today)) for b in await self._journal.breaches(fund_id)]
+        await self._session.commit()
+        return [b for b in found if states is None or b.state in states]
+
+    async def review(
+        self, breach_id: UUID, *, kind: str, comment: str, actor: Actor, authorization: str
+    ) -> BreachView:
+        """Вид нарушения и комментарий — риск-менеджмент."""
+        fund, found, record = await self._breach(breach_id, authorization)
+        updated = await self._journal.review(
+            found,
+            fund,
+            kind=kind,
+            comment=comment,
+            deadlines=record.body.settings.deadlines,
+            actor=actor,
+            authorization=authorization,
+        )
+        return BreachView(fund, updated, updated.state(self._journal.today()))
+
+    async def extend(
+        self,
+        breach_id: UUID,
+        *,
+        deadline: date,
+        decision: str,
+        comment: str,
+        actor: Actor,
+        authorization: str,
+    ) -> BreachView:
+        """Продление срока пассивного нарушения по решению генерального директора."""
+        fund, found, record = await self._breach(breach_id, authorization)
+        updated = await self._journal.extend(
+            found,
+            fund,
+            deadline=deadline,
+            decision=decision,
+            comment=comment,
+            months=record.body.settings.deadlines.extension_months,
+            actor=actor,
+        )
+        return BreachView(fund, updated, updated.state(self._journal.today()))
+
+    async def report(self, fund_id: UUID, month: str, authorization: str) -> ReportView:
+        """Отчёт за месяц (п. 8.8): использование на конец месяца и нарушения месяца."""
+        first, last = month_bounds(month)
+        yesterday = self._journal.today() - timedelta(days=1)
+        if first > yesterday:
+            raise RuleViolationError(
+                "month_not_started", "За этот месяц ещё нет ни одного прошедшего дня."
+            )
+        view = await self.day(fund_id, min(last, yesterday), authorization)
+        found = await self.breaches(fund_id, None, authorization)
+        return ReportView(month, view, [b for b in found if overlaps(b.record, first, last)])
+
+    async def _check_gap(
+        self, fund: Fund, day: date, history: list[SetRecord], authorization: str
+    ) -> None:
+        """Пропущенные дни до прочитанного: нарушение не ждёт, пока день откроют."""
+        if not history:
+            return
+        last = await self._journal.last_checked(fund.id)
+        await self._session.commit()
+        start = history[0].valid_from if last is None else last + timedelta(days=1)
+        current = max(start, day - timedelta(days=GAP_DAYS))
+        while current < day:
+            # Проверки идут с первой версии набора — версия на день есть всегда.
+            record = _set_on(history, current) or history[0]
+            found = await self._evaluate(fund, current, record, authorization)
+            if found is not None:
+                await self._record(fund, current, record, found, authorization)
+            current += timedelta(days=1)
+
+    async def _evaluate(
+        self, fund: Fund, day: date, record: SetRecord, authorization: str
+    ) -> tuple[Usage, bool] | None:
+        """Расчёт дня и были ли сделки; None — расчёта фонда за день нет."""
+        figures = await self._booking.figures(fund.id, day, authorization)
         if figures is None:
-            return DayView(fund, day, today, record, None)
-        positions = await self._booking.positions(fund_id, day, authorization)
-        deals = await self._booking.deals(fund_id, day, authorization)
+            return None
+        positions = await self._booking.positions(fund.id, day, authorization)
+        deals, traded_any = await self._booking.deals(fund.id, day, authorization)
         attributes = await self._refdata.attributes(day, authorization)
-        usage = evaluate(record.body, figures, positions, deals, attributes)
-        return DayView(fund, day, today, record, usage)
+        return evaluate(record.body, figures, positions, deals, attributes), traded_any
+
+    async def _record(
+        self,
+        fund: Fund,
+        day: date,
+        record: SetRecord,
+        found: tuple[Usage, bool],
+        authorization: str,
+    ) -> None:
+        usage, traded_any = found
+        await self._journal.record(
+            fund,
+            day,
+            version=record.version,
+            usage=usage,
+            traded_any=traded_any,
+            deadlines=record.body.settings.deadlines,
+            authorization=authorization,
+        )
+
+    async def _breach(
+        self, breach_id: UUID, authorization: str
+    ) -> tuple[Fund, BreachRecord, SetRecord]:
+        """Нарушение, его фонд — если пользователь его видит — и набор дня нарушения."""
+        found = await self._journal.get(breach_id)
+        history = await self._sets(found.fund_id)
+        await self._session.commit()
+        fund = await self._fund(found.fund_id, authorization)
+        # Нарушение записано по набору — набор на день нарушения есть всегда.
+        return fund, found, _set_on(history, found.first_day) or history[0]
 
     async def _fund(self, fund_id: UUID, authorization: str) -> Fund:
         found = (await self._portfolio.funds(authorization)).get(fund_id)
@@ -185,6 +331,11 @@ class Desk:
             select(limit_set).where(limit_set.c.fund_id == fund_id).order_by(limit_set.c.version)
         )
         return [_record(row) for row in await self._session.execute(query)]
+
+
+def _set_on(history: list[SetRecord], day: date) -> SetRecord | None:
+    """Версия набора, действующая на день."""
+    return next((s for s in reversed(history) if s.valid_from <= day), None)
 
 
 def _check_references(body: SetBody, attributes: Attributes, agencies: set[str]) -> None:

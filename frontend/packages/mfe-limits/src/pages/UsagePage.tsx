@@ -1,5 +1,6 @@
 import { LoadedView, useLoad } from '@am/ui';
 import { Fragment, useCallback, useState } from 'react';
+import { Link } from 'react-router';
 
 import type { Context } from '../App';
 import type { CheckUsage, FundDay } from '../api';
@@ -23,8 +24,29 @@ export function UsagePage({ context }: { readonly context: Context }) {
           <input type="date" value={day} onChange={(e) => setDay(e.target.value || today)} />
         </label>
       </div>
-      <LoadedView state={state}>{(found) => <DayView day={found} />}</LoadedView>
+      <LoadedView state={state}>
+        {(found) => (
+          <>
+            <BreachNotice day={found} />
+            <DayView day={found} />
+          </>
+        )}
+      </LoadedView>
     </>
+  );
+}
+
+/** Открытые нарушения фонда в журнале — видно сразу, на главной странице раздела. */
+function BreachNotice({ day }: { readonly day: FundDay }) {
+  if (!day.open_breaches) {
+    return null;
+  }
+  return (
+    <p className="notice notice-error" role="status">
+      {day.fund.code}: открытых нарушений в журнале — {day.open_breaches}
+      {day.overdue_breaches ? `, из них просрочено — ${day.overdue_breaches}` : ''}.{' '}
+      <Link to="breaches">Журнал нарушений</Link>
+    </p>
   );
 }
 

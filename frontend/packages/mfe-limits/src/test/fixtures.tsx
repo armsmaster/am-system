@@ -5,6 +5,7 @@ import { vi } from 'vitest';
 
 import { Limits } from '../App';
 import type {
+  Breach,
   CheckUsage,
   Classifier,
   Fund,
@@ -13,6 +14,7 @@ import type {
   Issuer,
   LimitSet,
   LimitsApi,
+  Report,
   SetBody,
 } from '../api';
 
@@ -188,8 +190,44 @@ export function fundDay(fields: Partial<FundDay> = {}): FundDay {
         groups: [],
       }),
     ],
+    open_breaches: 0,
+    overdue_breaches: 0,
     ...fields,
   };
+}
+
+/** Пассивное нарушение по Эмитенту Г из примера методики: 12.11, срок 10.12. */
+export function breach(fields: Partial<Breach> = {}): Breach {
+  return {
+    id: 'b-g',
+    fund: FUNDS[0]!,
+    limit_code: 'Л4',
+    label: 'на эмитента',
+    check_type: 'share',
+    key: 'e-g',
+    name: 'Эмитент Г',
+    reason: null,
+    first_day: '2026-11-12',
+    last_day: '2026-11-16',
+    detected_on: '2026-11-12',
+    value: '2.6786',
+    peak: '2.6786',
+    maximum: '2.5',
+    minimum: null,
+    suggested: 'passive',
+    kind: 'passive',
+    kind_by: null,
+    deadline: '2026-12-10',
+    state: 'open',
+    eliminated_on: null,
+    notes: [],
+    extensions: [],
+    ...fields,
+  };
+}
+
+export function report(fields: Partial<Report> = {}): Report {
+  return { month: '2026-11', day: fundDay({ date: '2026-11-16' }), breaches: [breach()], ...fields };
 }
 
 /** Подменный API: отвечает фиксированными данными, вызовы запоминает. */
@@ -200,6 +238,10 @@ export function fakeApi() {
     day: answer(fundDay()),
     sets: answer<LimitSet[]>([limitSet(1)]),
     saveSet: answer(limitSet(2)),
+    breaches: answer<Breach[]>([breach()]),
+    review: answer(breach({ kind: 'active', kind_by: 'risk', deadline: '2026-11-13' })),
+    extend: answer(breach({ deadline: '2027-01-29' })),
+    report: answer(report()),
     classifiers: answer<Classifier[]>([...CLASSIFIERS]),
     issuers: answer<Issuer[]>([...ISSUERS]),
     instruments: answer<Instrument[]>([...INSTRUMENTS]),

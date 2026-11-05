@@ -382,6 +382,53 @@ describe('changes', () => {
     ]);
   });
 
+  it('describes the life of a limit breach', () => {
+    const breach = { limit: 'Л4, на эмитента', name: 'Эмитент Г', first_day: '2026-11-12' };
+    const detected = event('breach.detected', {
+      fund: { code: 'DOHOD2' },
+      breach,
+      before: null,
+      after: { measured: '2.678571', breach_kind: 'passive', deadline: '2026-12-10' },
+    });
+    const reviewed = event('breach.reviewed', {
+      fund: { code: 'DOHOD2' },
+      breach,
+      before: { breach_kind: 'passive', deadline: '2026-12-10' },
+      after: { breach_kind: 'active', deadline: '2026-11-13' },
+    });
+    const eliminated = event('breach.eliminated', {
+      fund: { code: 'DOHOD2' },
+      breach,
+      before: { status: 'open' },
+      after: { status: 'eliminated', eliminated_on: '2026-11-17' },
+    });
+    const extended = event('breach.extended', {
+      breach,
+      before: { deadline: '2026-12-10' },
+      after: { deadline: '2027-01-29', decision: '№ 5 от 20.11.2026' },
+    });
+
+    expect([actionLabel(detected.type), objectLabel(detected)]).toEqual([
+      'Выявлено нарушение лимита',
+      'DOHOD2: Л4, на эмитента — Эмитент Г',
+    ]);
+    expect(changes(detected)).toEqual([
+      { field: 'Значение', before: '—', after: '2.678571' },
+      { field: 'Вид нарушения', before: '—', after: 'пассивное' },
+      { field: 'Срок устранения', before: '—', after: '10.12.2026' },
+    ]);
+    expect(changes(reviewed)[0]).toEqual({ field: 'Вид нарушения', before: 'пассивное', after: 'активное' });
+    expect(changes(eliminated)).toEqual([
+      { field: 'Статус', before: 'открыто', after: 'устранено' },
+      { field: 'Устранено', before: '—', after: '17.11.2026' },
+    ]);
+    expect([actionLabel(extended.type), objectLabel(extended)]).toEqual([
+      'Продлён срок устранения нарушения',
+      '—: Л4, на эмитента — Эмитент Г',
+    ]);
+    expect(changes(extended)[1]).toEqual({ field: 'Решение', before: '—', after: '№ 5 от 20.11.2026' });
+  });
+
   it('describes prices for past days', () => {
     const backfilled = event('prices.backfilled', {
       since: '2026-10-22',

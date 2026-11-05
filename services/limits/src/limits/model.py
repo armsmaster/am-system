@@ -116,9 +116,9 @@ class RatingSettings(_Strict):
 class Deadlines(_Strict):
     """Сроки устранения нарушения в рабочих днях и предельное продление (п. 8.4, 8.5)."""
 
-    active: Annotated[int, Field(ge=0, le=100)] = 1
-    passive_metric: Annotated[int, Field(ge=0, le=100)] = 2
-    passive_other: Annotated[int, Field(ge=0, le=100)] = 20
+    active: Annotated[int, Field(ge=0, le=30)] = 1
+    passive_metric: Annotated[int, Field(ge=0, le=30)] = 2
+    passive_other: Annotated[int, Field(ge=0, le=30)] = 20
     extension_months: Annotated[int, Field(ge=0, le=24)] = 3
 
 

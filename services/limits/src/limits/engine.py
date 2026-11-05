@@ -72,6 +72,7 @@ class Deal:
     instrument_id: UUID
     secid: str
     side: str  # buy | sell
+    amount: Decimal = ZERO  # сумма сделки с НКД
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,12 +136,15 @@ class Group:
     name: str
     value: Decimal  # % активов
     status: Status
+    # Сколько процентных пунктов добавили сделки дня: покупки — плюс, продажи — минус.
+    traded: Decimal = ZERO
 
 
 @dataclass(frozen=True, slots=True)
 class Problem:
     secid: str
     reason: str
+    by_deal: bool = False  # нарушение — из сделки дня, а не из позиции
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,7 +230,7 @@ def evaluate(
             if isinstance(check, MetricCheck):
                 result = _metric(limit, check, found, held)
             elif isinstance(check, ShareCheck):
-                result = _share(limit, check, found, held, facts)
+                result = _share(limit, check, found, held, deals=deals, facts=facts)
             elif isinstance(check, EligibleCheck):
                 result = _eligible(limit, check, held, deals, facts)
             else:
@@ -271,47 +275,53 @@ def _share(
     check: ShareCheck,
     found: Totals,
     held: Sequence[Position],
+    *,
+    deals: Sequence[Deal],
     facts: _Facts,
 ) -> CheckResult:
     sums: dict[str, Decimal] = {}
     names: dict[str, str] = {}
     missing: list[Problem] = []
-    excluded = set(check.exclude_issuers)
     for position in held:
         paper = facts.paper(position)
         if paper is None:
             missing.append(Problem(position.secid, "бумаги нет в справочнике"))
             continue
-        if paper.issuer_id in excluded:
-            continue
         hit, reasons = facts.match(check.filter, paper)
         if hit is None:
             missing += [Problem(position.secid, r) for r in reasons]
             continue
-        if not hit:
+        if not hit or paper.issuer_id in check.exclude_issuers:
             continue
-        if check.group == "all":
-            key, name = "all", "все бумаги проверки"
-        elif check.group == "instrument":
-            key, name = str(paper.id), paper.secid
-        elif paper.issuer_id is None:
+        group = _group(check, paper, facts)
+        if group is None:
             missing.append(Problem(position.secid, _NO_ISSUER))
             continue
-        else:
-            key, name = str(paper.issuer_id), facts.issuer_name(paper.issuer_id)
+        key, names[key] = group
         sums[key] = sums.get(key, ZERO) + position.value
-        names[key] = name
+    # Вклад сделок дня: без него видно, создала ли нарушение сделка (решение 139).
+    traded: dict[str, Decimal] = {}
+    for deal in deals:
+        paper = facts.paper_by_id(deal.instrument_id)
+        if paper is None or paper.issuer_id in check.exclude_issuers:
+            continue
+        group = _group(check, paper, facts)
+        if group is not None and facts.match(check.filter, paper)[0]:
+            signed = deal.amount if deal.side == "buy" else -deal.amount
+            traded[group[0]] = traded.get(group[0], ZERO) + signed
+
+    def percent(amount: Decimal) -> Decimal:
+        return amount / found.assets * HUNDRED if found.assets > 0 else ZERO
+
     groups = [
         Group(
             key,
             names[key],
-            share,
-            Status.BREACH if share > check.max else Status.OK,
+            percent(total),
+            Status.BREACH if percent(total) > check.max else Status.OK,
+            percent(traded.get(key, ZERO)),
         )
-        for key, share in (
-            (key, total / found.assets * HUNDRED if found.assets > 0 else ZERO)
-            for key, total in sums.items()
-        )
+        for key, total in sums.items()
     ]
     groups.sort(key=lambda g: (-g.value, g.name))
     value = groups[0].value if groups else ZERO
@@ -326,6 +336,17 @@ def _share(
         groups=groups,
         missing=missing,
     )
+
+
+def _group(check: ShareCheck, paper: Paper, facts: _Facts) -> tuple[str, str] | None:
+    """Группа бумаги в проверке; по эмитенту без эмитента — нет группы."""
+    if check.group == "all":
+        return "all", "все бумаги проверки"
+    if check.group == "instrument":
+        return str(paper.id), paper.secid
+    if paper.issuer_id is None:
+        return None
+    return str(paper.issuer_id), facts.issuer_name(paper.issuer_id)
 
 
 def _eligible(
@@ -354,7 +375,14 @@ def _eligible(
     for deal in deals:
         rule, reasons = facts.rule(check, deal.instrument_id)
         if rule is None:
-            _sort(deal.secid, reasons, violations, missing, "сделка с бумагой не по правилам")
+            _sort(
+                deal.secid,
+                reasons,
+                violations,
+                missing,
+                "сделка с бумагой не по правилам",
+                by_deal=True,
+            )
     return _result(
         limit,
         check,
@@ -385,7 +413,11 @@ def _purchase(
             hit, reasons = facts.match(check.condition, paper)
             if hit is False:
                 violations.append(
-                    Problem(deal.secid, f"покупка: не выполнено {facts.describe(check.condition)}")
+                    Problem(
+                        deal.secid,
+                        f"покупка: не выполнено {facts.describe(check.condition)}",
+                        by_deal=True,
+                    )
                 )
         if hit is None:
             missing += [Problem(deal.secid, r) for r in reasons]
@@ -452,12 +484,14 @@ def _sort(
     violations: list[Problem],
     missing: list[Problem],
     violation: str,
+    *,
+    by_deal: bool = False,
 ) -> None:
     """Не подошла ни под одно правило: из-за пустых признаков — «нет данных», иначе — нарушение."""
     if reasons:
         missing += [Problem(secid, r) for r in reasons]
     else:
-        violations.append(Problem(secid, violation))
+        violations.append(Problem(secid, violation, by_deal=by_deal))
 
 
 def _unique(problems: Iterable[Problem]) -> list[Problem]:
