@@ -133,8 +133,9 @@ export const FLAG_LABELS: Readonly<Record<ValuationFlag, string>> = {
   no_price: 'цены не было — по цене покупки',
   stale_price: 'цена не за этот день',
   no_accrued: 'нет НКД на дату расчётов — без НКД',
-  no_face: 'нет номинала на день — номинал лотов',
+  no_face: 'нет номинала на дату расчётов — номинал лотов',
   coupon_unknown: 'сумма купона к получению не объявлена',
+  principal_unknown: 'сумма погашения к получению не объявлена',
 };
 
 const NO_VALUE = '—';

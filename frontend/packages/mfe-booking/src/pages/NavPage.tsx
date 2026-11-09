@@ -125,6 +125,7 @@ function Composition({ day }: { readonly day: NavDay }) {
     ['деньги на счетах', day.cash, false],
     ['бумаги по чистой цене', day.clean, false],
     ['НКД в оценке и купоны к получению', day.accrued, false],
+    ['погашение номинала к получению', day.principal_due, false],
     ['к получению по сделкам до расчётов', day.receivable, false],
     ['к уплате по сделкам до расчётов', day.payable, true],
     ['размещено в обратное РЕПО, с процентами', day.repo_placed, false],

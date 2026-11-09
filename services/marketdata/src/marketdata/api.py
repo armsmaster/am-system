@@ -180,7 +180,7 @@ class MarkOut(BaseModel):
     price: ChoiceOut | None  # цена для оценки на 23:59:59 МСК
     settle_date: dt.date  # T+1: расчёты по сделке, заключённой в этот день
     accrued: Decimal | None  # облигация: НКД на дату расчётов T+1
-    face_value: Decimal | None  # облигация: номинал на день
+    face_value: Decimal | None  # облигация: номинал на дату расчётов T+1 (решение 149)
 
 
 class RateOut(BaseModel):

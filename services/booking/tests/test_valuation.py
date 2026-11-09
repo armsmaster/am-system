@@ -6,6 +6,7 @@ import json
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -416,6 +417,7 @@ def held(quantity: int, price: str = "98") -> State:
 
 
 def days_from(start: State, till: date, terms: Terms, face: str = "1000") -> list[State]:
+    """Дни до ``till`` по цене 98%, расчёты T+1 — завтра; номинал отметки — для линкера."""
     states, current = [], start
     while current.day < till:
         prices = lambda _i, d: Mark(  # noqa: E731
@@ -423,27 +425,68 @@ def days_from(start: State, till: date, terms: Terms, face: str = "1000") -> lis
         )
         current = roll(current, [], lambda _i, _d: terms, prices)
         states.append(current)
+    # Части результата сходятся с изменением стоимости каждый день, кроме первого.
+    for before, after in pairwise(states):
+        assert after.result is not None
+        assert before.result is not None
+        assert after.result.value - before.result.value == after.result.total
     return states
 
 
-def test_amortization_realizes_the_difference_to_par() -> None:
-    plan = Terms((payment(coupon=Decimal(0), principal=Decimal(250), outstanding=Decimal(750)),))
+def parts(state: State) -> tuple[Decimal, Decimal, Decimal, Decimal]:
+    v = state.valuations[OFZ]
+    return v.clean, v.principal_due, v.revaluation, v.realized
+
+
+AMORTIZATION = payment(coupon=Decimal(0), principal=Decimal(250), outstanding=Decimal(750))
+
+
+def test_amortization_after_the_record_date_is_due_at_par() -> None:
+    # 100 бумаг по 98%: 02.03 — номинал 1 000; 03.03 — дата фиксации, расчёты T+1 04.03 —
+    # в дату выплаты 250 ₽ номинала; 04.03 — выплата.
+    plan = Terms((AMORTIZATION,), face=Decimal(1000))
     states = days_from(held(100), date(2026, 3, 4), plan)
-    paid = states[-1].valuations[OFZ]
-    # Вернули 250 ₽ номинала бумаги, купленной по 98%: 100 × 250 × 2% = 500 ₽.
-    assert paid.realized == Decimal("500.00")
+
+    assert [parts(s) for s in states] == [
+        (Decimal("98000.00"), Decimal(0), Decimal("98000.00"), Decimal(0)),
+        # Номинал на T+1 — 750: бумага стоит 100 × 98% × 750, а 250 ₽ номинала — требование
+        # к эмитенту по 100%. Погашенная часть больше не зависит от цены: +100 × 250 × 2%.
+        (Decimal("73500.00"), Decimal("25000.00"), Decimal("500.00"), Decimal(0)),
+        # Деньги пришли, требование закрылось; реализованный — от цены лота, переоценка — назад.
+        (Decimal("73500.00"), Decimal(0), Decimal("-500.00"), Decimal("500.00")),
+    ]
     assert states[-1].holdings[OFZ].lots[0].face == Decimal(750)
 
 
-def test_redemption_closes_the_lots() -> None:
+def test_record_date_two_days_before_the_amortization() -> None:
+    # Фиксация 02.03, выплата 04.03: номинал на T+1 03.03 ещё 1 000, но 250 ₽ из него
+    # покупатель уже не получит — они в требовании, а не в бумаге.
+    plan = Terms((replace(AMORTIZATION, record_date=date(2026, 3, 2)),), face=Decimal(1000))
+    states = days_from(held(100), date(2026, 3, 3), plan)
+    assert parts(states[-1])[:2] == (Decimal("73500.00"), Decimal("25000.00"))
+
+
+def test_redemption_after_the_record_date_is_due_at_par() -> None:
     plan = Terms((payment(coupon=Decimal(0), principal=Decimal(1000), final=True),))
     states = days_from(held(10), date(2026, 3, 4), plan)
+
+    assert [parts(s) for s in states[1:]] == [
+        # После даты фиксации погашения бумагу не продать с этим погашением: она — 0,
+        # весь номинал — к получению.
+        (Decimal(0), Decimal("10000.00"), Decimal("200.00"), Decimal(0)),
+        (Decimal(0), Decimal(0), Decimal("-200.00"), Decimal("200.00")),
+    ]
     redeemed = states[-1].valuations[OFZ]
-    assert (redeemed.realized, redeemed.quantity, redeemed.cost) == (
-        Decimal("200.00"),
-        0,
-        Decimal(0),
-    )
+    assert (redeemed.quantity, redeemed.cost) == (0, Decimal(0))
+
+
+def test_unknown_amortization_is_flagged() -> None:
+    # Сумма погашения не объявлена: номинал по графику не посчитать — номинал отметки.
+    plan = Terms((replace(AMORTIZATION, principal=None),), face=Decimal(1000))
+    states = days_from(held(10), date(2026, 3, 3), plan, face="990")
+    valuation = states[-1].valuations[OFZ]
+    assert (valuation.flags, valuation.face) == ((Flag.PRINCIPAL_UNKNOWN,), Decimal(990))
+    assert plan.outstanding_on(date(2026, 3, 4)) is None
 
 
 def test_unknown_coupon_is_flagged() -> None:
@@ -457,6 +500,12 @@ def test_json_round_trip_keeps_the_valuation() -> None:
     for state in days[4].values():
         assert from_json(to_json(state)) == state
     old = to_json(days[4][BONDS])
+    # Снапшот до решения 149: без погашений к получению и номинала в оценке.
+    for line in old["valuations"]:
+        del line["principal_due"], line["face"]
+    assert [(v.principal_due, v.face) for v in from_json(old).valuations.values()] == [
+        (Decimal(0), None)
+    ]
     del old["valuations"], old["result"]
     assert from_json(old).result is None
 
@@ -492,6 +541,9 @@ def test_today_at_the_current_price() -> None:
     assert stale.result.flags == (Flag.STALE_PRICE,)
     unvalued = State(day=date(2026, 12, 3))
     assert remark(unvalued, now("52.70")) is unvalued
+    # Снапшот до решения 149 без номинала в оценке — номинал текущей отметки.
+    old = replace(today, valuations={OFZ: replace(today.valuations[OFZ], face=None)})
+    assert remark(old, now("52.70")).valuations[OFZ].clean == higher.valuations[OFZ].clean
 
 
 def test_two_bonds_traded_the_same_day() -> None:
@@ -792,3 +844,53 @@ def test_repo_returned_on_the_first_day_accrues_evenly() -> None:
         contributions=(back,),
     )
     assert [empty.accrued(date(2026, 12, d)) for d in (1, 2)] == amounts("-5.00", "-10.00")
+
+
+LINKER = UUID(int=10504)
+
+
+@pytest.mark.parametrize(
+    ("traded", "settled", "face"),
+    [
+        (date(2026, 11, 9), date(2026, 11, 10), "1071.26"),
+        # Пятница: расчёты в понедельник, номинал — с индексацией за выходные.
+        (date(2026, 11, 6), date(2026, 11, 9), "1070.85"),
+    ],
+    ids=["monday", "friday"],
+)
+def test_linker_bought_at_the_market_has_no_result_on_the_trade_date(
+    traded: date, settled: date, face: str
+) -> None:
+    # ВЭБ2Р-58: номинал индексируется на RUONIA и растёт каждый день. Сделка по цене оценки
+    # стоит столько же, сколько бумага в оценке: номинал у обеих — на дату расчётов.
+    buy = Trade(
+        id=BUY_ID,
+        instrument_id=LINKER,
+        kind=InstrumentKind.BOND,
+        side=Side.BUY,
+        quantity=10_000,
+        price=Decimal("99.75"),
+        face_value=Decimal(face),
+        accrued=Decimal(0),
+        amount=trade_amount(
+            InstrumentKind.BOND, 10_000, Decimal("99.75"), Decimal(face), Decimal(0)
+        ),
+        fee=Decimal(0),
+        trade_at=datetime(traded.year, traded.month, traded.day, 11, tzinfo=MOSCOW),
+        trade_date=traded,
+        settle_date=settled,
+    )
+    terms = Terms(face=Decimal(1000), indexed=True)
+    # Отметка: номинал из ряда ISS на дату расчётов (сервис цен, решение 149).
+    mark = Mark(price=Decimal("99.75"), settle=settled, accrued=Decimal(0), face=Decimal(face))
+    state = roll(
+        State(day=traded - timedelta(days=1)), [buy], lambda _i, _d: terms, lambda _i, _d: mark
+    )
+
+    valuation = state.valuations[LINKER]
+    assert (valuation.clean, valuation.face, valuation.revaluation) == (
+        buy.amount,
+        Decimal(face),
+        Decimal(0),
+    )
+    assert terms.outstanding_on(settled) is None

@@ -148,6 +148,8 @@ export interface Line {
   readonly accrued_value: Decimal;
   /** Купоны к получению: дата фиксации прошла, выплаты ещё не было. */
   readonly coupon_due: Decimal;
+  /** Погашение номинала к получению по номиналу: дата фиксации прошла (решение 149). */
+  readonly principal_due: Decimal;
   readonly unrealized: Decimal;
   readonly revaluation: Decimal;
   readonly realized: Decimal;
@@ -164,7 +166,13 @@ export interface Line {
 }
 
 /** Почему оценка неполная или неточная (design/06). */
-export type ValuationFlag = 'no_price' | 'stale_price' | 'no_accrued' | 'no_face' | 'coupon_unknown';
+export type ValuationFlag =
+  | 'no_price'
+  | 'stale_price'
+  | 'no_accrued'
+  | 'no_face'
+  | 'coupon_unknown'
+  | 'principal_unknown';
 
 /** Стоимость портфеля на конец дня и результат дня по частям. */
 export interface DayResult {
@@ -361,6 +369,7 @@ export interface NavDay {
   readonly cash: Decimal;
   readonly clean: Decimal;
   readonly accrued: Decimal;
+  readonly principal_due: Decimal;
   readonly receivable: Decimal;
   readonly payable: Decimal;
   readonly claims: Decimal;

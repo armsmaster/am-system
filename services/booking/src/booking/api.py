@@ -284,6 +284,7 @@ class LineOut(BaseModel):
     clean: Decimal = Decimal(0)  # стоимость по чистой цене
     accrued_value: Decimal = Decimal(0)  # НКД в оценке: на дату расчётов T+1
     coupon_due: Decimal = Decimal(0)  # купоны к получению
+    principal_due: Decimal = Decimal(0)  # погашение номинала к получению (решение 149)
     unrealized: Decimal = Decimal(0)
     revaluation: Decimal = Decimal(0)  # результат дня по частям
     realized: Decimal = Decimal(0)
@@ -519,6 +520,7 @@ class NavDayOut(BaseModel):
     cash: Decimal
     clean: Decimal
     accrued: Decimal
+    principal_due: Decimal  # погашение номинала к получению (решение 149)
     receivable: Decimal
     payable: Decimal
     claims: Decimal
@@ -1492,6 +1494,7 @@ def _nav_day_out(day: NavDay) -> NavDayOut:
         cash=day.cash,
         clean=day.clean,
         accrued=day.accrued,
+        principal_due=day.principal_due,
         receivable=day.receivable,
         payable=day.payable,
         claims=day.claims,
@@ -1655,6 +1658,7 @@ def _line_out(line: PositionLine) -> LineOut:
         clean=line.total("clean"),
         accrued_value=line.total("accrued_value"),
         coupon_due=line.total("coupon_due"),
+        principal_due=line.total("principal_due"),
         unrealized=(line.total("clean") - line.total("cost")).quantize(Decimal("0.01")),
         revaluation=line.total("revaluation"),
         realized=line.total("realized"),

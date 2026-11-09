@@ -127,12 +127,28 @@ class Payment:
 
 @dataclass(frozen=True, slots=True)
 class Terms:
-    """Что роллу нужно знать о бумаге на дату: выплаты по графику."""
+    """Что роллу нужно знать о бумаге на дату: выплаты по графику и номинал."""
 
     payments: tuple[Payment, ...] = ()
+    face: Decimal | None = None  # начальный номинал на бумагу; None — неизвестен
+    indexed: bool = False  # номинал индексируется: номинал на дату — из ряда ISS
 
     def paid_on(self, day: date) -> Payment | None:
         return next((p for p in self.payments if p.pay_date == day), None)
+
+    def outstanding_on(self, day: date) -> Decimal | None:
+        """Непогашенный номинал на дату по графику. None — по графику не посчитать:
+        номинал индексируется или неизвестен, сумма погашения не объявлена."""
+        if self.face is None or self.indexed:
+            return None
+        repaid = ZERO
+        for payment in self.payments:
+            if payment.pay_date > day:
+                continue
+            if payment.principal is None:
+                return None
+            repaid += payment.principal
+        return max(self.face - repaid, ZERO)
 
 
 # Условия бумаги по версии справочника на дату.
@@ -329,7 +345,7 @@ class Mark:
     stale: bool = False
     settle: date | None = None  # T+1: расчёты по сделке, заключённой в этот день
     accrued: Decimal | None = None  # облигация: НКД на бумагу на дату T+1 (решение 102)
-    face: Decimal | None = None  # облигация: номинал на день
+    face: Decimal | None = None  # облигация: номинал на дату T+1 из ряда ISS (решение 149)
 
 
 # Отметка бумаги на конец дня.
@@ -342,8 +358,9 @@ class Flag(StrEnum):
     NO_PRICE = "no_price"  # цены не было никогда — по цене покупки (решение 103)
     STALE_PRICE = "stale_price"  # цена не за этот торговый день
     NO_ACCRUED = "no_accrued"  # нет НКД на дату расчётов — НКД 0
-    NO_FACE = "no_face"  # нет номинала на день — номинал лотов
+    NO_FACE = "no_face"  # нет номинала на дату расчётов — номинал лотов
     COUPON_UNKNOWN = "coupon_unknown"  # купон к получению, сумма не объявлена
+    PRINCIPAL_UNKNOWN = "principal_unknown"  # погашение к получению, сумма не объявлена
 
 
 @dataclass(frozen=True, slots=True)
@@ -364,10 +381,13 @@ class Valuation:
     coupon: Decimal = ZERO
     fees: Decimal = ZERO
     flags: tuple[Flag, ...] = ()
+    # Погашение номинала к получению по номиналу: дата фиксации прошла (решение 149).
+    principal_due: Decimal = ZERO
+    face: Decimal | None = None  # облигация: номинал на бумагу в оценке
 
     @property
     def value(self) -> Decimal:
-        return self.clean + self.accrued_value + self.coupon_due
+        return self.clean + self.accrued_value + self.coupon_due + self.principal_due
 
     @property
     def unrealized(self) -> Decimal:
@@ -769,6 +789,10 @@ def _appraise(
             valuation.quantity
             or valuation.cost
             or valuation.coupon_due
+            or valuation.principal_due
+            # В день погашения реализованный и обратная переоценка в сумме — ноль.
+            or valuation.revaluation
+            or valuation.realized
             or valuation.result
             or valuation.flags
         ):
@@ -813,7 +837,7 @@ def remark(state: State, marks_on: MarksOn) -> State:
     """Оценка дня по текущим ценам — переоценка внутри дня (решение 68).
 
     Меняется стоимость по чистой цене, а с ней — переоценка и стоимость портфеля.
-    НКД на T+1 и купоны внутри дня не меняются.
+    НКД на T+1, номинал на T+1 и выплаты к получению внутри дня не меняются.
     """
     if state.result is None:
         return state
@@ -826,7 +850,10 @@ def remark(state: State, marks_on: MarksOn) -> State:
             continue
         holding = state.holdings.get(instrument_id)
         lots = () if holding is None else holding.lots
-        face = mark.face or next((lot.face for lot in lots if lot.face is not None), None)
+        # Снапшот до решения 149 номинала не хранит — номинал отметки или лотов.
+        face = valuation.face
+        if face is None:
+            face = mark.face or next((lot.face for lot in lots if lot.face is not None), None)
         clean = _kopecks(valuation.quantity * _unit(valuation.kind, mark.price, face))
         flags: list[Flag] = [
             f for f in valuation.flags if f not in {Flag.NO_PRICE, Flag.STALE_PRICE}
@@ -888,7 +915,7 @@ def _value(
     flags: list[Flag] = []
     cost = sum((lot.cost for lot in lots), ZERO)
 
-    face = mark.face
+    face = _face(terms, mark, day) if kind is InstrumentKind.BOND else None
     if kind is InstrumentKind.BOND and face is None and held:
         face = next((lot.face for lot in lots if lot.face is not None), None)
         flags.append(Flag.NO_FACE)
@@ -909,6 +936,9 @@ def _value(
     coupon_due, unknown = _coupon_due(entitled, terms)
     if unknown:
         flags.append(Flag.COUPON_UNKNOWN)
+    principal_due, unknown = _principal_due(entitled, terms)
+    if unknown:
+        flags.append(Flag.PRINCIPAL_UNKNOWN)
     clean_flow, accrued_flow, fees = _traded(work.traded, instrument_id)
 
     moved_clean = _kopecks(moved * unit if unit is not None else moved_cost)
@@ -917,7 +947,8 @@ def _value(
     previous = work.previous.valuations.get(instrument_id)
     price_effect = (
         clean
-        - (ZERO if previous is None else previous.clean)
+        + principal_due
+        - (ZERO if previous is None else previous.clean + previous.principal_due)
         + principal
         + clean_flow
         - moved_clean
@@ -946,8 +977,30 @@ def _value(
         coupon=coupon,
         fees=fees,
         flags=tuple(dict.fromkeys(flags)),
+        principal_due=principal_due,
+        face=face,
     )
     return valuation, moved_clean + moved_accrued
+
+
+def _face(terms: Terms, mark: Mark, day: date) -> Decimal | None:
+    """Номинал бумаги в оценке — на дату расчётов T+1, как НКД (решение 149).
+
+    Обычной облигации — по графику погашений, линкера — из ряда ISS. Погашение,
+    право на которое уже зафиксировано, бумаге не принадлежит: покупатель с расчётами
+    до выплаты его не получит, оно — к получению. После даты фиксации окончательного
+    погашения бумага по чистой цене не стоит ничего.
+    """
+    settle = mark.settle or day
+    fixed = [p for p in terms.payments if p.record_date <= day < p.pay_date]
+    if any(p.final for p in fixed):
+        return ZERO
+    scheduled = terms.outstanding_on(settle)
+    face = scheduled if scheduled is not None else mark.face
+    if face is None:
+        return None
+    # Дата фиксации раньше, чем за день до выплаты: номинал на T+1 погашение ещё содержит.
+    return face - sum((p.principal or ZERO for p in fixed if p.pay_date > settle), ZERO)
 
 
 def _coupon_after_record(terms: Terms, day: date, settle: date | None) -> Decimal:
@@ -978,6 +1031,22 @@ def _coupon_due(entitled: Iterable[Entitlement], terms: Terms) -> tuple[Decimal,
             unknown = True
             continue
         due += _kopecks(entitlement.quantity * payment.coupon)
+    return due, unknown
+
+
+def _principal_due(entitled: Iterable[Entitlement], terms: Terms) -> tuple[Decimal, bool]:
+    """Погашения номинала к получению по правам на выплату — по номиналу, как вернёт
+    эмитент; второе — есть погашение с необъявленной суммой."""
+    due = ZERO
+    unknown = False
+    for entitlement in entitled:
+        payment = terms.paid_on(entitlement.pay_date)
+        if payment is None:
+            continue
+        if payment.principal is None:
+            unknown = True
+            continue
+        due += _kopecks(entitlement.quantity * payment.principal)
     return due, unknown
 
 
@@ -1453,6 +1522,8 @@ def to_json(state: State) -> dict[str, Any]:
                 "clean": str(v.clean),
                 "accrued_value": str(v.accrued_value),
                 "coupon_due": str(v.coupon_due),
+                "principal_due": str(v.principal_due),
+                "face": None if v.face is None else str(v.face),
                 "cost": str(v.cost),
                 "revaluation": str(v.revaluation),
                 "realized": str(v.realized),
@@ -1569,6 +1640,9 @@ def from_json(data: Mapping[str, Any]) -> State:
                 coupon=Decimal(v["coupon"]),
                 fees=Decimal(v["fees"]),
                 flags=tuple(Flag(f) for f in v["flags"]),
+                # Снапшоты до решения 149: погашений к получению и номинала в них нет.
+                principal_due=Decimal(v.get("principal_due", "0")),
+                face=None if v.get("face") is None else Decimal(v["face"]),
             )
             for v in data.get("valuations", [])
         },

@@ -315,6 +315,15 @@ async def test_accrued_interest_and_face_value_on_dates(
     # Линкер: номинал между точками растёт каждый день.
     saturday = get(f"/instruments/{LINKER}/face-value", date="2026-05-16")
     assert (saturday["value"], saturday["method"]) == ("1000.39", "geometric")
+    # Отметка для оценки — номинал на дату расчётов T+1, как НКД (решение 149): в пятницу
+    # 23.10 — номинал понедельника 26.10, с индексацией за выходные.
+    friday, monday = (
+        get(f"/instruments/{LINKER}/face-value", date=day)["value"]
+        for day in ("2026-10-23", "2026-10-26")
+    )
+    [mark] = get(f"/instruments/{LINKER}/marks", **{"from": "2026-10-23", "till": "2026-10-23"})
+    assert (mark["settle_date"], mark["face_value"]) == ("2026-10-26", monday)
+    assert friday < monday
     # До выпуска номинала нет; у пая нет НКД; без справочника НКД на день без точки не досчитать.
     assert (
         get(f"/instruments/{LINKER}/face-value", date="2026-05-01")["detail"]["code"] == "not_found"

@@ -112,7 +112,8 @@ class BookingClient(_Client):
         )
 
     async def positions(self, fund_id: UUID, day: date, authorization: str) -> list[Position]:
-        """Позиции фонда на конец дня: стоимость — чистая, НКД и купоны к получению."""
+        """Позиции фонда на конец дня: стоимость — чистая, НКД, купоны и погашение
+        к получению."""
         found = await self._get(
             "/positions", authorization, portfolio_id=str(fund_id), date=day.isoformat()
         )
@@ -124,7 +125,8 @@ class BookingClient(_Client):
                 quantity=line["trade_quantity"],
                 value=Decimal(line["clean"])
                 + Decimal(line["accrued_value"])
-                + Decimal(line["coupon_due"]),
+                + Decimal(line["coupon_due"])
+                + Decimal(line["principal_due"]),
                 # У флоатера — дюрация до ближайшего купона, у фикса — по доходности.
                 duration=_decimal(line.get("reset_duration") or line.get("duration")),
             )

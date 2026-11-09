@@ -618,6 +618,7 @@ class World:
                     "clean": str(Decimal(value) * MLN),
                     "accrued_value": "0",
                     "coupon_due": "0",
+                    "principal_due": "0",
                     # У флоатера сервис сделок отдаёт и спред-дюрацию: лимитам она не нужна.
                     "duration": None
                     if paper["kind"] != "bond"

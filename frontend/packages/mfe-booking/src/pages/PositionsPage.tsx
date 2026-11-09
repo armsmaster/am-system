@@ -285,6 +285,12 @@ function LineRows({ line }: { readonly line: Line }) {
                   <dd>{formatMoney(line.coupon_due)}</dd>
                 </>
               )}
+              {Number(line.principal_due) !== 0 && (
+                <>
+                  <dt>погашение номинала к получению, ₽</dt>
+                  <dd>{formatMoney(line.principal_due)}</dd>
+                </>
+              )}
               {line.duration !== null && (
                 <>
                   <dt>{line.metrics_basis === 'spread' ? 'спред-дюрация' : 'модифицированная дюрация'}</dt>

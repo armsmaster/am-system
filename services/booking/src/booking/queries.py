@@ -423,6 +423,7 @@ class NavDay:
     cash: Decimal
     clean: Decimal  # бумаги по чистой цене
     accrued: Decimal  # НКД в оценке и купоны к получению
+    principal_due: Decimal  # погашение номинала к получению (решение 149)
     receivable: Decimal
     payable: Decimal
     claims: Decimal
@@ -504,6 +505,7 @@ def _nav_day(day: date, states: list[State]) -> NavDay:
         cash=sum((s.cash for s in states), ZERO),
         clean=sum((v.clean for v in values), ZERO),
         accrued=sum((v.accrued_value + v.coupon_due for v in values), ZERO),
+        principal_due=sum((v.principal_due for v in values), ZERO),
         receivable=sum((r.receivable for r in results), ZERO),
         payable=sum((r.payable for r in results), ZERO),
         claims=sum((s.claims for s in states), ZERO),

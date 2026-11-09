@@ -121,7 +121,8 @@ describe('PositionsPage', () => {
             ...line!,
             price: null,
             coupon_due: '1062000.00',
-            flags: ['stale_price', 'coupon_unknown'],
+            principal_due: '250000.00',
+            flags: ['stale_price', 'coupon_unknown', 'principal_unknown'],
             metrics_basis: 'spread',
             duration: '0.41',
           },
@@ -143,8 +144,11 @@ describe('PositionsPage', () => {
     await user.click(screen.getByText('Подробнее и лоты FIFO: 1'));
     const details = screen.getByLabelText('Оценка SU26238RMFS4');
     expect(details).toHaveTextContent('купоны к получению, ₽1 062 000,00');
+    expect(details).toHaveTextContent('погашение номинала к получению, ₽250 000,00');
     expect(details).toHaveTextContent('спред-дюрация0,41');
-    expect(details).toHaveTextContent('оценкацена не за этот день; сумма купона к получению не объявлена');
+    expect(details).toHaveTextContent(
+      'оценкацена не за этот день; сумма купона к получению не объявлена; сумма погашения к получению не объявлена',
+    );
   });
 
   it('shows units and settlements with unit holders of the treasury portfolio', async () => {

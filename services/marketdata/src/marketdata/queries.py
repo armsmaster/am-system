@@ -175,7 +175,7 @@ class Mark:
     price: Choice | None  # цена для оценки на конец дня
     settle_date: date  # T+1: расчёты по сделке, заключённой в этот день
     accrued: OnDate | None  # облигация: НКД на дату расчётов T+1
-    face: OnDate | None  # облигация: номинал на день
+    face: OnDate | None  # облигация: номинал на дату расчётов T+1 (решение 149)
 
 
 def end_of_day(day: date) -> datetime:
@@ -186,7 +186,7 @@ async def marks(
     session: AsyncSession, refdata: RefdataClient, instrument_id: UUID, first: date, last: date
 ) -> list[Mark]:
     """Отметки на каждый календарный день: цена на 23:59:59 МСК по правилу бумаги,
-    НКД на дату расчётов T+1 (решение 102), номинал на день."""
+    НКД и номинал на дату расчётов T+1 (решения 102 и 149)."""
     repo = Repository(session)
     record = await repo.get(instrument_id)
     bond = record.kind == "bond"
@@ -208,7 +208,7 @@ async def marks(
                 else await refdata.coupon_periods(instrument_id, settle)
             )
             accrued = accrued_on(settle, accrued_points, periods)
-            face = face_value_on(day, face_points)
+            face = face_value_on(settle, face_points)
         found.append(Mark(day, view.price, settle, accrued, face))
         day += timedelta(days=1)
     return found

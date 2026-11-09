@@ -162,7 +162,12 @@ class TermsBook:
             return NO_TERMS
         key = (instrument_id, version[0])
         if key not in self._cache:
-            self._cache[key] = Terms(payments(version[1], self._exceptions, self._rates))
+            params = version[1]
+            self._cache[key] = Terms(
+                payments(params, self._exceptions, self._rates),
+                face=_decimal(params.get("initial_face_value")),
+                indexed=params.get("nominal_indexation", "none") != "none",
+            )
         return self._cache[key]
 
 
