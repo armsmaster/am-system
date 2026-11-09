@@ -1,10 +1,12 @@
-# Локальное окружение разработки: docker compose up -d --build
-# Приложение: http://localhost:8080 (порт меняется через GATEWAY_PORT в .env).
+# Окружение: docker compose up -d --build
+# Разработка — без .env: приложение на http://localhost:8080 (порт — GATEWAY_PORT).
+# Виртуальная машина — .env от scripts/vm_config.py: свой домен, HTTPS, Keycloak
+# в рабочем режиме, realm без пользователей разработки (README, «Развёртывание на ВМ»).
 name: am-system
 
 x-service-env: &service-env
   # Issuer — адрес realm, каким его видит браузер; ключи — по внутренней сети.
-  AM_AUTH_ISSUER: http://localhost:${GATEWAY_PORT:-8080}/auth/realms/am
+  AM_AUTH_ISSUER: ${PUBLIC_URL:-http://localhost:${GATEWAY_PORT:-8080}}/auth/realms/am
   AM_AUTH_JWKS_URL: http://keycloak:8080/auth/realms/am/protocol/openid-connect/certs
   AM_LOG_LEVEL: INFO
   AM_REDIS_URL: redis://redis:6379/0
@@ -60,13 +62,14 @@ services:
   keycloak:
     restart: unless-stopped
     image: quay.io/keycloak/keycloak:26.7.5
-    command: ["start-dev", "--import-realm"]
+    # Разработка — start-dev; на ВМ — start: рабочий режим Keycloak.
+    command: ${KEYCLOAK_MODE:-start-dev} --import-realm
     environment:
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
       KC_DB_USERNAME: keycloak
       KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak-dev}
-      KC_HOSTNAME: http://localhost:${GATEWAY_PORT:-8080}/auth
+      KC_HOSTNAME: ${PUBLIC_URL:-http://localhost:${GATEWAY_PORT:-8080}}/auth
       KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
       KC_HTTP_ENABLED: "true"
       KC_HTTP_RELATIVE_PATH: /auth
@@ -75,7 +78,9 @@ services:
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:-kcadmin}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-kcadmin-dev}
     volumes:
-      - ./infra/keycloak/realms:/opt/keycloak/data/import:ro
+      # На ВМ — realm, собранный scripts/vm_config.py: свои секреты, без пользователей
+      # разработки. Keycloak импортирует его только в пустую базу.
+      - ${KEYCLOAK_REALM_DIR:-./infra/keycloak/realms}:/opt/keycloak/data/import:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -98,7 +103,9 @@ services:
     volumes:
       - ./infra/traefik:/etc/traefik:ro
     ports:
-      - "${GATEWAY_PORT:-8080}:80"
+      # На ВМ шлюз слушает только 127.0.0.1: снаружи — HTTPS через tls. Docker публикует
+      # порты в обход ufw, поэтому закрываем адресом, а не файрволом.
+      - "${GATEWAY_BIND:-0.0.0.0}:${GATEWAY_PORT:-8080}:80"
       - "127.0.0.1:8081:8080"  # панель Traefik
     healthcheck:
       test: ["CMD", "traefik", "healthcheck", "--ping"]
@@ -259,6 +266,29 @@ services:
       context: frontend
       dockerfile: packages/mfe-limits/Dockerfile
 
+  # HTTPS на ВМ: Caddy получает сертификат Let's Encrypt для DOMAIN и проксирует
+  # на шлюз. Включается профилем tls (COMPOSE_PROFILES=tls в .env).
+  tls:
+    restart: unless-stopped
+    image: caddy:2.10.2-alpine
+    profiles: [tls]
+    environment:
+      # Задаёт scripts/vm_config.py; без них Caddy не запустится и скажет об этом в логе.
+      DOMAIN: ${DOMAIN:-}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    ports:
+      - "${TLS_HTTP_PORT:-80}:80"
+      - "${TLS_HTTPS_PORT:-443}:443"
+    depends_on:
+      gateway:
+        condition: service_healthy
+
 volumes:
   postgres-data:
   redis-data:
+  caddy-data:
+  caddy-config:

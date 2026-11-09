@@ -21,6 +21,9 @@ coverage/
 # Локальные настройки окружения
 .env
 
+# Realm для ВМ с настоящими секретами — собирает scripts/vm_config.py
+infra/keycloak/realm-vm/
+
 # IDE
 .idea/
 .vscode/

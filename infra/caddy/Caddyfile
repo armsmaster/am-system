@@ -1,0 +1,11 @@
+# HTTPS для виртуальной машины: сертификат Let's Encrypt для домена, дальше — шлюз.
+# DOMAIN и ACME_EMAIL — из .env (scripts/vm_config.py). Для пробы на своей машине
+# DOMAIN=localhost:8443: Caddy выпустит сертификат своим локальным центром.
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy gateway:80
+}

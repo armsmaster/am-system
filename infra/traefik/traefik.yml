@@ -3,6 +3,10 @@
 entryPoints:
   web:
     address: ":80"
+    # На ВМ перед шлюзом — Caddy с HTTPS: его X-Forwarded-Proto и адрес клиента
+    # доходят до Keycloak и сервисов. Доверяем только внутренним сетям Docker.
+    forwardedHeaders:
+      trustedIPs: ["127.0.0.1/32", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
 
 providers:
   file:

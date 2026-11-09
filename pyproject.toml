@@ -73,7 +73,7 @@ module = ["testcontainers.*", "markdown.*", "jsonschema.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-testpaths = ["libs", "services"]
+testpaths = ["libs", "services", "scripts"]
 addopts = ["--import-mode=importlib", "--strict-markers"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
