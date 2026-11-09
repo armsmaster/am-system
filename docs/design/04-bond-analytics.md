@@ -321,7 +321,7 @@ COUPON_BENCHMARK_SPREAD), капитализацию — нет. Справоч�
 | справочник | купоны, амортизации, оферты | ISS и сопровождение |
 | справочник | тип плавающей ставки, маржа, капитализация, индексация номинала | сопровождение (решение 75) |
 | рыночные данные | цена оценки, НКД и номинал на дату расчётов | шаг 3 |
-| рыночные данные | RUONIA — от скрипта; ключевая ставка, RUSFAR — из ISS | решение 76 |
+| рыночные данные | RUONIA — из веб-сервиса Банка России; ключевая ставка, RUSFAR — из ISS; скрипт может исправить любую | решения 76, 148 |
 
 ## Где посмотреть
 
@@ -330,7 +330,7 @@ COUPON_BENCHMARK_SPREAD), капитализацию — нет. Справоч�
 | формулы | `libs/am-quant`: `bond.py` — горизонт и потоки, `yields.py` — доходность и метрики, `spread.py` — спред и разложение |
 | эталоны | `libs/am-quant/tests/test_golden.py`; сквозь API — `services/marketdata/tests/test_analytics.py` |
 | расчёт на момент | `GET /api/marketdata/instruments/{id}/analytics?at=&price=&yield=&spread=` |
-| ставки | `GET /api/marketdata/rates?date=`; скрипт присылает — `POST /api/marketdata/feed/v1/rates` |
+| ставки | `GET /api/marketdata/rates?date=`; загрузка — `services/marketdata/src/marketdata/scheduler.py`; скрипт присылает — `POST /api/marketdata/feed/v1/rates` |
 | в интерфейсе | «Цены» → карточка облигации → «Расчёт по облигации», с формой «что если» |
 
 Расчёт по цене для оценки обновляется вместе с ценой. «Что если» — одно

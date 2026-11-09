@@ -307,7 +307,7 @@ async def test_floater_and_linker_inputs(api: Api, resources: Resources, world: 
     await bonds(resources, world, floater=GPN_FLOATER)
     await rates(resources)
 
-    # RUONIA присылает скрипт; пока её нет, спред не посчитать.
+    # RUONIA ещё не загружена — ни с сайта ЦБ, ни от скрипта: спред не посчитать.
     assert api.problem(GPN, price="100") == (422, "rate_missing")
     ruonia(api)
     assert api.problem(GPN, **{"yield": "15"}) == (422, "yield_for_floater")

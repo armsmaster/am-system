@@ -24,6 +24,16 @@ class MarketdataSettings(ServiceSettings):
     intraday_from: time = time(6, 50)
     intraday_till: time = time(23, 55)
 
+    # RUONIA — веб-сервис Банка России (решение 148). Ставку за день ЦБ публикует
+    # на следующий рабочий день около 14:30 — ждём её с 15:00 по Москве. Пока её нет,
+    # спрашиваем не чаще раза в час. Каждый запрос берёт заново последние дни:
+    # так подхватится ставка, которую ЦБ исправил задним числом.
+    cbr_url: str = "https://www.cbr.ru/DailyInfoWebServ/DailyInfo.asmx"
+    cbr_timeout: float = 30.0
+    ruonia_at: time = time(15, 0)
+    ruonia_retry_seconds: float = 3600.0
+    ruonia_refresh_days: int = 7
+
     # Справочник: список бумаг, купоны, календарь. Читаем под служебной учётной записью.
     refdata_url: str = "http://refdata:8000"
     refdata_sync_seconds: float = 60.0
@@ -35,5 +45,5 @@ class MarketdataSettings(ServiceSettings):
     # Пакет от скрипта — не больше 5 МБ (спецификация docs/api/price-feed).
     feed_max_bytes: int = 5 * 1024 * 1024
 
-    # Фоновые задачи: список бумаг, история и данные дня ISS. Тесты запускают их сами.
+    # Фоновые задачи: список бумаг, история и данные дня ISS, RUONIA. Тесты запускают их сами.
     background_jobs: bool = True

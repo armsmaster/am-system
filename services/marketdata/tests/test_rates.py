@@ -1,4 +1,4 @@
-"""Денежные ставки: индексы ISS, ставки от скрипта и какая из них действует на дату."""
+"""Денежные ставки: индексы ISS, RUONIA от ЦБ, ставки от скрипта и какая действует на дату."""
 
 from __future__ import annotations
 
@@ -15,7 +15,13 @@ from am_common.clock import MOSCOW
 from am_common.testing import TokenFactory
 from marketdata.db import rate
 from marketdata.refdata import refdata_client
-from marketdata.scheduler import history_worker, iss_client, load_due_rates
+from marketdata.scheduler import (
+    RuoniaLoader,
+    cbr_client,
+    history_worker,
+    iss_client,
+    load_due_rates,
+)
 from marketdata.settings import MarketdataSettings
 
 if TYPE_CHECKING:
@@ -24,6 +30,11 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.integration
 
 NOW = datetime(2026, 10, 27, 11, 5, tzinfo=MOSCOW)
+
+
+def at(day: int, hour: int, minute: int = 0) -> datetime:
+    """Ноябрь 2026: понедельник 09.11; 04.11 — праздник, 07–08.11 — выходные."""
+    return datetime(2026, 11, day, hour, minute, tzinfo=MOSCOW)
 
 
 def headers(tokens: TokenFactory, *roles: str) -> dict[str, str]:
@@ -64,6 +75,67 @@ async def test_iss_rates_are_loaded_once(resources: Resources) -> None:
     rows = await stored(resources)
     assert ("key_rate", "2026-10-26", "14.0000") in rows
     assert ("rusfar", "2026-10-22", "14.2200") in rows
+
+
+async def ruonia(resources: Resources) -> dict[str, tuple[str, str]]:
+    async with resources.require_database().session() as session:
+        rows = await session.execute(
+            select(rate.c.as_of, rate.c.value, rate.c.source).where(rate.c.kind == "ruonia")
+        )
+    return {r.as_of.isoformat(): (str(r.value), r.source) for r in rows}
+
+
+async def test_ruonia_comes_from_the_bank_of_russia(resources: Resources, world: World) -> None:
+    loader, refdata = RuoniaLoader(cbr_client(resources)), refdata_client(resources)
+
+    # 09.11 после 15:00 ЦБ уже опубликовал ставку за пятницу 06.11. Первый раз — с начала учёта.
+    assert await loader.load_due(resources, refdata, at(9, 15, 30)) == 7
+    assert world.cbr_asked == [("2026-01-01", "2026-11-06")]
+    found = await ruonia(resources)
+    assert len(found) == 7
+    assert found["2026-11-06"] == ("13.7200", "cbr-ws")
+
+    # Ставка за ожидаемый день уже есть — к ЦБ не идём.
+    assert await loader.load_due(resources, refdata, at(9, 18)) == 0
+    assert len(world.cbr_asked) == 1
+
+
+async def test_ruonia_waits_for_publication(resources: Resources, world: World) -> None:
+    loader, refdata = RuoniaLoader(cbr_client(resources)), refdata_client(resources)
+    del world.ruonia["2026-11-06"]
+
+    # До 15:00 ставку за 06.11 не ждём: только за 05.11.
+    assert await loader.load_due(resources, refdata, at(9, 10)) == 6
+    assert world.cbr_asked == [("2026-01-01", "2026-11-05")]
+
+    # После 15:00 ждём 06.11, а ЦБ задерживает. Последние 7 дней — заново: 29.10–05.11.
+    assert await loader.load_due(resources, refdata, at(9, 15, 5)) == 5
+    assert world.cbr_asked[-1] == ("2026-10-29", "2026-11-06")
+    # Пока ставки нет, спрашиваем не чаще раза в час.
+    world.ruonia["2026-11-06"] = "13.7200"
+    world.ruonia["2026-11-03"] = "13.9300"  # ЦБ исправил ставку задним числом
+    assert await loader.load_due(resources, refdata, at(9, 16, 4)) == 0
+    assert len(world.cbr_asked) == 2
+
+    assert await loader.load_due(resources, refdata, at(9, 16, 5)) == 6
+    found = await ruonia(resources)
+    assert (found["2026-11-06"], found["2026-11-03"]) == (
+        ("13.7200", "cbr-ws"),
+        ("13.9300", "cbr-ws"),
+    )
+
+
+async def test_ruonia_is_retried_when_the_bank_is_down(
+    resources: Resources, world: World, caplog: pytest.LogCaptureFixture
+) -> None:
+    loader, refdata = RuoniaLoader(cbr_client(resources)), refdata_client(resources)
+    world.cbr_down = True
+    assert await loader.load_due(resources, refdata, at(9, 15, 30)) == 0
+    assert "CBR RUONIA failed, will retry" in caplog.text
+
+    world.cbr_down = False
+    assert await loader.load_due(resources, refdata, at(9, 16)) == 0
+    assert await loader.load_due(resources, refdata, at(9, 16, 30)) == 7
 
 
 async def test_failed_iss_rates_are_retried(resources: Resources, world: World) -> None:

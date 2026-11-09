@@ -6,6 +6,7 @@ requires-python = ">=3.13,<3.14"
 dependencies = [
     "am-common",
     "am-quant",
+    "defusedxml>=0.7.1",
     "uvicorn[standard]>=0.54",
 ]
 

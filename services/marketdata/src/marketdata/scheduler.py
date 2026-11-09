@@ -1,4 +1,5 @@
-"""Фоновые задачи: список бумаг из справочника, история и ставки ISS, данные дня ISS.
+"""Фоновые задачи: список бумаг из справочника, история и ставки ISS, данные дня ISS,
+RUONIA из веб-сервиса Банка России.
 
 Каждая задача раз в несколько минут проверяет, есть ли работа. При нескольких
 экземплярах сервиса работу забирает один: загрузку истории — по бумаге
@@ -10,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import cast
 from uuid import UUID
 
@@ -21,10 +22,11 @@ from am_common.calendar import is_trading_day, previous_trading_day
 from am_common.clock import MOSCOW, moscow_now
 from am_common.events import SYSTEM_ACTOR
 from marketdata.backfill import announce, past_days
+from marketdata.cbr import CbrClient, CbrError
 from marketdata.commands import load_history, poll_intraday, refresh_instruments
 from marketdata.iss import IssClient, IssError
 from marketdata.queries import calendar_around
-from marketdata.rates import ISS, ISS_INDICES
+from marketdata.rates import CBR, ISS, ISS_INDICES, RateKind
 from marketdata.refdata import RefdataClient, RefdataUnavailableError, refdata_client
 from marketdata.repository import InstrumentRecord, Repository
 from marketdata.settings import MarketdataSettings
@@ -41,15 +43,25 @@ def iss_client(resources: Resources) -> IssClient:
     return IssClient(resources.http, settings.iss_url, timeout=settings.iss_timeout)
 
 
+def cbr_client(resources: Resources) -> CbrClient:
+    settings = cast(MarketdataSettings, resources.settings)
+    return CbrClient(resources.http, settings.cbr_url, timeout=settings.cbr_timeout)
+
+
+async def published_through(refdata: RefdataClient, now: datetime, at: time) -> date:
+    """Последний торговый день, данные за который источник публикует назавтра к ``at``."""
+    exceptions = await calendar_around(refdata, now.date())
+    last = previous_trading_day(now.date() - timedelta(days=1), exceptions)
+    if now.time() < at:
+        last = previous_trading_day(last - timedelta(days=1), exceptions)
+    return last
+
+
 async def history_target(
     refdata: RefdataClient, settings: MarketdataSettings, now: datetime
 ) -> date:
     """Последний торговый день, итоги которого ISS уже опубликовал."""
-    exceptions = await calendar_around(refdata, now.date())
-    last = previous_trading_day(now.date() - timedelta(days=1), exceptions)
-    if now.time() < settings.history_at:
-        last = previous_trading_day(last - timedelta(days=1), exceptions)
-    return last
+    return await published_through(refdata, now, settings.history_at)
 
 
 async def load_due_history(
@@ -136,6 +148,58 @@ async def load_due_rates(
     return loaded
 
 
+class RuoniaLoader:
+    """RUONIA из веб-сервиса Банка России до последнего опубликованного дня (решение 148).
+
+    Пока ставки за ожидаемый день нет, ЦБ спрашиваем не чаще ``ruonia_retry_seconds``:
+    иначе в торговый день, когда ЦБ не работает, задача спрашивала бы каждые 5 минут.
+    Время попытки — в памяти экземпляра: несколько экземпляров спросят по разу, это
+    безвредно — ставка на дату записывается поверх.
+    """
+
+    def __init__(self, cbr: CbrClient) -> None:
+        self._cbr = cbr
+        self._tried: datetime | None = None
+
+    async def load_due(self, resources: Resources, refdata: RefdataClient, now: datetime) -> int:
+        settings = cast(MarketdataSettings, resources.settings)
+        database = resources.require_database()
+        target = await published_through(refdata, now, settings.ruonia_at)
+        async with database.session() as session:
+            last = await Repository(session).last_rate_date(RateKind.RUONIA, CBR)
+        if last is not None and last >= target:
+            return 0
+        retry = timedelta(seconds=settings.ruonia_retry_seconds)
+        if self._tried is not None and now - self._tried < retry:
+            return 0
+        self._tried = now
+        # Последние дни — заново: ЦБ мог исправить ставку задним числом.
+        since = (
+            last - timedelta(days=settings.ruonia_refresh_days) if last else settings.history_from
+        )
+        try:
+            values = await self._cbr.ruonia(since, target)
+        except CbrError as exc:
+            logger.warning("CBR RUONIA failed, will retry: %s", exc)
+            return 0
+        received = moscow_now()
+        async with database.session() as session, session.begin():
+            await Repository(session).upsert_rates(
+                [
+                    {
+                        "kind": RateKind.RUONIA.value,
+                        "as_of": day,
+                        "source": CBR,
+                        "value": value,
+                        "received_at": received,
+                        "batch_id": None,
+                    }
+                    for day, value in values
+                ]
+            )
+        return len(values)
+
+
 async def poll_if_due(
     resources: Resources, refdata: RefdataClient, iss: IssClient, now: datetime
 ) -> bool:
@@ -187,10 +251,12 @@ def history_worker(
 ) -> Worker:
     async def iss_history(resources: Resources) -> None:
         refdata, iss = refdata_client(resources), iss_client(resources)
+        ruonia = RuoniaLoader(cbr_client(resources))
         while True:
             try:
                 await load_due_history(resources, refdata, iss, clock())
                 await load_due_rates(resources, refdata, iss, clock())
+                await ruonia.load_due(resources, refdata, clock())
             except _ERRORS as exc:
                 logger.warning("ISS history load failed, will retry: %s", exc)
             await asyncio.sleep(settings.history_check_seconds)

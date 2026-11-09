@@ -39,8 +39,9 @@ describe('time', () => {
 
 describe('sourceLabel', () => {
   it('names service sources and keeps script codes', () => {
-    expect([sourceLabel('iss'), sourceLabel('bars'), sourceLabel('quik')]).toEqual([
+    expect([sourceLabel('iss'), sourceLabel('cbr-ws'), sourceLabel('bars'), sourceLabel('quik')]).toEqual([
       'MOEX ISS',
+      'Банк России',
       'по барам',
       'quik',
     ]);

@@ -15,6 +15,7 @@ export const PRICE_LABELS: Readonly<Record<PriceType | 'manual', string>> = {
 /** Источники, которые сервис называет сам; остальные — коды скрипта как есть. */
 const SOURCE_LABELS: Readonly<Record<string, string>> = {
   iss: 'MOEX ISS',
+  'cbr-ws': 'Банк России',
   manual: 'трейдинг',
   bars: 'по барам',
 };

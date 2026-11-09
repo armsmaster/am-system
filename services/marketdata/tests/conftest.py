@@ -27,6 +27,17 @@ FIXTURES = Path(__file__).parent / "fixtures" / "iss"
 TERMS = Path(__file__).parent / "fixtures" / "refdata"
 ISS_URL = "http://iss.test/iss"
 REFDATA_URL = "http://refdata.test"
+CBR_URL = "http://cbr.test/DailyInfoWebServ/DailyInfo.asmx"
+# RUONIA, как её отдал веб-сервис Банка России 09.11.2026 (fixtures/cbr/ruonia.xml).
+RUONIA = {
+    "2026-10-28": "14.0900",
+    "2026-10-29": "14.0500",
+    "2026-10-30": "14.1200",
+    "2026-11-02": "14.0600",
+    "2026-11-03": "13.9200",
+    "2026-11-05": "13.7800",
+    "2026-11-06": "13.7200",
+}
 KEYCLOAK_URL = "http://keycloak.test/auth"
 
 OFZ = UUID("00000000-0000-0000-0000-000000026238")
@@ -38,7 +49,7 @@ NOW = datetime(2026, 10, 27, 11, 5, tzinfo=MOSCOW)
 
 
 class World:
-    """Всё, куда сервис ходит по сети: Keycloak, справочник и MOEX ISS."""
+    """Всё, куда сервис ходит по сети: Keycloak, справочник, MOEX ISS и веб-сервис ЦБ."""
 
     def __init__(self, tokens: TokenFactory) -> None:
         self.tokens = tokens
@@ -46,6 +57,10 @@ class World:
         self.iss_empty: set[str] = set()
         self.refdata_down = False
         self.requests: list[str] = []
+        # Что ЦБ уже опубликовал, и какие периоды у него спрашивали.
+        self.ruonia: dict[str, str] = dict(RUONIA)
+        self.cbr_down = False
+        self.cbr_asked: list[tuple[str, str]] = []
         self.instruments: list[dict[str, Any]] = [
             _instrument(
                 OFZ,
@@ -118,6 +133,8 @@ class World:
             return self._refdata(request)
         if url.startswith(ISS_URL):
             return self._iss(request)
+        if url == CBR_URL:
+            return self._cbr(request)
         raise AssertionError(f"unexpected request {url}")
 
     def _refdata(self, request: httpx2.Request) -> httpx2.Response:
@@ -160,6 +177,35 @@ class World:
         if not file.exists():
             return httpx2.Response(404)
         return httpx2.Response(200, json=json.loads(file.read_text(encoding="utf-8")))
+
+    def _cbr(self, request: httpx2.Request) -> httpx2.Response:
+        if self.cbr_down:
+            raise httpx2.ConnectError("CBR is down", request=request)
+        assert request.headers["Content-Type"].startswith("application/soap+xml")
+        body = request.content.decode("utf-8")
+        since = re.search(r"<fromDate>(.+?)</fromDate>", body)
+        till = re.search(r"<ToDate>(.+?)</ToDate>", body)
+        assert since is not None
+        assert till is not None
+        self.cbr_asked.append((since[1], till[1]))
+        found = "".join(
+            f"<ro><D0>{day}T00:00:00+03:00</D0><ruo>{value}</ruo></ro>"
+            for day, value in sorted(self.ruonia.items())
+            if since[1] <= day <= till[1]
+        )
+        return httpx2.Response(200, content=_soap(found))
+
+
+def _soap(rows: str) -> bytes:
+    """Ответ метода Ruonia в той же обёртке, что у ЦБ: таблица — без пространства имён."""
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"><soap:Body>'
+        '<RuoniaResponse xmlns="http://web.cbr.ru/"><RuoniaResult>'
+        '<diffgr:diffgram xmlns:diffgr="urn:schemas-microsoft-com:xml-diffgram-v1">'
+        f'<Ruonia xmlns="">{rows}</Ruonia></diffgr:diffgram>'
+        "</RuoniaResult></RuoniaResponse></soap:Body></soap:Envelope>"
+    ).encode()
 
 
 def _instrument(
@@ -206,6 +252,7 @@ def bare_settings(postgres_url: str, redis_url: str, schema: str) -> MarketdataS
         redis_url=SecretStr(redis_url),
         iss_url=ISS_URL,
         refdata_url=REFDATA_URL,
+        cbr_url=CBR_URL,
         keycloak_url=KEYCLOAK_URL,
         keycloak_client_secret=SecretStr("marketdata-secret"),
         # Тесты запускают фоновые задачи сами — так данные не появляются «сами собой».

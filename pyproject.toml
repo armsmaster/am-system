@@ -27,6 +27,7 @@ dev = [
     "pytest-cov>=7.1",
     "ruff>=0.17",
     "testcontainers[postgres,redis]>=4.15",
+    "types-defusedxml>=0.7.0.20260504",
 ]
 
 [tool.uv]

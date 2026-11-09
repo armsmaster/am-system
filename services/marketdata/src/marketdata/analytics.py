@@ -366,7 +366,11 @@ async def _rates(repo: Repository, terms: Terms, day: date) -> dict[RateKind, Ra
     for kind in sorted(kinds):
         point = rate_on((p for p in points if p.kind is kind), day)
         if point is None:
-            hint = " — её присылает скрипт (docs/api/price-feed)" if kind is RateKind.RUONIA else ""
+            hint = (
+                " — сервис загружает её с сайта Банка России на следующий рабочий день после 15:00"
+                if kind is RateKind.RUONIA
+                else ""
+            )
             raise QuantError("rate_missing", f"Нет ставки {kind.value} на {day:%d.%m.%Y}{hint}.")
         found[kind] = point
     return found
