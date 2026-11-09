@@ -136,6 +136,7 @@ export const FLAG_LABELS: Readonly<Record<ValuationFlag, string>> = {
   no_face: 'нет номинала на дату расчётов — номинал лотов',
   coupon_unknown: 'сумма купона к получению не объявлена',
   principal_unknown: 'сумма погашения к получению не объявлена',
+  due_estimated: 'купон или погашение линкера к получению — оценка по номиналу ISS',
 };
 
 const NO_VALUE = '—';

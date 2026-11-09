@@ -122,7 +122,7 @@ describe('PositionsPage', () => {
             price: null,
             coupon_due: '1062000.00',
             principal_due: '250000.00',
-            flags: ['stale_price', 'coupon_unknown', 'principal_unknown'],
+            flags: ['stale_price', 'coupon_unknown', 'principal_unknown', 'due_estimated'],
             metrics_basis: 'spread',
             duration: '0.41',
           },
@@ -147,7 +147,8 @@ describe('PositionsPage', () => {
     expect(details).toHaveTextContent('погашение номинала к получению, ₽250 000,00');
     expect(details).toHaveTextContent('спред-дюрация0,41');
     expect(details).toHaveTextContent(
-      'оценкацена не за этот день; сумма купона к получению не объявлена; сумма погашения к получению не объявлена',
+      'оценкацена не за этот день; сумма купона к получению не объявлена; сумма погашения к получению не объявлена; ' +
+        'купон или погашение линкера к получению — оценка по номиналу ISS',
     );
   });
 

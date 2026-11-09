@@ -47,7 +47,7 @@ def payments(
         coupon = coupons.get(day)
         row = amortizations.get(day)
         final = day == maturity or bool(row and row.get("is_maturity"))
-        principal = _principal(row, face, paid, final)
+        principal = _principal(row, face, paid, final, indexed)
         paid = None if paid is None or principal is None else paid + principal
         if principal:
             repaid.append((day, principal))
@@ -73,6 +73,8 @@ def payments(
                 outstanding=outstanding,
                 final=final,
                 forecast=forecast,
+                rate=None if coupon is None else _decimal(coupon.get("rate")),
+                start=None if coupon is None else _date(coupon.get("start_date")),
             )
         )
     return tuple(result)
@@ -106,13 +108,21 @@ def _forecast(
 
 
 def _principal(
-    row: Mapping[str, Any] | None, face: Decimal | None, paid: Decimal | None, final: bool
+    row: Mapping[str, Any] | None,
+    face: Decimal | None,
+    paid: Decimal | None,
+    final: bool,
+    indexed: bool,
 ) -> Decimal | None:
-    """Погашение номинала на бумагу: 0 — его нет, None — сумма не объявлена."""
+    """Погашение номинала на бумагу: 0 — его нет, None — сумма не объявлена.
+
+    Остаток начального номинала в дату погашения — только у обычной облигации:
+    линкер гасится по номиналу с индексацией, сумму даёт справочник в день выплаты.
+    """
     if row is None:
         if not final:
             return ZERO
-        return None if face is None or paid is None else face - paid
+        return None if face is None or paid is None or indexed else face - paid
     amount = _decimal(row.get("amount"))
     if amount is not None:
         return amount

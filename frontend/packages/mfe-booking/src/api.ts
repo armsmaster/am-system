@@ -172,7 +172,8 @@ export type ValuationFlag =
   | 'no_accrued'
   | 'no_face'
   | 'coupon_unknown'
-  | 'principal_unknown';
+  | 'principal_unknown'
+  | 'due_estimated';
 
 /** Стоимость портфеля на конец дня и результат дня по частям. */
 export interface DayResult {

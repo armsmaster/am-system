@@ -76,6 +76,20 @@ def test_unknown_amounts() -> None:
         {},
     )
     assert [(p.principal, p.outstanding) for p in linker] == [(Decimal(0), None), (None, None)]
+    # Линкер без строки погашения в графике гасится не по начальному номиналу:
+    # сумму с индексацией даст справочник в день выплаты (решение 150).
+    unscheduled = payments(params(nominal_indexation="ruonia", amortizations=[]), {})
+    assert unscheduled[-1].principal is None
+    # Ставка и начало периода — для оценки купона линкера до объявления.
+    coupon = {"date": "2026-11-19", "start_date": "2026-05-15", "rate": "1.85", "amount": None}
+    schedule = payments(params(nominal_indexation="ruonia", coupons=[coupon]), {})
+    first = next(p for p in schedule if p.pay_date == date(2026, 11, 19))
+    assert (first.rate, first.start) == (Decimal("1.85"), date(2026, 5, 15))
+    history = InstrumentHistory(
+        BOND, "bond", "X", "X", [(None, params(nominal_indexation="ruonia"))]
+    )
+    terms = TermsBook({BOND: history}, {})(BOND, date(2026, 11, 1))
+    assert (terms.face, terms.indexed) == (Decimal(1000), True)
     # Без начального номинала остаток не посчитать.
     no_face = payments(params(initial_face_value=None, amortizations=[]), {})
     assert no_face[-1].principal is None
