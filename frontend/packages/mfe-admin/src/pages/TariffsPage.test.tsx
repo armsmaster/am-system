@@ -31,7 +31,7 @@ describe('TariffsPage', () => {
 
     expect(await screen.findByText(/Тарифа у счёта нет/)).toBeInTheDocument();
     const form = within(screen.getByRole('form', { name: 'Новый тариф' }));
-    await user.type(form.getByLabelText('Купля-продажа, % от оборота с НКД'), ' 0,0125');
+    await user.type(form.getByLabelText('Купля-продажа, % от оборота без НКД'), ' 0,0125');
     await user.type(form.getByLabelText('РЕПО, % годовых'), '0,5');
     await user.type(form.getByLabelText('Действует с'), '2026-11-01');
     await user.click(form.getByRole('button', { name: 'Сохранить тариф' }));

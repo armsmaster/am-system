@@ -5,7 +5,7 @@ import type { Account, PortfolioApi, Tariff } from '../api';
 
 /**
  * Тарифы брокера на счёт (решение 151): по ним загрузка из отчёта QUIK считает
- * комиссию. Купля-продажа — % от оборота с НКД, РЕПО — % годовых от суммы первой
+ * комиссию. Купля-продажа — % от оборота без НКД, РЕПО — % годовых от суммы первой
  * части. Новый тариф действует с даты начала; загруженные сделки он не меняет.
  */
 export function TariffsPage({ api }: { readonly api: PortfolioApi }) {
@@ -25,7 +25,7 @@ export function TariffsPage({ api }: { readonly api: PortfolioApi }) {
           <>
             <p className="muted">
               Комиссию сделок из отчёта QUIK система считает по тарифу счёта на день сделки: купля-продажа — %
-              от оборота с НКД, РЕПО — % годовых от суммы первой части за срок РЕПО.
+              от оборота без НКД, РЕПО — % годовых от суммы первой части за срок РЕПО.
             </p>
             <form className="inline" aria-label="Счёт">
               <label>
@@ -121,7 +121,7 @@ function NewTariffForm({
       <h3>Новый тариф счёта {account.code}</h3>
       <div className="fields">
         <label>
-          Купля-продажа, % от оборота с НКД
+          Купля-продажа, % от оборота без НКД
           <input value={outright} required inputMode="decimal" onChange={(e) => setOutright(e.target.value)} />
         </label>
         <label>

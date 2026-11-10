@@ -47,12 +47,12 @@ describe('QuikImport', () => {
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText('Тариф счёта с 01.11.2026: купля-продажа — 0,0125% от оборота с НКД, РЕПО — 0,5% годовых.'),
+      screen.getByText('Тариф счёта с 01.11.2026: купля-продажа — 0,0125% от оборота без НКД, РЕПО — 0,5% годовых.'),
     ).toBeInTheDocument();
     const rows = within(screen.getByRole('table', { name: 'Сделки отчёта' })).getAllByRole('row');
     expect(rows[0]).toHaveTextContent('Что будет');
     expect(rows[1]).toHaveTextContent('118100000001');
-    expect(rows[1]).toHaveTextContent('RU000A1038V6 ОФЗ 26238покупка10052,556 001,007,00 (0,0125%)новая сделка');
+    expect(rows[1]).toHaveTextContent('RU000A1038V6 ОФЗ 26238покупка10052,556 001,006,56 (0,0125%)новая сделка');
     expect(rows[2]).toHaveTextContent('продажа');
     expect(rows[2]).toHaveTextContent('без изменений Продажа больше позиции.');
     expect(rows[3]).toHaveTextContent('Бумаги RU000A10FV69 нет в справочнике.');
@@ -79,7 +79,7 @@ describe('QuikImport', () => {
   it('sends rates for this upload and asks to check again after a change', async () => {
     const { api, user, form } = await open();
     await user.upload(form.getByLabelText('Отчёт QUIK'), report());
-    await user.type(form.getByLabelText('Купля-продажа, % от оборота с НКД'), '0,02');
+    await user.type(form.getByLabelText('Купля-продажа, % от оборота без НКД'), '0,02');
     await user.type(form.getByLabelText('РЕПО, % годовых'), ' 0,6 ');
     await user.click(form.getByRole('button', { name: 'Проверить' }));
 

@@ -547,7 +547,7 @@ export interface ImportReport {
 
 // --- загрузка из отчёта QUIK (решение 151) ---------------------------------------------
 
-/** Тариф брокера на счёт: купля-продажа — % от оборота с НКД, РЕПО — % годовых. */
+/** Тариф брокера на счёт: купля-продажа — % от оборота без НКД, РЕПО — % годовых. */
 export interface Tariff {
   readonly outright_rate: Decimal;
   readonly repo_rate: Decimal;
@@ -569,7 +569,7 @@ export interface QuikLine {
   readonly trade_at: string | null;
   readonly quantity: number | null;
   readonly price: Decimal | null;
-  /** Купля-продажа — оборот с НКД, РЕПО — сумма первой части. */
+  /** Купля-продажа — сумма с НКД, РЕПО — сумма первой части. */
   readonly amount: Decimal | null;
   readonly fee: Decimal | null;
   readonly fee_rate: Decimal | null;

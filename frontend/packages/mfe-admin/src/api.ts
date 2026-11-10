@@ -48,7 +48,7 @@ export interface NewPortfolio {
 
 /** Тариф брокера на счёт (решение 151): ставки комиссии для загрузки из отчёта QUIK. */
 export interface Tariff {
-  /** % от оборота с НКД. */
+  /** % от оборота без НКД. */
   readonly outright_rate: string;
   /** % годовых от суммы первой части РЕПО. */
   readonly repo_rate: string;

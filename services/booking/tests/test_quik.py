@@ -99,13 +99,13 @@ async def trades_in_db(resources: Resources) -> int:
 
 
 CHECKED = [
-    # ОФЗ 26238: оборот с НКД 52 500,00 + 3 501,00 = 56 001,00 × 0,0125% = 7,00.
-    ("18100000001", "created", "7.00"),
-    # Линкер: 1 068 581,85 + 9 490,00 = 1 078 071,85 × 0,0125% = 134,76.
-    ("18100000002", "created", "134.76"),
+    # ОФЗ 26238: оборот без НКД 52 500,00 × 0,0125% = 6,5625 → 6,56.
+    ("18100000001", "created", "6.56"),
+    # Линкер: 1 068 581,85 × 0,0125% = 133,57.
+    ("18100000002", "created", "133.57"),
     ("18100000003", "created", "2.25"),  # паи: 18 000,00 × 0,0125%
-    ("18100000004", "created", "1.26"),  # РЖД 1Р-54R: 9 965,00 + 117,50
-    ("18100000005", "amount_mismatch", "0.21"),
+    ("18100000004", "created", "1.25"),  # РЖД 1Р-54R: 9 965,00 × 0,0125%
+    ("18100000005", "amount_mismatch", "0.20"),
     ("18100000006", "bad_row", None),
     # Обратное РЕПО с КСУ: 30 000 000 × 0,5% годовых × 3 дня / 365 = 1 232,88.
     ("18100000101", "created", "1232.88"),
@@ -165,7 +165,7 @@ async def test_check_then_load(admin: Api, trader: Api, resources: Resources, wo
     trade = trader.ok("GET", f"/trades/{trade_id}")
     assert (trade["external_id"], trade["fee"], trade["face_value"], trade["accrued"]) == (
         "18100000001",
-        "7.00",
+        "6.56",
         "1000.000000",
         "35.01",
     )
@@ -189,8 +189,8 @@ async def test_check_then_load(admin: Api, trader: Api, resources: Resources, wo
     # Свои ставки на загрузку: новая комиссия — новые версии сделок купли-продажи.
     custom = trader.ok("POST", "/imports/quik", upload(apply=True, outright_rate="0.02"))
     assert outcome(custom)[:3] == [
-        ("18100000001", "amended", "11.20"),
-        ("18100000002", "amended", "215.61"),
+        ("18100000001", "amended", "10.50"),
+        ("18100000002", "amended", "213.72"),
         ("18100000003", "amended", "3.60"),
     ]
     assert outcome(custom)[6][1] == "unchanged"  # ставка РЕПО — из тарифа, как была

@@ -112,7 +112,7 @@ const FIELDS: Readonly<Record<string, string>> = {
   period_end: 'Оплачено по',
   valid_from: 'Действует с',
   repo_rate: 'Ставка РЕПО',
-  outright_fee: 'Комиссия купли-продажи, % от оборота с НКД',
+  outright_fee: 'Комиссия купли-продажи, % от оборота без НКД',
   repo_fee: 'Комиссия РЕПО, % годовых',
   second_date: 'Вторая часть: дата',
   second_amount: 'Вторая часть: сумма',

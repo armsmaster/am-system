@@ -207,7 +207,7 @@ broker_tariff = Table(
     metadata,
     Column("id", BigInteger, Identity(), primary_key=True),
     Column("account_id", Uuid, nullable=False),
-    Column("outright_rate", Numeric(9, 6), nullable=False),  # % от оборота с НКД
+    Column("outright_rate", Numeric(9, 6), nullable=False),  # % от оборота без НКД
     Column("repo_rate", Numeric(9, 6), nullable=False),  # % годовых от суммы первой части
     Column("valid_from", Date, nullable=False),
     Column("comment", Text),

@@ -6,7 +6,7 @@
 
 Комиссии в отчёте нет — её считает система по тарифу брокера на счёт портфеля или
 по ставкам, которые пользователь задал на эту загрузку: купля-продажа — % от
-оборота с НКД, РЕПО — % годовых от суммы первой части за срок РЕПО, до копейки
+оборота без НКД, РЕПО — % годовых от суммы первой части за срок РЕПО, до копейки
 по каждой сделке. Дальше — тот же импорт сделок, что у пакета JSON
 (docs/api/trade-import): источник ``quik``, ключ — номер сделки.
 """
@@ -161,7 +161,7 @@ class Deal:
     side: Side
     quantity: int
     price: Decimal
-    volume: Decimal  # чистая сумма
+    volume: Decimal  # чистая сумма: от неё — комиссия
     accrued: Decimal
     settle: date
 
@@ -366,7 +366,7 @@ def _repo(group: Sequence[_Line]) -> RepoDeal:
 
 @dataclass(frozen=True, slots=True)
 class Rates:
-    """Ставки комиссии: купля-продажа — % от оборота с НКД, РЕПО — % годовых."""
+    """Ставки комиссии: купля-продажа — % от оборота без НКД, РЕПО — % годовых."""
 
     outright: Decimal | None = None
     repo: Decimal | None = None
@@ -383,8 +383,8 @@ def _kopecks(value: Decimal) -> Decimal:
 
 
 def deal_fee(deal: Deal, rate: Decimal) -> Decimal:
-    """Купля-продажа: оборот с НКД × ставка, до копейки."""
-    return _kopecks(deal.turnover * rate / HUNDRED)
+    """Купля-продажа: объём сделки без НКД × ставка, до копейки."""
+    return _kopecks(deal.volume * rate / HUNDRED)
 
 
 def repo_fee(repo: RepoDeal, rate: Decimal) -> Decimal:
@@ -408,7 +408,7 @@ class QuikLine:
     trade_at: datetime | None = None
     quantity: int | None = None
     price: Decimal | None = None
-    amount: Decimal | None = None  # купля-продажа — оборот с НКД, РЕПО — сумма первой части
+    amount: Decimal | None = None  # купля-продажа — сумма с НКД, РЕПО — сумма первой части
     fee: Decimal | None = None
     fee_rate: Decimal | None = None
     result: str | None = None  # created | amended | unchanged; None — отклонена

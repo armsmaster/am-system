@@ -645,7 +645,7 @@ class TariffIn(BaseModel):
 
 
 class TariffOut(BaseModel):
-    outright_rate: Decimal  # % от оборота с НКД
+    outright_rate: Decimal  # % от оборота без НКД
     repo_rate: Decimal  # % годовых от суммы первой части
     valid_from: date
     comment: str | None

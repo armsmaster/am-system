@@ -473,7 +473,7 @@ export function quikLine(fields: Partial<QuikLine> = {}): QuikLine {
     quantity: 100,
     price: '52.50',
     amount: '56001.00',
-    fee: '7.00',
+    fee: '6.56',
     fee_rate: '0.012500',
     result: 'created',
     trade_id: null,

@@ -95,7 +95,7 @@ export function QuikImport({ context }: { readonly context: Context }) {
     <>
       <p>
         Выгрузите в QUIK «Отчёт по всем сделкам клиента» в формате Excel и загрузите его сюда. Комиссии в отчёте
-        нет — система посчитает её по тарифу брокера на счёт портфеля: купля-продажа — % от оборота с НКД, РЕПО —
+        нет — система посчитает её по тарифу брокера на счёт портфеля: купля-продажа — % от оборота без НКД, РЕПО —
         % годовых от суммы первой части. Чтобы взять другие ставки, задайте их на эту загрузку. Повторная загрузка
         безопасна: ключ — номер сделки.
       </p>
@@ -116,7 +116,7 @@ export function QuikImport({ context }: { readonly context: Context }) {
             </select>
           </label>
           <label>
-            Купля-продажа, % от оборота с НКД
+            Купля-продажа, % от оборота без НКД
             <input
               value={outright}
               inputMode="decimal"
@@ -200,7 +200,7 @@ function Summary({ report }: { readonly report: QuikReport }) {
       <p className="muted">
         {tariff
           ? `Тариф счёта с ${formatDate(tariff.valid_from)}: купля-продажа — ${percent(tariff.outright_rate)} ` +
-            `от оборота с НКД, РЕПО — ${percent(tariff.repo_rate)} годовых.`
+            `от оборота без НКД, РЕПО — ${percent(tariff.repo_rate)} годовых.`
           : 'Тарифа брокера у счёта нет — задайте ставки на загрузку или попросите администратора завести тариф.'}
       </p>
     </>
