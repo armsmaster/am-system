@@ -1,7 +1,7 @@
 import { ApiError, type Role, type Session } from '@am/platform';
 import { vi } from 'vitest';
 
-import type { Account, Portfolio, PortfolioApi, User } from '../api';
+import type { Account, Portfolio, PortfolioApi, Tariff, User } from '../api';
 
 export function session(...roles: Role[]): Session {
   return {
@@ -114,12 +114,32 @@ export const USERS: readonly User[] = [
   },
 ];
 
+export const TARIFFS: readonly Tariff[] = [
+  {
+    outright_rate: '0.015000',
+    repo_rate: '0.500000',
+    valid_from: '2026-01-01',
+    comment: null,
+    author: 'admin',
+    created_at: '2026-01-01T10:00:00+03:00',
+  },
+  {
+    outright_rate: '0.012500',
+    repo_rate: '1.000000',
+    valid_from: '2026-11-01',
+    comment: 'Новый тариф брокера',
+    author: 'admin',
+    created_at: '2026-10-30T10:00:00+03:00',
+  },
+];
+
 /** Подменный API: читает фиксированные данные, изменения только запоминает. */
 export function fakeApi(
   data: {
     portfolios?: readonly Portfolio[];
     accounts?: readonly Account[];
     users?: readonly User[];
+    tariffs?: readonly Tariff[];
   } = {},
 ) {
   const ok = () => vi.fn((..._args: unknown[]) => Promise.resolve(null));
@@ -135,6 +155,8 @@ export function fakeApi(
     setTreasury: ok(),
     createAccount: ok(),
     updateAccount: ok(),
+    tariffs: vi.fn((..._args: unknown[]) => Promise.resolve([...(data.tariffs ?? TARIFFS)])),
+    setTariff: ok(),
     grant: ok(),
     revoke: ok(),
   } satisfies Record<keyof PortfolioApi, unknown>;

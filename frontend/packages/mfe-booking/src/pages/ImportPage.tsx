@@ -4,6 +4,7 @@ import { Link } from 'react-router';
 
 import type { Context } from '../App';
 import type { ImportReport, ImportResult } from '../api';
+import { QuikImport } from '../components/QuikImport';
 
 const RESULT_LABELS: Readonly<Record<ImportResult, string>> = {
   created: 'новая сделка',
@@ -37,11 +38,32 @@ function schemaErrors(error: unknown): string[] {
   });
 }
 
+type Source = 'quik' | 'json';
+
+/** Импорт сделок из файла: отчёт QUIK (решение 151) или пакет JSON (docs/api/trade-import). */
+export function ImportPage({ context }: { readonly context: Context }) {
+  const [source, setSource] = useState<Source>('quik');
+  const tab = (value: Source, label: string) => (
+    <button type="button" role="tab" aria-selected={source === value} onClick={() => setSource(value)}>
+      {label}
+    </button>
+  );
+  return (
+    <>
+      <div className="tabs" role="tablist" aria-label="Откуда сделки">
+        {tab('quik', 'Отчёт QUIK')}
+        {tab('json', 'Пакет JSON')}
+      </div>
+      {source === 'quik' ? <QuikImport context={context} /> : <JsonImport context={context} />}
+    </>
+  );
+}
+
 /**
  * Импорт сделок из файла по спецификации docs/api/trade-import — тот же пакет,
  * что присылает внешняя система. Ответ: что принято, что отклонено и почему.
  */
-export function ImportPage({ context }: { readonly context: Context }) {
+function JsonImport({ context }: { readonly context: Context }) {
   const [state, setState] = useState<State>({ status: 'idle' });
 
   async function upload(event: ChangeEvent<HTMLInputElement>) {

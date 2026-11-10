@@ -76,6 +76,7 @@ describe('bookingApi', () => {
       ['/api/booking/results?portfolio_id=p-1&from=2026-11-01&till=2026-11-30'],
     ],
     ['importTrades', () => api.importTrades({ source: 'x' }), 'post', ['/api/booking/feed/v1/trades', { source: 'x' }]],
+    ['importQuik', () => api.importQuik({ file: 'eA==', portfolio_id: 'p1', outright_rate: null, repo_rate: null, apply: false }), 'post', ['/api/booking/imports/quik', { file: 'eA==', portfolio_id: 'p1', outright_rate: null, repo_rate: null, apply: false }]],
   ] as const)('%s', async (_name, call, method, args) => {
     await call();
     expect(client[method]).toHaveBeenLastCalledWith(...args);

@@ -46,12 +46,32 @@ export interface NewPortfolio {
   readonly account_id?: string | null;
 }
 
+/** Тариф брокера на счёт (решение 151): ставки комиссии для загрузки из отчёта QUIK. */
+export interface Tariff {
+  /** % от оборота с НКД. */
+  readonly outright_rate: string;
+  /** % годовых от суммы первой части РЕПО. */
+  readonly repo_rate: string;
+  readonly valid_from: string;
+  readonly comment: string | null;
+  readonly author: string;
+  readonly created_at: string;
+}
+
+export interface NewTariff {
+  readonly outright_rate: string;
+  readonly repo_rate: string;
+  readonly valid_from: string;
+  readonly comment: string | null;
+}
+
 export type AccountFields = Omit<Account, 'id' | 'fund_id'>;
 export type NewAccount = AccountFields & { readonly fund_id: string };
 
 const BASE = '/api/portfolio';
+const BOOKING = '/api/booking';
 
-/** Вызовы API сервиса портфелей, которыми пользуется админка. */
+/** Вызовы API, которыми пользуется админка: сервис портфелей и тарифы брокера в сервисе сделок. */
 export function portfolioApi(client: ApiClient) {
   return {
     portfolios: () => client.get<Portfolio[]>(`${BASE}/portfolios`),
@@ -73,6 +93,10 @@ export function portfolioApi(client: ApiClient) {
     createAccount: (body: NewAccount) => client.post<Account>(`${BASE}/accounts`, body),
     updateAccount: (id: string, body: Partial<AccountFields>) =>
       client.patch<Account>(`${BASE}/accounts/${id}`, body),
+
+    tariffs: (accountId: string) => client.get<Tariff[]>(`${BOOKING}/accounts/${accountId}/tariffs`),
+    setTariff: (accountId: string, body: NewTariff) =>
+      client.post<Tariff[]>(`${BOOKING}/accounts/${accountId}/tariffs`, body),
 
     grant: (subject: string, portfolioId: string) =>
       client.put<null>(`${BASE}/users/${subject}/grants/${portfolioId}`),

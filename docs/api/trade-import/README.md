@@ -278,7 +278,16 @@ uvx check-jsonschema --schemafile docs/api/trade-import/trades.schema.json my-ba
 ```
 
 Схема проверяет форму пакета. Есть ли портфель и бумага, торговый ли день
-расчётов, проверит только сервис.
+расчётов, проверит только сервис — без записи, с параметром `dry_run`:
+
+```bash
+curl -s -X POST "https://<адрес>/api/booking/feed/v1/trades?dry_run=true" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  --data-binary @my-batch.json
+```
+
+Ответ — тот же, что при загрузке: что станет с каждой сделкой и что
+отклонено. У новых сделок `trade_id` — `null`: их ещё нет.
 
 ## Пример на Python
 

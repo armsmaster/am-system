@@ -31,6 +31,7 @@ const ACTIONS: Readonly<Record<string, string>> = {
   'operation.settled': 'Отмечен расчёт по паям',
   'operation.cancelled': 'Отменена операция фонда',
   'fee_rate.set': 'Изменена ставка комиссии от СЧА',
+  'broker_tariff.set': 'Изменён тариф брокера',
   'statement.received': 'Получена выписка по счёту',
   'discrepancy.accepted': 'Принято расхождение сверки',
   'day.closed': 'Закрыт день фонда',
@@ -111,6 +112,8 @@ const FIELDS: Readonly<Record<string, string>> = {
   period_end: 'Оплачено по',
   valid_from: 'Действует с',
   repo_rate: 'Ставка РЕПО',
+  outright_fee: 'Комиссия купли-продажи, % от оборота с НКД',
+  repo_fee: 'Комиссия РЕПО, % годовых',
   second_date: 'Вторая часть: дата',
   second_amount: 'Вторая часть: сумма',
   direction: 'Кто платит',
@@ -239,6 +242,7 @@ export function objectLabel(event: AuditEvent): string {
     instruments?: readonly { readonly secid: string }[];
     fund?: Ref;
     account?: Ref;
+    portfolios?: readonly string[];
     date?: string;
     since?: string;
     version?: number;
@@ -260,6 +264,10 @@ export function objectLabel(event: AuditEvent): string {
   }
   if (data.fund) {
     return `${data.fund.code ?? ''}`;
+  }
+  if (data.portfolios) {
+    // Тариф брокера — на счёт: в журнале — портфели этого счёта.
+    return `счёт портфелей ${data.portfolios.join(', ')}`;
   }
   if (data.account && data.date) {
     // Сверка: выписка или принятое расхождение — по счёту за день.

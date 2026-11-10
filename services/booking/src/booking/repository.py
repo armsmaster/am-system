@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from am_common.clock import MOSCOW
 from booking.db import (
+    broker_tariff,
     day_snapshot,
     fee_rate,
     fund_closing,
@@ -205,6 +206,20 @@ class Repository:
             select(fee_rate)
             .where(fee_rate.c.fund_id == fund_id)
             .order_by(fee_rate.c.valid_from, fee_rate.c.id)
+        )
+        return list(result)
+
+    # --- тарифы брокера ---------------------------------------------------------
+
+    async def add_tariff(self, values: dict[str, Any]) -> None:
+        await self._session.execute(insert(broker_tariff).values(**values))
+
+    async def tariffs(self, account_id: UUID) -> list[Row[Any]]:
+        """Тарифы счёта в порядке ввода: последний по дате начала главнее."""
+        result = await self._session.execute(
+            select(broker_tariff)
+            .where(broker_tariff.c.account_id == account_id)
+            .order_by(broker_tariff.c.valid_from, broker_tariff.c.id)
         )
         return list(result)
 

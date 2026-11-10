@@ -1,0 +1,456 @@
+<HTML xmlns="http://www.w3.org/TR/REC-html40" xmlns:o = "urn:schemas-microsoft-com:office:office" xmlns:x = "urn:schemas-microsoft-com:office:excel"><HEAD>
+<META http-equiv="Content-Type content='text/html; charset=windows-1251'">
+<META name="ProgId content=Excel.Sheet">
+</HEAD>
+<BODY>
+<TABLE border=0>
+<TBODY>
+<TR>
+<TD align=left><B>Отчёт по всем сделкам клиента<BR>Отчётный период: 27.11.2026 - 30.11.2026</B></TD></TR>
+<TR>
+<TD align=left x:str="Клиент: ">Клиент: </TD></TR>
+<TR>
+<TD x:str="Код клиента: 00000T_01">Код клиента: 00000T_01</TD></TR>
+<TR>
+<TD align=left></TD></TR></TBODY></TABLE><BR><B>Заключенные сделки:</B>
+<TABLE borderColor=#000000 cellSpacing=0 cellPadding=0 border=1>
+<TBODY>
+<TR>
+<TH>Дата и время заключения сделки</TH>
+<TH>Номер сделки</TH>
+<TH>Номер заявки</TH>
+<TH>Код инструмента</TH>
+<TH>Краткое наименование инструмента</TH>
+<TH>Рынок</TH>
+<TH>Направление</TH>
+<TH>Кол-во</TH>
+<TH>Цена</TH>
+<TH>Объём</TH>
+<TH>НКД</TH>
+<TH>Доходность</TH>
+<TH>Комиссия</TH>
+<TH>Дата расчётов</TH>
+<TH>Уровень маржи</TH>
+<TH>ID пользователя</TH></TR>
+<TR>
+<TD>27.11.2026 11:05:00</TD>
+<TD>18100000001</TD>
+<TD>86400000001</TD>
+<TD>RU000A1038V6</TD>
+<TD>ОФЗ 26238</TD>
+<TD>
+<TD>Купля</TD>
+<TD x:num="100">100</TD>
+<TD x:num="52.50"><NOBR>52.50</NOBR></TD>
+<TD x:num="52500.00"><NOBR>52 500.00</NOBR></TD>
+<TD x:num="3501.00">3 501.00</TD>
+<TD x:num="15.10"><NOBR>15.10</NOBR></TD>
+<TD x:num="0.00">0.00</TD>
+<TD>30.11.2026</TD>
+<TD x:num="0.00">0.00</TD>
+<TD>10001</TD></TR>
+<TR>
+<TD>27.11.2026 12:00:00</TD>
+<TD>18100000002</TD>
+<TD>86400000002</TD>
+<TD>RU000A10F504</TD>
+<TD>ВЭБ2Р-58</TD>
+<TD>
+<TD>Купля</TD>
+<TD x:num="1000">1 000</TD>
+<TD x:num="99.75"><NOBR>99.75</NOBR></TD>
+<TD x:num="1068581.85"><NOBR>1 068 581.85</NOBR></TD>
+<TD x:num="9490.00">9 490.00</TD>
+<TD x:num="15.10"><NOBR>15.10</NOBR></TD>
+<TD x:num="0.00">0.00</TD>
+<TD>30.11.2026</TD>
+<TD x:num="0.00">0.00</TD>
+<TD>10001</TD></TR>
+<TR>
+<TD>27.11.2026 12:30:00</TD>
+<TD>18100000003</TD>
+<TD>86400000003</TD>
+<TD>LQDT</TD>
+<TD>ВИМ Ликвидность</TD>
+<TD>
+<TD>Продажа</TD>
+<TD x:num="10000">10 000</TD>
+<TD x:num="1.80"><NOBR>1.80</NOBR></TD>
+<TD x:num="18000.00"><NOBR>18 000.00</NOBR></TD>
+<TD x:num="0.00">0.00</TD>
+<TD x:num="15.10"><NOBR>15.10</NOBR></TD>
+<TD x:num="0.00">0.00</TD>
+<TD>27.11.2026</TD>
+<TD x:num="0.00">0.00</TD>
+<TD>10001</TD></TR>
+<TR>
+<TD>27.11.2026 13:00:00</TD>
+<TD>18100000004</TD>
+<TD>86400000004</TD>
+<TD>RU000A10FV69</TD>
+<TD>РЖД 1Р-54R</TD>
+<TD>
+<TD>Купля</TD>
+<TD x:num="10">10</TD>
+<TD x:num="99.65"><NOBR>99.65</NOBR></TD>
+<TD x:num="9965.00"><NOBR>9 965.00</NOBR></TD>
+<TD x:num="117.50">117.50</TD>
+<TD x:num="15.10"><NOBR>15.10</NOBR></TD>
+<TD x:num="0.00">0.00</TD>
+<TD>30.11.2026</TD>
+<TD x:num="0.00">0.00</TD>
+<TD>10001</TD></TR>
+<TR>
+<TD>27.11.2026 13:30:00</TD>
+<TD>18100000005</TD>
+<TD>86400000005</TD>
+<TD>RU000A1038V6</TD>
+<TD>ОФЗ 26238</TD>
+<TD>
+<TD>Купля</TD>
+<TD x:num="3">3</TD>
+<TD x:num="52.50"><NOBR>52.50</NOBR></TD>
+<TD x:num="1575.00"><NOBR>1 575.00</NOBR></TD>
+<TD x:num="105.04">105.04</TD>
+<TD x:num="15.10"><NOBR>15.10</NOBR></TD>
+<TD x:num="0.00">0.00</TD>
+<TD>30.11.2026</TD>
+<TD x:num="0.00">0.00</TD>
+<TD>10001</TD></TR>
+<TR>
+<TD>27.11.2026 14:00:00</TD>
+<TD>18100000006</TD>
+<TD>86400000006</TD>
+<TD>RU000A1038V6</TD>
+<TD>ОФЗ 26238</TD>
+<TD>
+<TD>Обмен</TD>
+<TD x:num="1">1</TD>
+<TD x:num="52.50"><NOBR>52.50</NOBR></TD>
+<TD x:num="525.00"><NOBR>525.00</NOBR></TD>
+<TD x:num="35.01">35.01</TD>
+<TD x:num="15.10"><NOBR>15.10</NOBR></TD>
+<TD x:num="0.00">0.00</TD>
+<TD>30.11.2026</TD>
+<TD x:num="0.00">0.00</TD>
+<TD>10001</TD></TR>
+<TR>
+<TD colSpan=9 align=right>ИТОГО НА ПОКУПКУ</TD>
+<TD x:num="1132621.85"><NOBR>1 132 621.85</NOBR></TD>
+<TD x:num="13213.54"><NOBR>13 213.54</NOBR></TD>
+<TD>
+<TD>
+<TD>
+<TD>
+<TD></TD></TR>
+</TBODY></TABLE><BR><B>Заключенные сделки РЕПО:</B>
+<TABLE borderColor=#000000 cellSpacing=0 cellPadding=0 border=1>
+<TBODY>
+<TR>
+<TH>Дата и время заключения сделки</TH>
+<TH>Номер сделки</TH>
+<TH>Номер заявки</TH>
+<TH>Тип сделки</TH>
+<TH>Код бумаги</TH>
+<TH>Краткое наименование инструмента</TH>
+<TH>Рынок</TH>
+<TH>Направление</TH>
+<TH>Кол-во</TH>
+<TH>Цена</TH>
+<TH>Объём</TH>
+<TH>НКД</TH>
+<TH>Доходность</TH>
+<TH>Код расчетов</TH>
+<TH>Сумма РЕПО</TH>
+<TH>Срок РЕПО</TH>
+<TH>Ставка РЕПО</TH>
+<TH>Партнёр</TH>
+<TH>Организация партнёра</TH>
+<TH>Комиссия</TH>
+<TH>Дата расчётов</TH>
+<TH>Сделка исполнена</TH>
+<TH>Вторая часть РЕПО исполнена</TH>
+<TH>ID пользователя</TH></TR>
+<TR>
+<TD>27.11.2026 16:50:13</TD>
+<TD>18100000101</TD>
+<TD>86400000101</TD>
+<TD>РЕПО с ЦК</TD>
+<TD>RU000A0JW4Z1</TD>
+<TD>КСУ обл.</TD>
+<TD>
+<TD>Купля</TD>
+<TD x:num="30000">30 000</TD>
+<TD x:num="14.20"><NOBR>14.20</NOBR></TD>
+<TD x:num="30000000.00"><NOBR>30 000 000.00</NOBR></TD>
+<TD x:num="0.00">0.00</TD>
+<TD x:num="0.00"><NOBR>0.00</NOBR></TD>
+<TD>Y0</TD>
+<TD>30 000 000.00</TD>
+<TD>3</TD>
+<TD>14.20</TD>
+<TD>
+<TD>
+<TD x:num="0.00">0.00</TD>
+<TD>27.11.2026</TD>
+<TD>
+<TD>
+<TD>10001</TD></TR>
+<TR>
+<TD>27.11.2026 16:50:13</TD>
+<TD>18100000102</TD>
+<TD>86400000101</TD>
+<TD>РЕПО с ЦК</TD>
+<TD>RU000A0JW4Z1</TD>
+<TD>КСУ обл.</TD>
+<TD>
+<TD>Купля</TD>
+<TD x:num="30000">30 000</TD>
+<TD x:num="1.000"><NOBR>1.000</NOBR></TD>
+<TD x:num="30000000.00"><NOBR>30 000 000.00</NOBR></TD>
+<TD x:num="0.00">0.00</TD>
+<TD x:num="0.00"><NOBR>0.00</NOBR></TD>
+<TD>Y0</TD>
+<TD>30 000 000.00</TD>
+<TD>3</TD>
+<TD>14.20</TD>
+<TD>
+<TD>
+<TD x:num="0.00">0.00</TD>
+<TD>27.11.2026</TD>
+<TD>
+<TD>
+<TD>10001</TD></TR>
+<TR>
+<TD>27.11.2026 16:50:13</TD>
+<TD>18100000103</TD>
+<TD>86400000101</TD>
+<TD>РЕПО с ЦК</TD>
+<TD>RU000A0JW4Z1</TD>
+<TD>КСУ обл.</TD>
+<TD>
+<TD>Продажа</TD>
+<TD x:num="30000">30 000</TD>
+<TD x:num="1.001"><NOBR>1.001</NOBR></TD>
+<TD x:num="30035013.70"><NOBR>30 035 013.70</NOBR></TD>
+<TD x:num="0.00">0.00</TD>
+<TD x:num="0.00"><NOBR>0.00</NOBR></TD>
+<TD>Y1D</TD>
+<TD>30 000 000.00</TD>
+<TD>3</TD>
+<TD>14.20</TD>
+<TD>
+<TD>
+<TD x:num="0.00">0.00</TD>
+<TD>30.11.2026</TD>
+<TD>
+<TD>
+<TD>10001</TD></TR>
+<TR>
+<TD>30.11.2026 15:16:06</TD>
+<TD>18100000201</TD>
+<TD>86400000201</TD>
+<TD>РЕПО с ЦК</TD>
+<TD>RU000A0JW4Z1</TD>
+<TD>КСУ обл.</TD>
+<TD>
+<TD>Продажа</TD>
+<TD x:num="23000">23 000</TD>
+<TD x:num="13.78"><NOBR>13.78</NOBR></TD>
+<TD x:num="23000000.00"><NOBR>23 000 000.00</NOBR></TD>
+<TD x:num="0.00">0.00</TD>
+<TD x:num="0.00"><NOBR>0.00</NOBR></TD>
+<TD>Y0</TD>
+<TD>23 000 000.00</TD>
+<TD>1</TD>
+<TD>13.78</TD>
+<TD>
+<TD>
+<TD x:num="0.00">0.00</TD>
+<TD>30.11.2026</TD>
+<TD>
+<TD>
+<TD>10001</TD></TR>
+<TR>
+<TD>30.11.2026 15:16:06</TD>
+<TD>18100000202</TD>
+<TD>86400000201</TD>
+<TD>РЕПО с ЦК</TD>
+<TD>RU000A0JW4Z1</TD>
+<TD>КСУ обл.</TD>
+<TD>
+<TD>Продажа</TD>
+<TD x:num="23000">23 000</TD>
+<TD x:num="1.000"><NOBR>1.000</NOBR></TD>
+<TD x:num="23000000.00"><NOBR>23 000 000.00</NOBR></TD>
+<TD x:num="0.00">0.00</TD>
+<TD x:num="0.00"><NOBR>0.00</NOBR></TD>
+<TD>Y0</TD>
+<TD>23 000 000.00</TD>
+<TD>1</TD>
+<TD>13.78</TD>
+<TD>
+<TD>
+<TD x:num="0.00">0.00</TD>
+<TD>30.11.2026</TD>
+<TD>
+<TD>
+<TD>10001</TD></TR>
+<TR>
+<TD>30.11.2026 15:16:06</TD>
+<TD>18100000203</TD>
+<TD>86400000201</TD>
+<TD>РЕПО с ЦК</TD>
+<TD>RU000A0JW4Z1</TD>
+<TD>КСУ обл.</TD>
+<TD>
+<TD>Купля</TD>
+<TD x:num="23000">23 000</TD>
+<TD x:num="1.001"><NOBR>1.001</NOBR></TD>
+<TD x:num="23008683.29"><NOBR>23 008 683.29</NOBR></TD>
+<TD x:num="0.00">0.00</TD>
+<TD x:num="0.00"><NOBR>0.00</NOBR></TD>
+<TD>Y1D</TD>
+<TD>23 000 000.00</TD>
+<TD>1</TD>
+<TD>13.78</TD>
+<TD>
+<TD>
+<TD x:num="0.00">0.00</TD>
+<TD>01.12.2026</TD>
+<TD>
+<TD>
+<TD>10001</TD></TR>
+<TR>
+<TD>30.11.2026 15:20:00</TD>
+<TD>18100000301</TD>
+<TD>86400000301</TD>
+<TD>РЕПО с ЦК</TD>
+<TD>RU000A1038V6</TD>
+<TD>ОФЗ 26238</TD>
+<TD>
+<TD>Продажа</TD>
+<TD x:num="1000">1 000</TD>
+<TD x:num="14.00"><NOBR>14.00</NOBR></TD>
+<TD x:num="525000.00"><NOBR>525 000.00</NOBR></TD>
+<TD x:num="0.00">0.00</TD>
+<TD x:num="0.00"><NOBR>0.00</NOBR></TD>
+<TD>Y0</TD>
+<TD>525 000.00</TD>
+<TD>1</TD>
+<TD>14.00</TD>
+<TD>
+<TD>
+<TD x:num="0.00">0.00</TD>
+<TD>30.11.2026</TD>
+<TD>
+<TD>
+<TD>10001</TD></TR>
+<TR>
+<TD>30.11.2026 15:20:00</TD>
+<TD>18100000302</TD>
+<TD>86400000301</TD>
+<TD>РЕПО с ЦК</TD>
+<TD>RU000A1038V6</TD>
+<TD>ОФЗ 26238</TD>
+<TD>
+<TD>Продажа</TD>
+<TD x:num="1000">1 000</TD>
+<TD x:num="1.000"><NOBR>1.000</NOBR></TD>
+<TD x:num="525000.00"><NOBR>525 000.00</NOBR></TD>
+<TD x:num="0.00">0.00</TD>
+<TD x:num="0.00"><NOBR>0.00</NOBR></TD>
+<TD>Y0</TD>
+<TD>525 000.00</TD>
+<TD>1</TD>
+<TD>14.00</TD>
+<TD>
+<TD>
+<TD x:num="0.00">0.00</TD>
+<TD>30.11.2026</TD>
+<TD>
+<TD>
+<TD>10001</TD></TR>
+<TR>
+<TD>30.11.2026 15:20:00</TD>
+<TD>18100000303</TD>
+<TD>86400000301</TD>
+<TD>РЕПО с ЦК</TD>
+<TD>RU000A1038V6</TD>
+<TD>ОФЗ 26238</TD>
+<TD>
+<TD>Купля</TD>
+<TD x:num="1000">1 000</TD>
+<TD x:num="1.001"><NOBR>1.001</NOBR></TD>
+<TD x:num="525201.37"><NOBR>525 201.37</NOBR></TD>
+<TD x:num="0.00">0.00</TD>
+<TD x:num="0.00"><NOBR>0.00</NOBR></TD>
+<TD>Y1D</TD>
+<TD>525 000.00</TD>
+<TD>1</TD>
+<TD>14.00</TD>
+<TD>
+<TD>
+<TD x:num="0.00">0.00</TD>
+<TD>01.12.2026</TD>
+<TD>
+<TD>
+<TD>10001</TD></TR>
+<TR>
+<TD>30.11.2026 18:00:00</TD>
+<TD>18100000401</TD>
+<TD>86400000401</TD>
+<TD>РЕПО с ЦК</TD>
+<TD>RU000A0JW4Z1</TD>
+<TD>КСУ обл.</TD>
+<TD>
+<TD>Купля</TD>
+<TD x:num="1000">1 000</TD>
+<TD x:num="14.00"><NOBR>14.00</NOBR></TD>
+<TD x:num="1000000.00"><NOBR>1 000 000.00</NOBR></TD>
+<TD x:num="0.00">0.00</TD>
+<TD x:num="0.00"><NOBR>0.00</NOBR></TD>
+<TD>Y0</TD>
+<TD>1 000 000.00</TD>
+<TD>1</TD>
+<TD>14.00</TD>
+<TD>
+<TD>
+<TD x:num="0.00">0.00</TD>
+<TD>30.11.2026</TD>
+<TD>
+<TD>
+<TD>10001</TD></TR>
+<TR>
+<TD>30.11.2026 18:00:00</TD>
+<TD>18100000402</TD>
+<TD>86400000401</TD>
+<TD>РЕПО с ЦК</TD>
+<TD>RU000A0JW4Z1</TD>
+<TD>КСУ обл.</TD>
+<TD>
+<TD>Купля</TD>
+<TD x:num="1000">1 000</TD>
+<TD x:num="1.000"><NOBR>1.000</NOBR></TD>
+<TD x:num="1000000.00"><NOBR>1 000 000.00</NOBR></TD>
+<TD x:num="0.00">0.00</TD>
+<TD x:num="0.00"><NOBR>0.00</NOBR></TD>
+<TD>Y0</TD>
+<TD>1 000 000.00</TD>
+<TD>1</TD>
+<TD>14.00</TD>
+<TD>
+<TD>
+<TD x:num="0.00">0.00</TD>
+<TD>30.11.2026</TD>
+<TD>
+<TD>
+<TD>10001</TD></TR>
+<TR>
+<TD colSpan=10 align=right>ИТОГО НА ПРОДАЖУ</TD>
+<TD x:num="0.00"><NOBR>0.00</NOBR></TD>
+<TD x:num="0.00"><NOBR>0.00</NOBR></TD>
+<TD>
+<TD colSpan=6>
+<TD>
+<TD colSpan=4></TD></TR></TBODY></TABLE></BODY></HTML>

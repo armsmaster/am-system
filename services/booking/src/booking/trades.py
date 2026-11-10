@@ -267,6 +267,35 @@ class TradeDesk:
             closed = await self._closed(values["fund_id"])
         return TradeView(versions, visible.get(entry.portfolio_id), warnings, closed)
 
+    async def check(
+        self, entry: TradeInput, trade_id: UUID | None
+    ) -> tuple[dict[str, Any], list[str]]:
+        """Как ввод или правка, но без записи: правила ввода, право на правку и закрытый
+        день. Ошибки — те же, что дал бы ввод."""
+        visible = await self.visible()
+        before = None
+        if trade_id is not None:
+            async with self._session.begin():
+                before = (await self._repo.versions(trade_id))[-1]
+            self._check_change(before, visible)
+        values, warnings = await self._prepare(entry, visible, trade_id)
+        since = (
+            values["trade_date"] if before is None else min(before.trade_date, values["trade_date"])
+        )
+        funds = {values["fund_id"]} | ({before.fund_id} if before is not None else set())
+        async with self._session.begin():
+            for fund_id in funds:
+                await self._repo.ensure_open(fund_id, since, CHANGE)
+        return values, warnings
+
+    async def check_cancel(self, trade_id: UUID) -> None:
+        """Отмену пропустят: право на правку и открытый день — без записи."""
+        visible = await self.visible()
+        async with self._session.begin():
+            before = await self._latest(trade_id, visible)
+            self._check_change(before, visible)
+            await self._repo.ensure_open(before.fund_id, before.trade_date, CHANGE)
+
     async def cancel(self, trade_id: UUID, comment: str) -> TradeView:
         return await self._restate(trade_id, CANCELLED, "trade.cancelled", comment)
 

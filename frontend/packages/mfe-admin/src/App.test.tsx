@@ -39,6 +39,9 @@ describe('AdminApp', () => {
     await userEvent.click(screen.getByRole('link', { name: 'Счета' }));
     expect(await screen.findByText('Счетов пока нет.')).toBeInTheDocument();
 
+    await userEvent.click(screen.getByRole('link', { name: 'Тарифы брокера' }));
+    expect(await screen.findByText(/Брокерских счетов пока нет/)).toBeInTheDocument();
+
     await userEvent.click(screen.getByRole('link', { name: 'Доступы' }));
     expect(await screen.findByRole('columnheader', { name: 'Пользователь' })).toBeInTheDocument();
   });

@@ -6,6 +6,8 @@
 отклоняется отдельно, остальные принимаются, повтор пакета безопасен.
 Правила ввода — те же, что у формы: импорт идёт через TradeDesk.
 Сделка РЕПО (design/07) — с ``kind: repo``; код ``KSU`` — РЕПО с КСУ.
+Проверка (``dry_run``) проходит те же правила и говорит, что случится со сделкой,
+но ничего не записывает: так загрузка из отчёта QUIK показывает результат до записи.
 """
 
 from __future__ import annotations
@@ -23,9 +25,9 @@ from sqlalchemy import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from booking.clients import PortfolioRef, RefdataClient
-from booking.repository import CANCELLED, Repository
+from booking.repository import CANCELLED, ClosedPeriodError, Repository
 from booking.roll import ZERO, Side
-from booking.trades import TRACKED, RuleViolationError, TradeDesk, TradeInput, TradeView
+from booking.trades import TRACKED, RuleViolationError, TradeDesk, TradeInput
 
 # Код обеспечения РЕПО с КСУ: бумаги нет, только деньги (решение 117).
 KSU_CODES = frozenset({"KSU", "КСУ"})
@@ -69,7 +71,7 @@ class Imported:
     index: int
     external_id: str
     result: Result
-    trade_id: UUID
+    trade_id: UUID | None  # None — новая сделка при проверке: её ещё нет
     warnings: list[str]
 
 
@@ -97,7 +99,9 @@ class TradeImport:
         self._refdata = refdata
         self._repo = Repository(session)
 
-    async def run(self, source: str, items: Sequence[ImportItem]) -> ImportReport:
+    async def run(
+        self, source: str, items: Sequence[ImportItem], *, dry_run: bool = False
+    ) -> ImportReport:
         visible = await self._desk.visible()
         portfolios = {p.code.casefold(): p for p in visible.values()}
         codes = await self._refdata.codes()
@@ -110,13 +114,16 @@ class TradeImport:
                         "duplicate_in_batch",
                         "Номер сделки повторяется в пакете — оставьте одну запись.",
                     )
-                result, view = await self._one(source, item, visible, portfolios, codes)
+                result, trade_id, warnings = await self._one(
+                    source, item, visible, portfolios, codes, dry_run=dry_run
+                )
             except RuleViolationError as exc:
                 report.rejected.append(Rejected(index, item.external_id, exc.code, exc.message))
                 continue
-            report.trades.append(
-                Imported(index, item.external_id, result, view.current.trade_id, view.warnings)
-            )
+            except ClosedPeriodError as exc:
+                report.rejected.append(Rejected(index, item.external_id, "day_closed", exc.message))
+                continue
+            report.trades.append(Imported(index, item.external_id, result, trade_id, warnings))
         return report
 
     async def _one(
@@ -126,7 +133,9 @@ class TradeImport:
         visible: Mapping[UUID, PortfolioRef],
         portfolios: Mapping[str, PortfolioRef],
         codes: Mapping[str, UUID],
-    ) -> tuple[Result, TradeView]:
+        *,
+        dry_run: bool,
+    ) -> tuple[Result, UUID | None, list[str]]:
         async with self._session.begin():
             trade_id = await self._repo.trade_by_key(source, item.external_id)
             latest = None if trade_id is None else (await self._repo.versions(trade_id))[-1]
@@ -136,34 +145,44 @@ class TradeImport:
                 "Сделка с этим номером — в портфеле, к которому нет доступа.",
             )
         if item.cancelled:
-            return await self._cancel(source, item, latest)
+            return await self._cancel(source, item, latest, dry_run=dry_run)
         entry = _entry(item, portfolios, codes)
         if latest is None:
+            if dry_run:
+                _, warnings = await self._desk.check(entry, None)
+                return Result.CREATED, None, warnings
             comment = item.comment or f"Загружена из {source}."
             view = await self._desk.enter(
                 replace(entry, comment=comment), key=(source, item.external_id)
             )
-            return Result.CREATED, view
+            return Result.CREATED, view.current.trade_id, view.warnings
         if latest.status != CANCELLED:
             values, _ = await self._desk.prepare(entry, latest.trade_id)
             if all(values[name] == getattr(latest, name) for name in TRACKED):
-                return Result.UNCHANGED, TradeView([latest], None)
+                return Result.UNCHANGED, latest.trade_id, []
         # Отменённую и подтверждённую сделку правка не пропустит — с кодом и причиной.
+        if dry_run:
+            _, warnings = await self._desk.check(entry, latest.trade_id)
+            return Result.AMENDED, latest.trade_id, warnings
         comment = item.comment or f"Исправлена в источнике {source}."
         view = await self._desk.amend(latest.trade_id, replace(entry, comment=comment))
-        return Result.AMENDED, view
+        return Result.AMENDED, latest.trade_id, view.warnings
 
     async def _cancel(
-        self, source: str, item: ImportItem, latest: Row[Any] | None
-    ) -> tuple[Result, TradeView]:
+        self, source: str, item: ImportItem, latest: Row[Any] | None, *, dry_run: bool
+    ) -> tuple[Result, UUID | None, list[str]]:
         if latest is None:
             raise RuleViolationError(
                 "unknown_trade", "Отменять нечего: сделки с этим номером в системе нет."
             )
         if latest.status == CANCELLED:
-            return Result.UNCHANGED, TradeView([latest], None)
-        comment = item.comment or f"Отменена в источнике {source}."
-        return Result.CANCELLED, await self._desk.cancel(latest.trade_id, comment)
+            return Result.UNCHANGED, latest.trade_id, []
+        if dry_run:
+            await self._desk.check_cancel(latest.trade_id)
+        else:
+            comment = item.comment or f"Отменена в источнике {source}."
+            await self._desk.cancel(latest.trade_id, comment)
+        return Result.CANCELLED, latest.trade_id, []
 
 
 def _entry(

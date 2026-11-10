@@ -124,6 +124,16 @@ class RefdataClient(_ServiceClient):
             if code
         }
 
+    async def kinds(self) -> dict[str, str]:
+        """Вид бумаги по коду — SECID и ISIN в верхнем регистре: bond или fund_share."""
+        payload = cast(list[dict[str, Any]], await self._service_get("/instruments"))
+        return {
+            code.upper(): item["kind"]
+            for item in payload
+            for code in (item["secid"], item["isin"])
+            if code
+        }
+
     async def calendar(self, year: int) -> dict[date, bool]:
         """Исключения торгового календаря за год; держим в памяти несколько минут."""
         cached = self._calendars.get(year)

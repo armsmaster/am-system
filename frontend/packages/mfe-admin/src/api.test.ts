@@ -18,6 +18,16 @@ describe('portfolioApi', () => {
     ['portfolios', () => api.portfolios(), 'get', ['/api/portfolio/portfolios']],
     ['accounts', () => api.accounts(), 'get', ['/api/portfolio/accounts']],
     ['users', () => api.users(), 'get', ['/api/portfolio/users']],
+    ['tariffs', () => api.tariffs('a1'), 'get', ['/api/booking/accounts/a1/tariffs']],
+    [
+      'setTariff',
+      () => api.setTariff('a1', { outright_rate: '0.0125', repo_rate: '0.5', valid_from: '2026-11-01', comment: null }),
+      'post',
+      [
+        '/api/booking/accounts/a1/tariffs',
+        { outright_rate: '0.0125', repo_rate: '0.5', valid_from: '2026-11-01', comment: null },
+      ],
+    ],
     [
       'createPortfolio',
       () => api.createPortfolio({ code: 'F1', name: 'Фонд', kind: 'compound', is_fund: true }),

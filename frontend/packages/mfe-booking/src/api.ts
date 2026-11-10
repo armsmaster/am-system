@@ -534,7 +534,7 @@ export interface ImportReport {
     readonly index: number;
     readonly external_id: string;
     readonly result: ImportResult;
-    readonly trade_id: string;
+    readonly trade_id: string | null;
     readonly warnings: readonly string[];
   }[];
   readonly rejected: readonly {
@@ -543,6 +543,65 @@ export interface ImportReport {
     readonly error: string;
     readonly message: string;
   }[];
+}
+
+// --- загрузка из отчёта QUIK (решение 151) ---------------------------------------------
+
+/** Тариф брокера на счёт: купля-продажа — % от оборота с НКД, РЕПО — % годовых. */
+export interface Tariff {
+  readonly outright_rate: Decimal;
+  readonly repo_rate: Decimal;
+  readonly valid_from: string;
+  readonly comment: string | null;
+  readonly author: string;
+  readonly created_at: string;
+}
+
+/** Сделка отчёта QUIK: комиссия и что с ней сделала проверка или загрузка. */
+export interface QuikLine {
+  readonly line: number;
+  readonly external_id: string;
+  readonly kind: 'outright' | 'repo';
+  readonly code: string;
+  readonly name: string;
+  /** null — строку отчёта не разобрать. У РЕПО: buy — обратное, sell — прямое. */
+  readonly side: Side | null;
+  readonly trade_at: string | null;
+  readonly quantity: number | null;
+  readonly price: Decimal | null;
+  /** Купля-продажа — оборот с НКД, РЕПО — сумма первой части. */
+  readonly amount: Decimal | null;
+  readonly fee: Decimal | null;
+  readonly fee_rate: Decimal | null;
+  /** null — сделка отклонена: причина в ``message``. */
+  readonly result: 'created' | 'amended' | 'unchanged' | null;
+  readonly trade_id: string | null;
+  readonly error: string | null;
+  readonly message: string | null;
+  readonly warnings: readonly string[];
+}
+
+export interface QuikReport {
+  readonly client_code: string | null;
+  readonly period_from: string | null;
+  readonly period_till: string | null;
+  /** Тариф счёта на последний день сделок отчёта. */
+  readonly tariff: Tariff | null;
+  readonly applied: boolean;
+  readonly lines: readonly QuikLine[];
+  /** Бумаг нет в справочнике: пока список не пуст, отчёт не загрузить. */
+  readonly new_instruments: readonly { readonly code: string; readonly name: string }[];
+}
+
+export interface QuikUpload {
+  /** Файл отчёта в base64. */
+  readonly file: string;
+  readonly portfolio_id: string;
+  /** Ставки на эту загрузку; null — по тарифу счёта на день сделки. */
+  readonly outright_rate: Decimal | null;
+  readonly repo_rate: Decimal | null;
+  /** false — только проверка, ничего не записывается. */
+  readonly apply: boolean;
 }
 
 // --- лимиты после сделки (design/09, часть 9.4) --------------------------------------
@@ -624,6 +683,7 @@ export function bookingApi(client: ApiClient) {
       client.post<Operation>(`${BASE}/operations/${id}/cancel`, { comment }),
     /** Пакет — как в файле: форму проверяет сервис по спецификации. */
     importTrades: (batch: unknown) => client.post<ImportReport>(`${BASE}/feed/v1/trades`, batch),
+    importQuik: (body: QuikUpload) => client.post<QuikReport>(`${BASE}/imports/quik`, body),
     ladder: (accountId: string) => client.get<Ladder>(`${BASE}/ladder${query({ account_id: accountId })}`),
     limitsCheck: (trade: LimitsTrade) => client.post<WhatIf>('/api/limits/check', trade),
   };

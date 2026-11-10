@@ -17,6 +17,8 @@ import type {
   Operation,
   Portfolio,
   Positions,
+  QuikLine,
+  QuikReport,
   Results,
   Trade,
   WhatIf,
@@ -458,6 +460,111 @@ export function whatIf(fields: Partial<WhatIf> = {}): WhatIf {
   };
 }
 
+/** Строка отчёта QUIK: покупка ОФЗ 26238 — новая сделка, комиссия по тарифу 0,0125%. */
+export function quikLine(fields: Partial<QuikLine> = {}): QuikLine {
+  return {
+    line: 1,
+    external_id: '18100000001',
+    kind: 'outright',
+    code: 'RU000A1038V6',
+    name: 'ОФЗ 26238',
+    side: 'buy',
+    trade_at: '2026-11-27T11:05:00+03:00',
+    quantity: 100,
+    price: '52.50',
+    amount: '56001.00',
+    fee: '7.00',
+    fee_rate: '0.012500',
+    result: 'created',
+    trade_id: null,
+    error: null,
+    message: null,
+    warnings: [],
+    ...fields,
+  };
+}
+
+/** Проверка отчёта QUIK: сделка, РЕПО, отказ и строка, которую не разобрать. */
+export function quikReport(fields: Partial<QuikReport> = {}): QuikReport {
+  return {
+    client_code: '00000T_01',
+    period_from: '2026-11-27',
+    period_till: '2026-11-30',
+    tariff: {
+      outright_rate: '0.012500',
+      repo_rate: '0.500000',
+      valid_from: '2026-11-01',
+      comment: null,
+      author: 'admin',
+      created_at: '2026-10-30T10:00:00+03:00',
+    },
+    applied: false,
+    new_instruments: [],
+    lines: [
+      quikLine(),
+      quikLine({
+        line: 2,
+        external_id: '18100000002',
+        side: 'sell',
+        result: 'unchanged',
+        warnings: ['Продажа больше позиции.'],
+      }),
+      quikLine({
+        line: 4,
+        external_id: '18100000004',
+        code: 'RU000A10FV69',
+        name: 'РЖД 1Р-54R',
+        result: null,
+        error: 'unknown_instrument',
+        message: 'Бумаги RU000A10FV69 нет в справочнике.',
+      }),
+      quikLine({
+        line: 6,
+        external_id: '18100000006',
+        code: '',
+        name: '',
+        side: null,
+        trade_at: null,
+        quantity: null,
+        price: null,
+        amount: null,
+        fee: null,
+        fee_rate: null,
+        result: null,
+        error: 'bad_row',
+        message: 'Строку не разобрать.',
+      }),
+      quikLine({
+        line: 7,
+        external_id: '18100000101',
+        kind: 'repo',
+        code: 'RU000A0JW4Z1',
+        name: 'КСУ обл.',
+        quantity: null,
+        price: null,
+        amount: '30000000.00',
+        fee: '1232.88',
+        fee_rate: '0.500000',
+      }),
+      quikLine({
+        line: 10,
+        external_id: '18100000201',
+        kind: 'repo',
+        side: 'sell',
+        code: 'RU000A0JW4Z1',
+        name: 'КСУ обл.',
+        quantity: null,
+        price: null,
+        amount: '23000000.00',
+        fee: '315.07',
+        fee_rate: '0.500000',
+        result: 'amended',
+      }),
+    ],
+    ...fields,
+  };
+}
+
 /** Подменный API: отвечает фиксированными данными, вызовы запоминает. */
 export function fakeApi() {
   const answer = <T,>(value: T) => vi.fn((..._args: unknown[]) => Promise.resolve(value));
@@ -489,6 +596,7 @@ export function fakeApi() {
     nav: answer<Nav>(nav()),
     feeRates: answer<FeeRate[]>(FEE_RATES),
     setFeeRate: answer<FeeRate[]>(FEE_RATES),
+    importQuik: answer<QuikReport>(quikReport()),
     importTrades: answer<ImportReport>({
       created: 1,
       amended: 0,

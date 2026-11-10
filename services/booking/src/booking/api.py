@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Callable, Mapping
 from datetime import date, datetime
 from decimal import Decimal
@@ -47,9 +48,11 @@ from booking.queries import (
     positions,
     results,
 )
+from booking.quik import QuikFormatError, QuikImport, QuikLine, Rates
 from booking.repository import ClosedPeriodError, NotFoundError, Repository
 from booking.roll import DayResult, Movement, OperationKind, Side
 from booking.settings import BookingSettings
+from booking.tariffs import TariffDesk
 from booking.trades import (
     TRACKED,
     Defaults,
@@ -72,6 +75,10 @@ Operations = Annotated[Principal, Depends(require_any_role(Role.OPERATIONS))]
 # заново — администратор.
 DayCloser = Annotated[Principal, Depends(require_any_role(Role.CLOSE_DAY))]
 Admin = Annotated[Principal, Depends(require_any_role(Role.ADMIN))]
+# Тариф брокера задаёт администратор, а форма загрузки из отчёта QUIK его показывает.
+TariffReader = Annotated[
+    Principal, Depends(require_any_role(Role.TRADING, Role.OPERATIONS, Role.ADMIN))
+]
 # Импорт — пользователям и скрипту сделок (спецификация docs/api/trade-import).
 Feeder = Annotated[
     Principal, Depends(require_any_role(Role.TRADING, Role.OPERATIONS, Role.TRADE_FEED))
@@ -619,7 +626,7 @@ class ImportedOut(BaseModel):
     index: int
     external_id: str
     result: Result
-    trade_id: UUID
+    trade_id: UUID | None  # None — новая сделка при проверке: её ещё нет
     warnings: list[str]
 
 
@@ -628,6 +635,75 @@ class ImportRejectedOut(BaseModel):
     external_id: str
     error: str
     message: str
+
+
+class TariffIn(BaseModel):
+    outright_rate: Annotated[Decimal, Field(ge=0, le=10, max_digits=9, decimal_places=6)]
+    repo_rate: Annotated[Decimal, Field(ge=0, le=100, max_digits=9, decimal_places=6)]
+    valid_from: date
+    comment: OptionalComment = None
+
+
+class TariffOut(BaseModel):
+    outright_rate: Decimal  # % от оборота с НКД
+    repo_rate: Decimal  # % годовых от суммы первой части
+    valid_from: date
+    comment: str | None
+    author: str
+    created_at: datetime
+
+
+# Отчёт QUIK — в base64: файл в несколько десятков килобайт, multipart не нужен.
+QUIK_MAX_BYTES = 5 * 1024 * 1024
+
+
+class QuikIn(BaseModel):
+    """Отчёт QUIK «Отчёт по всем сделкам клиента» и куда его загрузить (решение 151)."""
+
+    file: Annotated[str, StringConstraints(min_length=1, max_length=QUIK_MAX_BYTES * 4 // 3 + 4)]
+    portfolio_id: UUID
+    # Ставки на эту загрузку; нет — тариф брокера на счёт портфеля на день сделки.
+    outright_rate: Annotated[Decimal | None, Field(ge=0, le=10, max_digits=9, decimal_places=6)] = (
+        None
+    )
+    repo_rate: Annotated[Decimal | None, Field(ge=0, le=100, max_digits=9, decimal_places=6)] = None
+    apply: bool = False  # false — только проверка: ничего не записывается
+
+
+class QuikLineOut(BaseModel):
+    line: int
+    external_id: str
+    kind: str
+    code: str
+    name: str
+    side: Side | None
+    trade_at: datetime | None
+    quantity: int | None
+    price: Decimal | None
+    amount: Decimal | None
+    fee: Decimal | None
+    fee_rate: Decimal | None
+    result: str | None  # created | amended | unchanged; None — отклонена
+    trade_id: UUID | None
+    error: str | None
+    message: str | None
+    warnings: list[str]
+
+
+class NewInstrumentOut(BaseModel):
+    code: str
+    name: str
+
+
+class QuikOut(BaseModel):
+    client_code: str | None
+    period_from: date | None
+    period_till: date | None
+    tariff: TariffOut | None  # тариф счёта на последний день сделок отчёта
+    applied: bool
+    lines: list[QuikLineOut]
+    # Бумаг нет в справочнике: пока список не пуст, отчёт не загрузить.
+    new_instruments: list[NewInstrumentOut]
 
 
 class TradeBatchOut(BaseModel):
@@ -907,11 +983,13 @@ async def import_trades(
     authorization: Authorization,
     services: Services,
     now: Now,
+    dry_run: bool = False,
 ) -> TradeBatchOut:
-    """Пакет сделок от внешней системы или из файла: ключ — источник и номер сделки."""
+    """Пакет сделок от внешней системы или из файла: ключ — источник и номер сделки.
+    ``dry_run`` — только проверка: что случится с каждой сделкой, без записи."""
     trades = desk(session, user, authorization, services, now)
     report = await TradeImport(session, trades, services.refdata).run(
-        body.source, [ImportItem(**item.model_dump()) for item in body.trades]
+        body.source, [ImportItem(**item.model_dump()) for item in body.trades], dry_run=dry_run
     )
     return TradeBatchOut(
         created=report.count(Result.CREATED),
@@ -923,6 +1001,97 @@ async def import_trades(
             ImportRejectedOut.model_validate(r, from_attributes=True) for r in report.rejected
         ],
     )
+
+
+@router.post("/imports/quik", tags=["import"])
+async def import_quik(
+    body: QuikIn,
+    *,
+    user: Staff,
+    session: DbSession,
+    authorization: Authorization,
+    services: Services,
+    now: Now,
+) -> QuikOut:
+    """Отчёт QUIK: сначала проверка без записи, потом загрузка с ``apply`` (решение 151)."""
+    try:
+        content = base64.b64decode(body.file, validate=True)
+    except ValueError as exc:  # binascii.Error и не-ASCII символы
+        raise RuleViolationError("bad_file", "Файл не прочитать: передайте его в base64.") from exc
+    if len(content) > QUIK_MAX_BYTES:
+        raise RuleViolationError(
+            "file_too_large", "Отчёт больше 5 МБ — выгрузите период короче.", 413
+        )
+    trades = desk(session, user, authorization, services, now)
+    rates = Rates(outright=body.outright_rate, repo=body.repo_rate)
+    try:
+        result = await QuikImport(session, trades, services.refdata).run(
+            content, body.portfolio_id, rates, apply=body.apply
+        )
+    except QuikFormatError as exc:
+        raise RuleViolationError("not_quik_report", exc.message) from exc
+    tariff = result.tariff
+    return QuikOut(
+        client_code=result.client_code,
+        period_from=None if result.period is None else result.period[0],
+        period_till=None if result.period is None else result.period[1],
+        tariff=None if tariff is None else TariffOut.model_validate(tariff, from_attributes=True),
+        applied=result.applied,
+        new_instruments=[
+            NewInstrumentOut(code=code, name=name) for code, name in result.new_instruments
+        ],
+        lines=[
+            QuikLineOut.model_validate({**_quik_fields(line), "warnings": list(line.warnings)})
+            for line in result.lines
+        ],
+    )
+
+
+def _quik_fields(line: QuikLine) -> dict[str, object]:
+    return {name: getattr(line, name) for name in line.__dataclass_fields__}
+
+
+# --- тарифы брокера -----------------------------------------------------------------
+
+
+@router.get("/accounts/{account_id}/tariffs", tags=["import"])
+async def tariffs(
+    account_id: UUID,
+    *,
+    user: TariffReader,
+    session: DbSession,
+    authorization: Authorization,
+    services: Services,
+    now: Now,
+) -> list[TariffOut]:
+    """Тарифы брокера на счёт — вся история, по дате начала."""
+    desk_ = TariffDesk(session, user, authorization, services.portfolios, lambda: now)
+    return [
+        TariffOut.model_validate(r, from_attributes=True) for r in await desk_.history(account_id)
+    ]
+
+
+@router.post("/accounts/{account_id}/tariffs", status_code=201, tags=["import"])
+async def set_tariff(
+    account_id: UUID,
+    *,
+    body: TariffIn,
+    user: Admin,
+    session: DbSession,
+    authorization: Authorization,
+    services: Services,
+    now: Now,
+) -> list[TariffOut]:
+    """Новый тариф брокера с даты начала; загруженные сделки он не меняет."""
+    desk_ = TariffDesk(session, user, authorization, services.portfolios, lambda: now)
+    rows = await desk_.set(
+        account_id,
+        outright_rate=body.outright_rate,
+        repo_rate=body.repo_rate,
+        valid_from=body.valid_from,
+        comment=body.comment,
+    )
+    return [TariffOut.model_validate(r, from_attributes=True) for r in rows]
 
 
 # --- позиции --------------------------------------------------------------------

@@ -199,6 +199,24 @@ fee_rate = Table(
 
 # Закрытый период (design/08): закрытия и повторные открытия только дописываются;
 # граница фонда — по последней строке.
+# Тариф брокера на счёт (решение 151): ставки комиссии, которые загрузка из отчёта
+# QUIK подставляет в сделки. Строки только дописываются; тариф на день — последняя
+# строка с датой начала не позже дня.
+broker_tariff = Table(
+    "broker_tariff",
+    metadata,
+    Column("id", BigInteger, Identity(), primary_key=True),
+    Column("account_id", Uuid, nullable=False),
+    Column("outright_rate", Numeric(9, 6), nullable=False),  # % от оборота с НКД
+    Column("repo_rate", Numeric(9, 6), nullable=False),  # % годовых от суммы первой части
+    Column("valid_from", Date, nullable=False),
+    Column("comment", Text),
+    Column("author", Text, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("outright_rate >= 0 AND repo_rate >= 0", name="broker_tariff_not_negative"),
+    Index("broker_tariff_account", "account_id", "valid_from"),
+)
+
 fund_closing = Table(
     "fund_closing",
     metadata,

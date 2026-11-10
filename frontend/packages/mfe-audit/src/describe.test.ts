@@ -238,6 +238,23 @@ describe('changes', () => {
     expect(objectLabel(event('fee_rate.set', { fund: {} }))).toBe('');
   });
 
+  it('describes a broker tariff', () => {
+    const tariff = event('broker_tariff.set', {
+      portfolios: ['OPIF1-BONDS', 'OPIF1-TREASURY'],
+      after: { outright_fee: '0.0125', repo_fee: '0.5', valid_from: '2026-11-01' },
+    });
+
+    expect([actionLabel(tariff.type), objectLabel(tariff)]).toEqual([
+      'Изменён тариф брокера',
+      'счёт портфелей OPIF1-BONDS, OPIF1-TREASURY',
+    ]);
+    expect(changes(tariff).map((c) => c.field)).toEqual([
+      'Действует с',
+      'Комиссия купли-продажи, % от оборота с НКД',
+      'Комиссия РЕПО, % годовых',
+    ]);
+  });
+
   it('describes statements and accepted discrepancies', () => {
     const received = event('statement.received', {
       account: { code: 'OPIF1-BROKER' },

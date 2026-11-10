@@ -14,6 +14,7 @@ function file(content: string, name = 'trades.json'): File {
 async function upload(content: string, api = fakeApi()) {
   const user = userEvent.setup();
   renderBooking(api, '/booking/import');
+  await user.click(await screen.findByRole('tab', { name: 'Пакет JSON' }));
   await user.upload(await screen.findByLabelText('Файл со сделками'), file(content));
   return api;
 }
@@ -97,6 +98,7 @@ describe('ImportPage', () => {
     const api = fakeApi();
     api.importTrades.mockReturnValue(new Promise(() => undefined));
     renderBooking(api, '/booking/import');
+    fireEvent.click(await screen.findByRole('tab', { name: 'Пакет JSON' }));
     const input = await screen.findByLabelText('Файл со сделками');
 
     fireEvent.change(input, { target: { files: [] } });

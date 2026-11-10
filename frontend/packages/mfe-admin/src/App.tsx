@@ -6,8 +6,9 @@ import { portfolioApi } from './api';
 import { AccessPage } from './pages/AccessPage';
 import { AccountsPage } from './pages/AccountsPage';
 import { PortfoliosPage } from './pages/PortfoliosPage';
+import { TariffsPage } from './pages/TariffsPage';
 
-/** Администрирование: портфели, фонды, счета и права доступа. */
+/** Администрирование: портфели, фонды, счета, тарифы брокера и права доступа. */
 export default function AdminApp({ session, basePath }: MicrofrontendProps) {
   const api = useMemo(() => portfolioApi(createApiClient(session)), [session]);
 
@@ -27,11 +28,13 @@ export default function AdminApp({ session, basePath }: MicrofrontendProps) {
           Портфели
         </NavLink>
         <NavLink to={`${basePath}/accounts`}>Счета</NavLink>
+        <NavLink to={`${basePath}/tariffs`}>Тарифы брокера</NavLink>
         <NavLink to={`${basePath}/access`}>Доступы</NavLink>
       </nav>
       <Routes>
         <Route index element={<PortfoliosPage api={api} />} />
         <Route path="accounts" element={<AccountsPage api={api} />} />
+        <Route path="tariffs" element={<TariffsPage api={api} />} />
         <Route path="access" element={<AccessPage api={api} />} />
       </Routes>
     </section>
