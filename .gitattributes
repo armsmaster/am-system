@@ -3,3 +3,5 @@
 *.bat text eol=crlf
 *.png binary
 *.ico binary
+# Отчёты QUIK — байт в байт: windows-1251 и CRLF, как их выгружает QUIK.
+*.xls binary
