@@ -201,6 +201,15 @@ async def test_refdata_events_mark_funds(
         )
     )
     assert (await queue(resources))[OTHER_FUND] == date(2026, 11, 20)
+    # Новые НКД и номинал на дату расчётов: пересчёт сегодняшнего дня.
+    await events.handle(
+        event(
+            "settlement.updated",
+            "2026-11-19",
+            instruments=[{"id": str(LQDT), "secid": "LQDT", "since": "2026-11-19"}],
+        )
+    )
+    assert (await queue(resources))[OTHER_FUND] == date(2026, 11, 19)
 
 
 async def test_workers(

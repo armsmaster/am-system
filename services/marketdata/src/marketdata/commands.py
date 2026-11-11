@@ -17,8 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from am_common.clock import moscow_now
 from am_common.db import Database
-from am_common.events import Actor, Event
+from am_common.events import SYSTEM_ACTOR, Actor, Event
 from am_common.outbox import Outbox
+from marketdata.backfill import SETTLEMENT_UPDATED, announce
 from marketdata.db import accrued_interest, face_value, outbox
 from marketdata.iss import IssClient
 from marketdata.prices import (
@@ -163,9 +164,13 @@ async def load_history(
 
 
 async def poll_intraday(
-    database: Database, iss: IssClient, records: Sequence[InstrumentRecord]
+    database: Database, iss: IssClient, records: Sequence[InstrumentRecord], today: date
 ) -> int:
-    """Данные дня ISS по всем бумагам: цены и НКД с номиналом на дату расчётов."""
+    """Данные дня ISS по всем бумагам: цены и НКД с номиналом на дату расчётов.
+
+    Новые или изменившиеся НКД и номинал на дату расчётов меняют оценку сегодняшнего
+    дня — одно событие на опрос: фонды с этими бумагами пересчитаются с сегодня.
+    """
     by_secid = {r.secid: r for r in records}
     received = 0
     for kind in ("bond", "fund_share"):
@@ -191,20 +196,31 @@ async def poll_intraday(
                     for price_type, value in s.prices.items()
                 ]
             )
+            changed: set[UUID] = set()
             for table, attribute in ((accrued_interest, "accrued"), (face_value, "face_value")):
-                await repo.upsert_points(
-                    table,
-                    [
-                        {
-                            "instrument_id": by_secid[s.secid].id,
-                            "as_of": s.settle_date,
-                            "source": SETTLEMENT,
-                            "value": getattr(s, attribute),
-                        }
-                        for s in snapshots
-                        if s.settle_date is not None and getattr(s, attribute) is not None
-                    ],
-                )
+                changed |= {
+                    instrument_id
+                    for instrument_id, _ in await repo.upsert_points(
+                        table,
+                        [
+                            {
+                                "instrument_id": by_secid[s.secid].id,
+                                "as_of": s.settle_date,
+                                "source": SETTLEMENT,
+                                "value": getattr(s, attribute),
+                            }
+                            for s in snapshots
+                            if s.settle_date is not None and getattr(s, attribute) is not None
+                        ],
+                    )
+                }
+            await announce(
+                session,
+                dict.fromkeys(changed, today),
+                {r.id: r.secid for r in records},
+                SYSTEM_ACTOR,
+                SETTLEMENT_UPDATED,
+            )
         received += len(snapshots)
     return received
 

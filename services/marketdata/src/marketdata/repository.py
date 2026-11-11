@@ -264,18 +264,27 @@ class Repository:
 
     # --- НКД и номинал ----------------------------------------------------------
 
-    async def upsert_points(self, table: Table, rows: Sequence[dict[str, Any]]) -> None:
+    async def upsert_points(
+        self, table: Table, rows: Sequence[dict[str, Any]]
+    ) -> list[tuple[UUID, date]]:
+        """Записывает точки; возвращает новые и изменившиеся — бумага и дата.
+
+        Та же точка с тем же значением не перезаписывается: данные дня ISS опрашиваются
+        каждые 5 минут, а пересчёт нужен, только когда значение новое.
+        """
         # Одна точка на ключ: ISS может прислать дату дважды — действует последняя.
         unique = {(r["instrument_id"], r["as_of"], r["source"]): r for r in rows}
         if not unique:
-            return
+            return []
         statement = insert(table).values(list(unique.values()))
-        await self._session.execute(
+        result = await self._session.execute(
             statement.on_conflict_do_update(
                 index_elements=[table.c.instrument_id, table.c.as_of, table.c.source],
                 set_={"value": statement.excluded.value, "received_at": func.now()},
-            )
+                where=table.c.value != statement.excluded.value,
+            ).returning(table.c.instrument_id, table.c.as_of)
         )
+        return [(row.instrument_id, row.as_of) for row in result]
 
     async def points(self, table: Table, instrument_id: UUID) -> dict[date, Decimal]:
         """Точки ISS по датам; на одну дату история торгов главнее данных дня."""

@@ -19,6 +19,10 @@ from marketdata.db import outbox
 
 SERVICE = "marketdata"
 PRICES_BACKFILLED = "prices.backfilled"
+# Новые НКД или номинал на дату расчётов в данных дня ISS: оценка сегодняшнего дня
+# берёт их на T+1 (решения 102 и 149), а пересчёт дня мог пройти раньше, чем ISS их
+# опубликовал, — ночью или в 06:30 с итогами вчерашнего дня.
+SETTLEMENT_UPDATED = "settlement.updated"
 
 
 def past_days(rows: Iterable[tuple[UUID, date]], today: date) -> dict[UUID, date]:
@@ -35,6 +39,7 @@ async def announce(
     earliest: Mapping[UUID, date],
     secids: Mapping[UUID, str],
     actor: Actor,
+    event_type: str = PRICES_BACKFILLED,
 ) -> None:
     """Одно событие на пакет или загрузку: какие бумаги и с какой даты."""
     if not earliest:
@@ -44,7 +49,7 @@ async def announce(
         session,
         Event(
             service=SERVICE,
-            type=PRICES_BACKFILLED,
+            type=event_type,
             actor=actor,
             entity_type="prices",
             entity_id=since.isoformat(),

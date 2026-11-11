@@ -337,7 +337,7 @@ async def extend_to_today(database: Database, now: datetime) -> int:
 
 class MarketEvents:
     """События соседей: новая версия бумаги и правка календаря в справочнике,
-    цены за прошлые дни в сервисе цен."""
+    цены за прошлые дни и новые НКД и номинал на дату расчётов в сервисе цен."""
 
     def __init__(self, database: Database, clock: Callable[[], datetime] = moscow_now) -> None:
         self._database = database
@@ -350,7 +350,7 @@ class MarketEvents:
             await self._mark(since, instrument_id=UUID(event.entity_id))
         elif event.type in {"calendar.day_set", "calendar.day_cleared"}:
             await self._mark(date.fromisoformat(event.entity_id))
-        elif event.type == "prices.backfilled":
+        elif event.type in {"prices.backfilled", "settlement.updated"}:
             for item in event.data["instruments"]:
                 await self._mark(date.fromisoformat(item["since"]), instrument_id=UUID(item["id"]))
 

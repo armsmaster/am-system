@@ -23,6 +23,7 @@ const ACTIONS: Readonly<Record<string, string>> = {
   'manual_price.set': 'Введена ручная цена',
   'price_rule.changed': 'Изменено правило оценки',
   'prices.backfilled': 'Цены за прошлые дни',
+  'settlement.updated': 'НКД и номинал на дату расчётов',
   'trade.entered': 'Введена сделка',
   'trade.amended': 'Исправлена сделка',
   'trade.cancelled': 'Отменена сделка',

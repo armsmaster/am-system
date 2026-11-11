@@ -12,7 +12,7 @@ from uuid import UUID
 import httpx2
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from am_common.app import Resources
@@ -175,6 +175,39 @@ async def test_intraday_poll_once_per_slot_during_trading(resources: Resources) 
     async with resources.require_database().session() as session:
         [slot] = (await session.execute(select(iss_poll))).all()
     assert (slot.slot.astimezone(MOSCOW).time(), slot.polled, slot.failed) == (time(11, 5), 3, 0)
+
+
+async def settlement_events(resources: Resources) -> list[dict[str, Any]]:
+    async with resources.require_database().session() as session:
+        payloads = (await session.execute(select(outbox.c.payload))).scalars().all()
+    return [p["data"] for p in payloads if p["type"] == "settlement.updated"]
+
+
+async def test_new_settlement_data_recalculates_today(resources: Resources) -> None:
+    """Пересчёт дня мог пройти до того, как ISS опубликовал НКД и номинал на T+1:
+    новые значения ставят фонды с бумагой в пересчёт с сегодня (решение 149)."""
+    await prepared(resources)
+    refdata, iss = refdata_client(resources), iss_client(resources)
+
+    assert await poll_if_due(resources, refdata, iss, NOW) is True
+    [first] = await settlement_events(resources)
+    assert first["since"] == "2026-10-27"
+    assert sorted(i["secid"] for i in first["instruments"]) == ["RU000A10F504", "SU26238RMFS4"]
+
+    # Следующий опрос с теми же значениями — без события.
+    assert await poll_if_due(resources, refdata, iss, at(27, 11, 10)) is True
+    assert len(await settlement_events(resources)) == 1
+
+    # ISS исправил НКД на дату расчётов по ОФЗ — событие только по ней.
+    async with resources.require_database().session() as session, session.begin():
+        await session.execute(
+            update(accrued_interest)
+            .where(accrued_interest.c.instrument_id == OFZ)
+            .values(value=Decimal(0))
+        )
+    assert await poll_if_due(resources, refdata, iss, at(27, 11, 15)) is True
+    *_, last = await settlement_events(resources)
+    assert [i["secid"] for i in last["instruments"]] == ["SU26238RMFS4"]
 
 
 async def test_failed_intraday_poll_is_recorded(resources: Resources, world: World) -> None:

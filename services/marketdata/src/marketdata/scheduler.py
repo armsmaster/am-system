@@ -218,7 +218,7 @@ async def poll_if_due(
             return False
         records = await _with_board(repo)
     try:
-        polled, failed = await poll_intraday(database, iss, records), 0
+        polled, failed = await poll_intraday(database, iss, records, now.date()), 0
     except IssError as exc:
         logger.warning("ISS intraday poll failed: %s", exc)
         polled, failed = 0, 1
