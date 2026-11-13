@@ -1,7 +1,8 @@
-import { hasRole, ROLE_LABELS, type Session } from '@am/platform';
+import type { Session } from '@am/platform';
 import type { ReactNode } from 'react';
-import { BrowserRouter, NavLink, Route, Routes } from 'react-router';
+import { BrowserRouter, Route, Routes } from 'react-router';
 
+import { Layout } from './components/Layout';
 import { Microfrontend } from './components/Microfrontend';
 import {
   loadAdmin,
@@ -14,6 +15,7 @@ import {
   type MicrofrontendLoader,
 } from './microfrontends';
 import { Home } from './pages/Home';
+import { accessOf } from './sections';
 
 export interface Loaders {
   readonly admin: MicrofrontendLoader;
@@ -49,18 +51,15 @@ export function App({ session, loaders = LOADERS }: AppProps) {
 }
 
 export function AppRoutes({ session, loaders }: Required<AppProps>) {
-  const isAdmin = hasRole(session, 'admin');
+  const access = accessOf(session);
+  const { books, limits } = access;
   const adminOnly = (page: ReactNode) =>
-    isAdmin ? page : <p role="alert">Раздел доступен только администратору.</p>;
-  // Сделки вводят все авторизованные пользователи (решение 25): трейдинг, сопровождение, админ.
-  const books = hasRole(session, 'trading') || hasRole(session, 'operations');
-  // Лимиты смотрят и риск-менеджмент: он ведёт набор лимитов (design/09).
-  const limits = books || hasRole(session, 'risk');
+    access.admin ? page : <p role="alert">Раздел доступен только администратору.</p>;
 
   return (
-    <Layout session={session} isAdmin={isAdmin} books={books} limits={limits}>
+    <Layout session={session} access={access}>
       <Routes>
-        <Route path="/" element={<Home session={session} />} />
+        <Route path="/" element={<Home session={session} access={access} />} />
         <Route
           path="/refdata/*"
           element={<Microfrontend load={loaders.refdata} session={session} basePath="/refdata" />}
@@ -120,49 +119,5 @@ export function AppRoutes({ session, loaders }: Required<AppProps>) {
         <Route path="*" element={<p>Страница не найдена.</p>} />
       </Routes>
     </Layout>
-  );
-}
-
-function Layout({
-  session,
-  isAdmin,
-  books,
-  limits,
-  children,
-}: {
-  readonly session: Session;
-  readonly isAdmin: boolean;
-  readonly books: boolean;
-  readonly limits: boolean;
-  readonly children: ReactNode;
-}) {
-  const roles = [...session.roles].map((role) => ROLE_LABELS[role]).join(', ');
-
-  return (
-    <div className="layout">
-      <header className="header">
-        <span className="brand">AM System</span>
-        <nav className="nav">
-          <NavLink to="/" end>
-            Главная
-          </NavLink>
-          <NavLink to="/refdata">Справочник</NavLink>
-          <NavLink to="/marketdata">Цены</NavLink>
-          {books && <NavLink to="/booking">Сделки</NavLink>}
-          {books && <NavLink to="/reconciliation">Сверка</NavLink>}
-          {limits && <NavLink to="/limits">Лимиты</NavLink>}
-          {isAdmin && <NavLink to="/admin">Администрирование</NavLink>}
-          {isAdmin && <NavLink to="/audit">Журнал</NavLink>}
-        </nav>
-        <div className="user">
-          <span>{session.displayName}</span>
-          {roles && <span className="muted">{roles}</span>}
-          <button type="button" onClick={() => session.logout()}>
-            Выйти
-          </button>
-        </div>
-      </header>
-      <main className="content">{children}</main>
-    </div>
   );
 }

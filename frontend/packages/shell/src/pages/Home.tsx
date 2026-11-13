@@ -1,36 +1,51 @@
-import { createApiClient, ROLE_LABELS, type Role, type Session } from '@am/platform';
+import { createApiClient, ROLE_LABELS, type Session } from '@am/platform';
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router';
 
-interface Me {
-  readonly subject: string;
-  readonly username: string;
-  readonly roles: readonly Role[];
+import { Icon } from '../components/Icon';
+import { SECTIONS, type Access } from '../sections';
+
+type Status = 'loading' | 'ready' | 'failed';
+
+/** Приветствие по времени суток по Москве: в нём работают биржа и пользователи. */
+function greeting(now: Date): string {
+  const hour = Number(now.toLocaleString('en-GB', { timeZone: 'Europe/Moscow', hour: '2-digit', hourCycle: 'h23' }));
+  if (hour < 5) {
+    return 'Доброй ночи';
+  }
+  if (hour < 12) {
+    return 'Доброе утро';
+  }
+  return hour < 18 ? 'Добрый день' : 'Добрый вечер';
 }
 
-type State =
-  | { readonly kind: 'loading' }
-  | { readonly kind: 'ready'; readonly me: Me }
-  | { readonly kind: 'failed' };
-
 /**
- * Стартовая страница. Пока показывает, как сервисы видят пользователя:
- * это сквозная проверка вход → шлюз → сервис → проверка токена.
+ * Стартовая страница: приветствие, роли, сегодняшняя дата и разделы, доступные
+ * пользователю. Внизу — связь с сервисами: вход → шлюз → сервис → проверка токена.
  */
-export function Home({ session }: { readonly session: Session }) {
-  const [state, setState] = useState<State>({ kind: 'loading' });
+export function Home({
+  session,
+  access,
+  now = new Date(),
+}: {
+  readonly session: Session;
+  readonly access: Access;
+  readonly now?: Date;
+}) {
+  const [status, setStatus] = useState<Status>('loading');
 
   useEffect(() => {
     let active = true;
     createApiClient(session)
-      .get<Me>('/api/portfolio/me')
+      .get('/api/portfolio/me')
       .then(
-        (me): State => ({ kind: 'ready', me }),
-        (): State => ({ kind: 'failed' }),
+        (): Status => 'ready',
+        (): Status => 'failed',
       )
       .then((next) => {
         // Ответ мог прийти, когда пользователь уже ушёл со страницы.
         if (active) {
-          setState(next);
+          setStatus(next);
         }
       });
     return () => {
@@ -38,22 +53,39 @@ export function Home({ session }: { readonly session: Session }) {
     };
   }, [session]);
 
+  const roles = [...session.roles].map((role) => ROLE_LABELS[role]);
+  const today = now.toLocaleDateString('ru-RU', { timeZone: 'Europe/Moscow' });
+  const sections = SECTIONS.filter((s) => s.visible(access));
+
   return (
-    <section>
-      <h1>Добро пожаловать, {session.displayName}</h1>
-      {state.kind === 'loading' && <p className="muted">Проверяем связь с сервисами…</p>}
-      {state.kind === 'failed' && (
-        <p role="alert" className="notice notice-error">
-          Сервис портфелей недоступен.
+    <section className="home">
+      <h1>
+        {greeting(now)}, {session.displayName}
+      </h1>
+      <p className="muted">{[...roles, today].join(' · ')}</p>
+      {/* Справочник и цены видны всем: список разделов не бывает пустым. */}
+      <ul className="section-cards" aria-label="Разделы">
+        {sections.map((s) => (
+          <li key={s.path}>
+            <Link to={s.path} className="section-card">
+              <Icon name={s.icon} size={22} />
+              <span className="section-card-title">{s.label}</span>
+              <span className="muted">{s.description}</span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+      {status === 'loading' && <p className="status muted">Проверяем связь с сервисами…</p>}
+      {status === 'ready' && (
+        <p className="status muted">
+          <span className="dot dot-ok" aria-hidden="true" />
+          Сервисы на связи
         </p>
       )}
-      {state.kind === 'ready' && (
-        <dl className="facts">
-          <dt>Пользователь в сервисах</dt>
-          <dd>{state.me.username}</dd>
-          <dt>Роли</dt>
-          <dd>{state.me.roles.map((role) => ROLE_LABELS[role]).join(', ') || 'нет'}</dd>
-        </dl>
+      {status === 'failed' && (
+        <p role="alert" className="notice notice-error">
+          Сервис портфелей недоступен — данные разделов могут не загрузиться.
+        </p>
       )}
     </section>
   );

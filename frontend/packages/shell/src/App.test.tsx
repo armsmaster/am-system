@@ -44,14 +44,14 @@ afterEach(() => {
 });
 
 describe('App', () => {
-  it('shows the user, the roles and the home page', () => {
+  it('shows the user, the roles and the home page', async () => {
     vi.stubGlobal('fetch', vi.fn(() => new Promise(() => undefined)));
 
     renderAt('/', fakeSession('trading', 'operations'));
 
-    expect(screen.getByText('Иван Иванов')).toBeInTheDocument();
-    expect(screen.getByText('Трейдинг, Сопровождение')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: /Добро пожаловать/ })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Иван Иванов/ })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Иван Иванов' }));
+    expect(screen.getByRole('dialog', { name: 'Пользователь' })).toHaveTextContent('Трейдинг, Сопровождение');
   });
 
   it('logs out on request', async () => {
@@ -59,6 +59,7 @@ describe('App', () => {
     const session = fakeSession('trading');
     renderAt('/', session);
 
+    await userEvent.click(screen.getByRole('button', { name: 'Иван Иванов' }));
     await userEvent.click(screen.getByRole('button', { name: 'Выйти' }));
 
     expect(session.logout).toHaveBeenCalledOnce();

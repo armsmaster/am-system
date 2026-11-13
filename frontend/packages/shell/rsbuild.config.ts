@@ -20,6 +20,13 @@ export default defineConfig({
   },
   html: {
     title: 'AM System',
+    // Знак AM System: SVG — современным браузерам, ICO из public/ — остальным,
+    // PNG 180×180 — для закладки на экране iPhone.
+    favicon: './src/assets/favicon.svg',
+    appIcon: {
+      icons: [{ src: './src/assets/apple-touch-icon.png', size: 180, target: 'apple-touch-icon' }],
+    },
+    tags: [{ tag: 'link', attrs: { rel: 'icon', href: '/favicon.ico', sizes: '32x32' }, head: true, append: false }],
   },
   server: {
     port: 3000,
