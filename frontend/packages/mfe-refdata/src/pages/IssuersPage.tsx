@@ -3,6 +3,7 @@ import { useCallback, useState } from 'react';
 import { Link } from 'react-router';
 
 import type { RefdataApi } from '../api';
+import { shortIssuer } from '../format';
 
 /** Эмитенты бумаг справочника: их заводит загрузка бумаги из MOEX ISS. */
 export function IssuersPage({ api, basePath }: { readonly api: RefdataApi; readonly basePath: string }) {
@@ -34,24 +35,27 @@ export function IssuersPage({ api, basePath }: { readonly api: RefdataApi; reado
                 : 'Эмитентов пока нет. У бумаг, загруженных раньше, эмитент появится при сверке с MOEX ISS — утром или по кнопке в карточке бумаги.'}
             </p>
           ) : (
-            <table className="data">
+            <table className="data" aria-label="Эмитенты">
               <thead>
                 <tr>
                   <th>Эмитент</th>
-                  <th>ИНН</th>
-                  <th>Код ISS</th>
-                  <th>Бумаг</th>
+                  <th className="hide-sm">ИНН</th>
+                  <th className="hide-sm">Код ISS</th>
+                  <th className="num">Бумаг</th>
                 </tr>
               </thead>
               <tbody>
                 {items.map((item) => (
                   <tr key={item.id}>
                     <td>
-                      <Link to={`${basePath}/issuers/${item.id}`}>{item.name}</Link>
+                      <Link to={`${basePath}/issuers/${item.id}`}>{shortIssuer(item.name)}</Link>
+                      <div className="subline show-sm">ИНН {item.inn ?? '—'}</div>
                     </td>
-                    <td>{item.inn ?? '—'}</td>
-                    <td>{item.iss_id}</td>
-                    <td>{item.instruments}</td>
+                    <td className="hide-sm">{item.inn ?? '—'}</td>
+                    <td className="hide-sm mono">{item.iss_id}</td>
+                    <td className="num">
+                      <span className="badge">{item.instruments}</span>
+                    </td>
                   </tr>
                 ))}
               </tbody>

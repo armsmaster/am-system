@@ -32,11 +32,12 @@ describe('IssuersPage', () => {
       .slice(1)
       .map((row) => within(row).getAllByRole('cell').map((c) => c.textContent));
     expect(rows).toEqual([
-      ['Министерство финансов Российской Федерации', '7710168360', '1228', '2'],
-      ['государственная корпорация развития «ВЭБ.РФ»', '—', '406', '1'],
+      // Организационная форма — коротко; ИНН на телефоне — второй строкой.
+      ['Минфин РоссииИНН 7710168360', '7710168360', '1228', '2'],
+      ['ГК «ВЭБ.РФ»ИНН —', '—', '406', '1'],
     ]);
 
-    await userEvent.click(screen.getByRole('link', { name: 'государственная корпорация развития «ВЭБ.РФ»' }));
+    await userEvent.click(screen.getByRole('link', { name: 'ГК «ВЭБ.РФ»' }));
     expect(screen.getByText('Открыт эмитент e-2')).toBeInTheDocument();
   });
 

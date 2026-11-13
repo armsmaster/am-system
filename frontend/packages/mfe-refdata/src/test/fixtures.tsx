@@ -99,6 +99,14 @@ export const SUMMARY: InstrumentSummary = {
   added_by: 'trader',
   last_synced_at: '2026-10-26T03:00:00Z',
   last_sync_error: null,
+  issuer_name: 'Министерство финансов Российской Федерации',
+  coupon_kind: 'fixed',
+  nominal_indexation: 'none',
+  coupon_rate: '7.10',
+  floater_rate: null,
+  floater_margin_bp: null,
+  maturity_date: '2041-05-15',
+  next_offer_date: null,
 };
 
 export function instrument(
@@ -141,7 +149,10 @@ export const ISSUER: Issuer = {
   iss_id: 1228,
   name: 'Министерство финансов Российской Федерации',
   inn: '7710168360',
-  instruments: [SUMMARY, { ...SUMMARY, id: 'i-2', secid: 'LQDT', short_name: 'LQDT', kind: 'fund_share' }],
+  instruments: [
+    { ...SUMMARY, next_offer_date: '2028-05-17' },
+    { ...SUMMARY, id: 'i-2', secid: 'LQDT', short_name: 'LQDT', kind: 'fund_share', maturity_date: null },
+  ],
 };
 
 /** Две ступени общей шкалы у двух агентств — достаточно для формы. */

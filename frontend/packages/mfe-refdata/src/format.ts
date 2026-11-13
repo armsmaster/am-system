@@ -1,8 +1,10 @@
 import type {
+  Coupon,
   CouponKind,
   Decimal,
   Field,
   InstrumentKind,
+  InstrumentSummary,
   IsoDate,
   NominalIndexation,
   OfferKind,
@@ -144,4 +146,133 @@ export function weekday(day: IsoDate): string {
 export function todayInMoscow(now: Date = new Date()): IsoDate {
   // Канадская локаль пишет дату как ГГГГ-ММ-ДД.
   return now.toLocaleDateString('en-CA', { timeZone: 'Europe/Moscow' });
+}
+
+// --- список бумаг: подпись о купоне, быстрые фильтры, эмитент ----------------------
+
+/** Быстрый фильтр списка бумаг: по тому, как устроен купон. */
+export type Family = 'fixed' | 'floater' | 'linker' | 'fund' | 'other';
+
+export function familyOf(item: InstrumentSummary): Family {
+  if (item.kind === 'fund_share') {
+    return 'fund';
+  }
+  if (item.nominal_indexation !== 'none') {
+    return 'linker';
+  }
+  if (item.coupon_kind === 'floater') {
+    return 'floater';
+  }
+  return item.coupon_kind === 'fixed' ? 'fixed' : 'other';
+}
+
+/** База флоатера коротко — для подписи: КС + 130 бп. */
+const RATE_SHORT: Readonly<Record<RateKind, string>> = {
+  key_rate: 'КС',
+  ruonia: 'RUONIA',
+  rusfar: 'RUSFAR',
+  other: 'плавающая ставка',
+};
+
+function trimZeros(value: Decimal): string {
+  return value.includes('.') ? value.replace(/\.?0+$/, '') : value;
+}
+
+/** 7.10 → «7,1%». */
+export function formatPercent(value: Decimal): string {
+  return `${trimZeros(value).replace('.', ',')}%`;
+}
+
+/** База и спред флоатера: «КС + 130 бп», «RUONIA − 20 бп»; базы нет — «флоатер». */
+export function floaterCaption(base: RateKind | null, marginBp: Decimal | null): string {
+  if (base === null) {
+    return 'флоатер';
+  }
+  if (marginBp === null) {
+    return RATE_SHORT[base];
+  }
+  const margin = trimZeros(marginBp);
+  const negative = margin.startsWith('-');
+  return `${RATE_SHORT[base]} ${negative ? '−' : '+'} ${margin.replace('-', '').replace('.', ',')} бп`;
+}
+
+/** Подпись о купоне под названием бумаги: фикс — ставка, флоатер — база и спред.
+ * Оферту показывает колонка «Погашение» — в подписи её нет. */
+export function couponCaption(item: InstrumentSummary): string {
+  const rate = item.coupon_rate === null ? null : formatPercent(item.coupon_rate);
+  switch (familyOf(item)) {
+    case 'fund':
+      return 'пай фонда';
+    case 'linker':
+      return [item.nominal_indexation === 'ruonia' ? 'линкер на RUONIA' : 'линкер', rate]
+        .filter(Boolean)
+        .join(' · ');
+    case 'floater':
+      return floaterCaption(item.floater_rate, item.floater_margin_bp);
+    case 'fixed':
+      return rate ? `фикс ${rate}` : 'фикс';
+    default:
+      return rate ? `купон ${rate}` : 'тип купона неизвестен';
+  }
+}
+
+function utc(day: IsoDate): number {
+  const [year, month, date] = day.split('-').map(Number);
+  return Date.UTC(year!, month! - 1, date);
+}
+
+export function daysBetween(from: IsoDate, to: IsoDate): number {
+  return Math.round((utc(to) - utc(from)) / 86_400_000);
+}
+
+/** Длина купонного периода: целые месяцы — 1M, 3M, 6M, 12M — 1Y; иначе дни — 182D. */
+export function periodLabel(start: IsoDate, end: IsoDate): string {
+  const [y1, m1, d1] = start.split('-').map(Number);
+  const [y2, m2, d2] = end.split('-').map(Number);
+  if (d1 !== d2) {
+    return `${daysBetween(start, end)}D`;
+  }
+  const months = (y2! - y1!) * 12 + (m2! - m1!);
+  return months % 12 === 0 ? `${months / 12}Y` : `${months}M`;
+}
+
+/** Типичная длина купона по графику — самая частая; первый нестандартный период не в счёт. */
+export function couponLength(coupons: readonly Coupon[]): string | null {
+  const counts = new Map<string, number>();
+  for (const c of coupons) {
+    if (c.start_date) {
+      const label = periodLabel(c.start_date, c.date);
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+  }
+  let best: string | null = null;
+  let most = 0;
+  for (const [label, count] of counts) {
+    if (count > most) {
+      best = label;
+      most = count;
+    }
+  }
+  return best;
+}
+
+const LEGAL_FORMS: readonly (readonly [RegExp, string])[] = [
+  [/^публичное акционерное общество\s+/i, 'ПАО '],
+  [/^открытое акционерное общество\s+/i, 'ОАО '],
+  [/^закрытое акционерное общество\s+/i, 'ЗАО '],
+  [/^акционерное общество\s+/i, 'АО '],
+  [/^общество с ограниченной ответственностью\s+/i, 'ООО '],
+  [/^государственная корпорация развития\s+/i, 'ГК '],
+  [/^министерство финансов российской федерации$/i, 'Минфин России'],
+];
+
+/** Валюта коротко: рубль — знаком, остальные — кодом. */
+export function currencySign(currency: string): string {
+  return currency === 'RUB' ? '₽' : currency;
+}
+
+/** «Публичное акционерное общество "Газпром нефть"» → «ПАО «Газпром нефть»». */
+export function shortIssuer(name: string): string {
+  const short = LEGAL_FORMS.reduce((text, [form, abbr]) => text.replace(form, abbr), name.trim());
+  return short.replace(/"([^"]*)"/g, '«$1»');
 }

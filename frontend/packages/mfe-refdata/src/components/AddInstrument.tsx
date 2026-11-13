@@ -65,7 +65,6 @@ export function AddInstrument({
 
   return (
     <section aria-label="Добавить бумагу">
-      <h2>Добавить бумагу</h2>
       <form onSubmit={submit} className="inline" aria-label="Поиск в MOEX ISS">
         <input
           aria-label="Код бумаги"

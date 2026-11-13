@@ -40,7 +40,7 @@ export function CalendarPage({
         закрыта, и выходные, когда она работает. Исключения сопровождение заносит раз в год, по
         календарю Московской биржи.
       </p>
-      <div className="split">
+      <div className="calendar-layout">
         <section aria-label="Исключения календаря">
           <h2 className="year">
             <button
@@ -67,9 +67,9 @@ export function CalendarPage({
             )}
           </LoadedView>
         </section>
-        <div>
-          {canEdit && <DayForm api={api} today={today} onSaved={showDay} />}
+        <div className="calendar-side">
           <ShiftForm api={api} today={today} />
+          {canEdit && <DayForm api={api} today={today} onSaved={showDay} />}
         </div>
       </div>
     </>
@@ -117,7 +117,9 @@ function DaysTable({
               <td>
                 {formatDate(d.day)}, {weekday(d.day)}
               </td>
-              <td>{dayLabel(d)}</td>
+              <td>
+                <span className="badge">{dayLabel(d)}</span>
+              </td>
               <td>{d.comment ?? '—'}</td>
               {canEdit && (
                 <td>
@@ -214,39 +216,42 @@ function ShiftForm({ api, today }: { readonly api: RefdataApi; readonly today: I
   }
 
   return (
-    <form onSubmit={submit} aria-label="Дата через N торговых дней">
-      <h3>Дата через N торговых дней</h3>
-      <label>
-        От даты
-        <input
-          type="date"
-          value={day}
-          onChange={(e) => {
-            setDay(e.target.value);
-            setResult(null);
-          }}
-          required
-        />
-      </label>
-      <label>
-        Торговых дней
-        <input
-          type="number"
-          min={0}
-          max={30}
-          value={days}
-          onChange={(e) => {
-            setDays(e.target.value);
-            setResult(null);
-          }}
-          required
-        />
-      </label>
+    <form onSubmit={submit} aria-label="Дата через N торговых дней" className="calculator">
+      <h3>Калькулятор торговых дней</h3>
+      <p className="subline">Например, дата расчётов T+1: от даты сделки через 1 торговый день.</p>
+      <div className="calc-row">
+        <label>
+          От даты
+          <input
+            type="date"
+            value={day}
+            onChange={(e) => {
+              setDay(e.target.value);
+              setResult(null);
+            }}
+            required
+          />
+        </label>
+        <label>
+          Торговых дней
+          <input
+            type="number"
+            min={0}
+            max={30}
+            value={days}
+            onChange={(e) => {
+              setDays(e.target.value);
+              setResult(null);
+            }}
+            required
+          />
+        </label>
+      </div>
       <button type="submit" disabled={busy}>
         Посчитать
       </button>
       {result && (
-        <p role="status">
+        <p role="status" className="calc-result">
           {formatDate(result)}, {weekday(result)}
         </p>
       )}

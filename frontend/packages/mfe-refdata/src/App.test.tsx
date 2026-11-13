@@ -71,9 +71,9 @@ describe('RefdataApp', () => {
     const fetchMock = stubService();
     renderInShell([...roles], '/refdata/instruments/i-1');
 
-    expect(await screen.findByRole('heading', { name: 'SU26238RMFS4 — ОФЗ 26238' })).toBeInTheDocument();
+    expect(await screen.findByText('ОФЗ 26238', { selector: '.tag' })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith('/api/refdata/instruments/i-1', expect.anything());
-    expect(screen.queryByRole('form', { name: 'Правка' }) !== null).toBe(canEdit);
+    expect(screen.queryByRole('button', { name: 'Изменить' }) !== null).toBe(canEdit);
   });
 
   it('switches to issuers and classifiers; risk management keeps classifiers', async () => {
@@ -120,6 +120,8 @@ describe('RefdataApp', () => {
     );
     renderInShell([]);
 
+    // Без права загрузки — «Найти в ISS»: посмотреть бумагу можно, загрузить нельзя.
+    await userEvent.click(await screen.findByRole('button', { name: 'Найти в ISS' }));
     await userEvent.type(screen.getByLabelText('Код бумаги'), 'SU26238RMFS4');
     await userEvent.click(screen.getByRole('button', { name: 'Найти в MOEX ISS' }));
 

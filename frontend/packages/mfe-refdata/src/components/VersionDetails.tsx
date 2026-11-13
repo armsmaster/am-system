@@ -1,24 +1,23 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 
-import type { Field, InstrumentKind, IssFloater, Params, Version } from '../api';
+import type { Coupon, Field, InstrumentKind, IsoDate, IssFloater, Params, Version } from '../api';
 import {
   couponKindLabel,
+  couponLength,
+  currencySign,
+  daysBetween,
+  floaterCaption,
   formatDate,
   formatDecimal,
+  formatPercent,
   INDEXATION_LABELS,
-  OFFER_KIND_LABELS,
+  periodLabel,
   RATE_LABELS,
   SOURCE_LABELS,
 } from '../format';
 
-/** Параметры и графики одной версии бумаги. */
-export function VersionDetails({
-  version,
-  kind,
-}: {
-  readonly version: Version;
-  readonly kind: InstrumentKind;
-}) {
+/** Параметры одной версии бумаги: что в ней, откуда и кто поправил вручную. */
+export function VersionFacts({ version, kind }: { readonly version: Version; readonly kind: InstrumentKind }) {
   const p = version.params;
   const pinned = new Set(version.pinned);
   const row = (field: Field, label: string, value: ReactNode) => (
@@ -62,13 +61,11 @@ export function VersionDetails({
             {row('coupon_kind', 'Тип купона', couponKindLabel(p.coupon_kind))}
             {row('coupon_frequency', 'Купонов в год', p.coupon_frequency ?? '—')}
             {row('nominal_indexation', 'Индексация номинала', INDEXATION_LABELS[p.nominal_indexation])}
-            {(p.coupon_kind === 'floater' || p.floater) &&
-              row('floater', 'Параметры флоатера', floaterText(p))}
+            {(p.coupon_kind === 'floater' || p.floater) && row('floater', 'Параметры флоатера', floaterText(p))}
             {p.iss_floater && row('iss_floater', 'Ставка и маржа по ISS', issFloaterText(p.iss_floater))}
           </>
         )}
       </dl>
-      {kind === 'bond' && <Schedules params={p} />}
     </section>
   );
 }
@@ -94,101 +91,164 @@ function issFloaterText(iss: IssFloater): string {
   return `${rate} ${sign}${formatDecimal(margin)} бп`;
 }
 
-function Schedules({ params: p }: { readonly params: Params }) {
+/** Ближайший купон: первая выплата не раньше сегодня. */
+export function nextCoupon(coupons: readonly Coupon[], today: IsoDate): Coupon | null {
+  return coupons.find((c) => c.date >= today) ?? null;
+}
+
+/**
+ * Купон коротко: флоатер — база и спред, остальные — ставка ближайшего купона
+ * с известной ставкой; через точку — длина купона: «КС + 130 бп · 1M», «7,1% · 182D».
+ */
+export function couponSummary(p: Params, today: IsoDate): string {
+  let text: string;
+  if (p.coupon_kind === 'floater') {
+    const terms = p.floater ?? p.iss_floater;
+    text = floaterCaption(terms?.rate ?? null, terms?.margin_bp ?? null);
+  } else {
+    const known = p.coupons.filter((c) => c.rate !== null);
+    const rate = known.find((c) => c.date >= today) ?? known[known.length - 1];
+    text = rate ? formatPercent(rate.rate!) : '—';
+  }
+  const length = couponLength(p.coupons);
+  return length ? `${text} · ${length}` : text;
+}
+
+export function CouponsTable({ params: p, today }: { readonly params: Params; readonly today: IsoDate }) {
+  const [showPast, setShowPast] = useState(false);
+  if (p.coupons.length === 0) {
+    return <p className="muted">Купонов нет.</p>;
+  }
+  const next = nextCoupon(p.coupons, today);
+  // Прошедшие купоны — по кнопке: обычно нужны ближайшие.
+  const past = p.coupons.filter((c) => c.date < today);
+  const shown = showPast ? p.coupons : p.coupons.filter((c) => c.date >= today);
   return (
     <>
       {p.nominal_indexation !== 'none' && (
         <p className="muted">
-          Номинал индексируется, поэтому сумма купона и погашения зависит от номинала в день
-          выплаты. Справочник покажет сумму, когда выплата состоится.
+          Номинал индексируется, поэтому сумма купона и погашения зависит от номинала в день выплаты.
+          Справочник покажет сумму, когда выплата состоится.
         </p>
       )}
-      <h4>Купоны</h4>
-      {p.coupons.length === 0 ? (
-        <p className="muted">Купонов нет.</p>
+      {past.length > 0 && (
+        <p>
+          <button type="button" className="link" onClick={() => setShowPast(!showPast)}>
+            {showPast ? 'Скрыть прошедшие купоны' : `Показать прошедшие купоны: ${past.length}`}
+          </button>
+        </p>
+      )}
+      {shown.length === 0 ? (
+        <p className="muted">Купонов впереди нет.</p>
       ) : (
         <table className="data" aria-label="Купоны">
           <thead>
             <tr>
               <th>Выплата</th>
-              <th>Начало периода</th>
-              <th>Фиксация реестра</th>
-              <th className="num">Ставка, % годовых</th>
-              <th className="num">Сумма, {p.currency}</th>
+              <th className="hide-sm">Период</th>
+              <th className="num">Ставка</th>
+              <th className="num">Сумма, {currencySign(p.currency)}</th>
             </tr>
           </thead>
           <tbody>
-            {p.coupons.map((c) => (
-              <tr key={c.date}>
-                <td>{formatDate(c.date)}</td>
-                <td>{formatDate(c.start_date)}</td>
-                <td>{formatDate(c.record_date)}</td>
-                <td className="num">{formatDecimal(c.rate)}</td>
-                <td className="num">{formatDecimal(c.amount)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-
-      <h4>Амортизации и погашение</h4>
-      {p.amortizations.length === 0 ? (
-        <p className="muted">Графика погашения нет.</p>
-      ) : (
-        <table className="data" aria-label="Амортизации">
-          <thead>
-            <tr>
-              <th>Дата</th>
-              <th className="num">% начального номинала</th>
-              <th className="num">Сумма, {p.currency}</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {p.amortizations.map((a) => (
-              <tr key={a.date}>
-                <td>{formatDate(a.date)}</td>
-                <td className="num">{formatDecimal(a.percent)}</td>
-                <td className="num">{formatDecimal(a.amount)}</td>
-                <td>{a.is_maturity ? 'погашение' : ''}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-
-      <h4>Оферты</h4>
-      {p.offers.length === 0 ? (
-        <p className="muted">Оферт нет.</p>
-      ) : (
-        <table className="data" aria-label="Оферты">
-          <thead>
-            <tr>
-              <th>Дата</th>
-              <th>Тип</th>
-              <th>Приём заявок</th>
-              <th className="num">Цена, % номинала</th>
-            </tr>
-          </thead>
-          <tbody>
-            {p.offers.map((o) => (
-              <tr key={`${o.date}-${o.kind}`}>
-                <td>{formatDate(o.date)}</td>
+            {shown.map((c) => (
+              <tr key={c.date} className={c === next ? 'next' : c.date < today ? 'past' : undefined}>
                 <td>
-                  {OFFER_KIND_LABELS[o.kind]}
-                  {o.iss_type && <div className="muted">{o.iss_type}</div>}
+                  {formatDate(c.date)}
+                  {c === next && (
+                    <>
+                      {' '}
+                      <span className="badge">ближайший</span>
+                    </>
+                  )}
+                  {c.record_date && <div className="subline">фиксация {formatDate(c.record_date)}</div>}
                 </td>
-                <td>
-                  {o.window_start || o.window_end
-                    ? `${formatDate(o.window_start)} – ${formatDate(o.window_end)}`
-                    : '—'}
-                </td>
-                <td className="num">{formatDecimal(o.price)}</td>
+                <td className="hide-sm subline">{c.start_date ? periodText(c.start_date, c.date) : '—'}</td>
+                <td className="num">{c.rate === null ? '—' : formatPercent(c.rate)}</td>
+                <td className="num">{c.amount === null ? 'не объявлен' : formatDecimal(c.amount)}</td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
     </>
+  );
+}
+
+/** «1M · 30 дн.»; если длина и так в днях — только она: «182D». */
+function periodText(start: IsoDate, end: IsoDate): string {
+  const label = periodLabel(start, end);
+  return label.endsWith('D') ? label : `${label} · ${daysBetween(start, end)} дн.`;
+}
+
+export function AmortizationsTable({ params: p }: { readonly params: Params }) {
+  if (p.amortizations.length === 0) {
+    return <p className="muted">Графика погашения нет.</p>;
+  }
+  return (
+    <table className="data" aria-label="Погашение номинала">
+      <thead>
+        <tr>
+          <th>Дата</th>
+          <th className="num">% номинала</th>
+          <th className="num">Сумма, {currencySign(p.currency)}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {p.amortizations.map((a) => (
+          <tr key={a.date}>
+            <td>
+              {formatDate(a.date)}
+              {a.is_maturity && (
+                <>
+                  {' '}
+                  <span className="badge">погашение</span>
+                </>
+              )}
+            </td>
+            <td className="num">{formatDecimal(a.percent)}</td>
+            <td className="num">{formatDecimal(a.amount)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+const OFFER_SHORT = { put: 'put — выкуп у держателей', call: 'call — погашение эмитентом' } as const;
+
+export function OffersTable({ params: p }: { readonly params: Params }) {
+  if (p.offers.length === 0) {
+    return <p className="muted">Оферт нет.</p>;
+  }
+  return (
+    <table className="data" aria-label="Оферты">
+      <thead>
+        <tr>
+          <th>Дата</th>
+          <th className="hide-sm">Тип</th>
+          <th className="num">Цена, % номинала</th>
+        </tr>
+      </thead>
+      <tbody>
+        {p.offers.map((o) => (
+          <tr key={`${o.date}-${o.kind}`}>
+            <td>
+              {formatDate(o.date)}
+              <div className="subline">
+                {o.window_start || o.window_end
+                  ? `приём заявок ${formatDate(o.window_start)} – ${formatDate(o.window_end)}`
+                  : 'приём заявок не указан'}
+              </div>
+            </td>
+            <td className="hide-sm">
+              {OFFER_SHORT[o.kind]}
+              {o.iss_type && <div className="subline">{o.iss_type}</div>}
+            </td>
+            <td className="num">{formatDecimal(o.price)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }

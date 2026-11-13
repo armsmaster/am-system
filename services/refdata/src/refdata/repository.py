@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import Row, delete, extract, func, or_, select, update
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.dialects.postgresql import distinct_on, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from refdata.attributes import (
@@ -110,6 +111,27 @@ class Repository:
                 )
             )
         return [_record(row) for row in await self._session.execute(statement)]
+
+    async def latest_params(self, ids: Sequence[UUID]) -> dict[UUID, Params]:
+        """Условия выпуска в последней версии каждой бумаги — для списка бумаг."""
+        if not ids:
+            return {}
+        rows = await self._session.execute(
+            select(instrument_version.c.instrument_id, instrument_version.c.params)
+            .where(instrument_version.c.instrument_id.in_(ids))
+            .order_by(instrument_version.c.instrument_id, instrument_version.c.number.desc())
+            .ext(distinct_on(instrument_version.c.instrument_id))
+        )
+        return {row.instrument_id: Params.model_validate(row.params) for row in rows}
+
+    async def issuer_names(self, ids: Sequence[UUID]) -> dict[UUID, str]:
+        """Имена эмитентов по id."""
+        if not ids:
+            return {}
+        rows = await self._session.execute(
+            select(issuer.c.id, issuer.c.name).where(issuer.c.id.in_(ids))
+        )
+        return {row.id: row.name for row in rows}
 
     async def all_ids(self) -> list[UUID]:
         rows = await self._session.execute(select(instrument.c.id).order_by(instrument.c.secid))

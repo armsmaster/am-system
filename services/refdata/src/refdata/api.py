@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Annotated, Any, cast
 from uuid import UUID
 
@@ -37,6 +38,7 @@ from refdata.domain import (
     InstrumentKind,
     NominalIndexation,
     Params,
+    RateKind,
     RuleViolationError,
     Version,
     alerts,
@@ -103,6 +105,15 @@ class InstrumentSummary(BaseModel):
     added_by: str
     last_synced_at: datetime | None
     last_sync_error: str | None
+    # Для подписи и фильтров в списке — из последней версии (design/02).
+    issuer_name: str | None = None
+    coupon_kind: CouponKind | None = None
+    nominal_indexation: NominalIndexation = NominalIndexation.NONE
+    coupon_rate: Decimal | None = None  # % годовых: ближайший купон с известной ставкой
+    floater_rate: RateKind | None = None  # база флоатера
+    floater_margin_bp: Decimal | None = None  # спред к базе, бп
+    maturity_date: date | None = None
+    next_offer_date: date | None = None  # ближайшая будущая оферта
 
 
 class VersionHeader(BaseModel):
@@ -370,9 +381,11 @@ async def load(
 async def search(
     _user: CurrentPrincipal,
     session: DbSession,
+    clock: Clock,
     query: Annotated[str | None, Query(max_length=50)] = None,
 ) -> list[InstrumentSummary]:
-    return [_summary(record) for record in await Repository(session).search(query)]
+    repo = Repository(session)
+    return await _summaries(repo, await repo.search(query), clock().date())
 
 
 @router.get("/instruments/{instrument_id}", tags=["instruments"])
@@ -476,7 +489,9 @@ async def issuers(
 
 
 @router.get("/issuers/{issuer_id}", tags=["issuers"])
-async def issuer(issuer_id: UUID, _user: CurrentPrincipal, session: DbSession) -> IssuerOut:
+async def issuer(
+    issuer_id: UUID, _user: CurrentPrincipal, session: DbSession, clock: Clock
+) -> IssuerOut:
     repo = Repository(session)
     found = await repo.get_issuer(issuer_id)
     return IssuerOut(
@@ -484,7 +499,7 @@ async def issuer(issuer_id: UUID, _user: CurrentPrincipal, session: DbSession) -
         iss_id=found.iss_id,
         name=found.name,
         inn=found.inn,
-        instruments=[_summary(r) for r in await repo.instruments_of(issuer_id)],
+        instruments=await _summaries(repo, await repo.instruments_of(issuer_id), clock().date()),
     )
 
 
@@ -756,8 +771,29 @@ def _commands(
     return Commands(session, Actor.from_principal(principal), clock=clock)
 
 
-def _summary(record: InstrumentRecord) -> InstrumentSummary:
-    return InstrumentSummary(
+async def _summaries(
+    repo: Repository, records: list[InstrumentRecord], today: date
+) -> list[InstrumentSummary]:
+    """Строки списка бумаг: условия из последней версии и имя эмитента."""
+    params = await repo.latest_params([r.id for r in records])
+    issuers = await repo.issuer_names([r.issuer_id for r in records if r.issuer_id])
+    return [
+        _summary(
+            record,
+            # Первая версия создаётся вместе с бумагой: условия есть у каждой.
+            params[record.id],
+            None if record.issuer_id is None else issuers.get(record.issuer_id),
+            today,
+        )
+        for record in records
+    ]
+
+
+def _summary(
+    record: InstrumentRecord, params: Params, issuer_name: str | None, today: date
+) -> InstrumentSummary:
+    """Строка списка бумаг: подпись о купоне строит интерфейс из этих полей."""
+    summary = InstrumentSummary(
         id=record.id,
         secid=record.secid,
         isin=record.isin,
@@ -767,6 +803,30 @@ def _summary(record: InstrumentRecord) -> InstrumentSummary:
         added_by=record.added_by,
         last_synced_at=record.last_synced_at,
         last_sync_error=record.last_sync_error,
+    )
+    # Ставка — ближайшего купона, у которого она известна; нет такого — последнего известного.
+    known = [c for c in params.coupons if c.rate is not None]
+    coming = [c for c in known if c.date >= today]
+    rate = coming[0] if coming else (known[-1] if known else None)
+    # База и спред — от сопровождения; пока их нет — как публикует ISS.
+    floater_rate = floater_margin = None
+    if params.floater is not None:
+        floater_rate, floater_margin = params.floater.rate, params.floater.margin_bp
+    elif params.iss_floater is not None:
+        floater_rate, floater_margin = params.iss_floater.rate, params.iss_floater.margin_bp
+    return summary.model_copy(
+        update={
+            "issuer_name": issuer_name or params.issuer,
+            "coupon_kind": params.coupon_kind,
+            "nominal_indexation": params.nominal_indexation,
+            "coupon_rate": None if rate is None else rate.rate,
+            "floater_rate": floater_rate,
+            "floater_margin_bp": floater_margin,
+            "maturity_date": params.maturity_date,
+            "next_offer_date": min(
+                (o.date for o in params.offers if o.date >= today), default=None
+            ),
+        }
     )
 
 
@@ -900,7 +960,7 @@ async def _instrument_out(session: DbSession, instrument_id: UUID) -> Instrument
     return InstrumentOut(
         issuer=await _issuer_ref(repo, record.issuer_id),
         iss_type=record.iss_type,
-        **_summary(record).model_dump(),
+        **_summary(record, current.params, None, moscow_now().date()).model_dump(),
         current=current,
         versions=[
             VersionHeader(

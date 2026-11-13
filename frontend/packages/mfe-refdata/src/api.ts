@@ -98,6 +98,18 @@ export interface InstrumentSummary {
   readonly added_by: string;
   readonly last_synced_at: string | null;
   readonly last_sync_error: string | null;
+  /** Для подписи о купоне и быстрых фильтров — из последней версии. */
+  readonly issuer_name: string | null;
+  readonly coupon_kind: CouponKind | null;
+  readonly nominal_indexation: NominalIndexation;
+  /** % годовых: ближайший купон с известной ставкой. */
+  readonly coupon_rate: Decimal | null;
+  readonly floater_rate: RateKind | null;
+  /** Спред к базе флоатера, бп. */
+  readonly floater_margin_bp: Decimal | null;
+  readonly maturity_date: IsoDate | null;
+  /** Ближайшая будущая оферта. */
+  readonly next_offer_date: IsoDate | null;
 }
 
 export interface IssuerRef {

@@ -5,7 +5,7 @@ import { Link } from 'react-router';
 import type { RefdataApi } from '../api';
 import { ClassesPanel } from '../components/ClassesPanel';
 import { RatingsPanel } from '../components/RatingsPanel';
-import { KIND_LABELS } from '../format';
+import { couponCaption, formatDate } from '../format';
 
 /** Карточка эмитента: выпуски в справочнике, рейтинги и классификаторы эмитента. */
 export function IssuerPage({
@@ -37,13 +37,20 @@ export function IssuerPage({
             </p>
             <section aria-label="Выпуски">
               <h3>Выпуски в справочнике</h3>
-              <ul className="plain">
+              <ul className="plain issues">
                 {issuer.instruments.map((i) => (
                   <li key={i.id}>
-                    <Link to={`${basePath}/instruments/${i.id}`} className="code">
-                      {i.secid}
-                    </Link>{' '}
-                    {i.short_name} · {KIND_LABELS[i.kind]}
+                    <div className="cell-head">
+                      <Link to={`${basePath}/instruments/${i.id}`} className="tag">
+                        {i.short_name}
+                      </Link>
+                      <span className="mono">{i.secid}</span>
+                    </div>
+                    <div className="subline">
+                      {couponCaption(i)}
+                      {i.maturity_date && ` · погашение ${formatDate(i.maturity_date)}`}
+                      {i.next_offer_date && ` · оферта ${formatDate(i.next_offer_date)}`}
+                    </div>
                   </li>
                 ))}
               </ul>

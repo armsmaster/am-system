@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -11,10 +12,11 @@ import redis
 from fastapi.testclient import TestClient
 from httpx2 import Response
 
-from am_common.clock import moscow_now
+from am_common.clock import MOSCOW, moscow_now
 from am_common.migrations import schema_diff
 from am_common.testing import TokenFactory
 from refdata.db import metadata
+from refdata.main import build_app
 from refdata.settings import RefdataSettings
 
 if TYPE_CHECKING:
@@ -129,6 +131,85 @@ def test_search_finds_by_code_and_name(trader: Api) -> None:
     assert [i["kind"] for i in trader.ok("GET", "/instruments", query="ликвидность")] == [
         "fund_share"
     ]
+
+
+def test_search_shows_what_the_caption_needs(
+    settings: RefdataSettings, iss: FakeIss, tokens: TokenFactory
+) -> None:
+    """Подпись в списке: тип купона, ставка или база со спредом, линкер, погашение, оферта.
+    Часы зафиксированы: ближайший купон и ближайшая оферта зависят от сегодняшней даты."""
+    app = build_app(
+        settings,
+        http_transport=iss.transport(),
+        clock=lambda: datetime(2026, 11, 13, 12, 0, tzinfo=MOSCOW),
+    )
+    with TestClient(app) as client:
+        _caption_fields(Api(client, tokens, "trading"))
+
+
+def _caption_fields(trader: Api) -> None:
+    for code in ("SU26238RMFS4", "RU000A107HG1", "RU000A10F504", "RU000A0JTZF1", "LQDT"):
+        trader.ok("POST", "/instruments", {"code": code})
+
+    found = {i["secid"]: i for i in trader.ok("GET", "/instruments")}
+    fields = (
+        "issuer_name",
+        "coupon_kind",
+        "nominal_indexation",
+        "coupon_rate",
+        "floater_rate",
+        "floater_margin_bp",
+        "maturity_date",
+        "next_offer_date",
+    )
+    assert {secid: tuple(item[f] for f in fields) for secid, item in found.items()} == {
+        "LQDT": ("Акционерное общество ВИМ Инвестиции", None, "none", *[None] * 5),
+        # Тип купона ISS не сообщил — подпись скажет только про оферту и погашение.
+        "RU000A0JTZF1": (
+            'Публичное акционерное общество "ДОМ.РФ"',
+            "unknown",
+            "none",
+            "14.3",
+            None,
+            None,
+            "2029-11-01",
+            "2027-02-03",
+        ),
+        # Флоатер: база и спред — как публикует ISS, пока их не задало сопровождение.
+        "RU000A107HG1": (
+            'Публичное акционерное общество "Газпром нефть"',
+            "floater",
+            "none",
+            "17.3",
+            "key_rate",
+            "130.00",
+            "2026-12-12",
+            None,
+        ),
+        # Линкер: номинал индексируется, ставка купона — своя.
+        "RU000A10F504": (
+            'государственная корпорация развития "ВЭБ.РФ"',
+            "fixed",
+            "unknown",
+            "1.85",
+            None,
+            None,
+            "2029-06-16",
+            None,
+        ),
+        "SU26238RMFS4": (
+            "Министерство финансов Российской Федерации",
+            "fixed",
+            "none",
+            "7.1",
+            None,
+            None,
+            "2041-05-15",
+            None,
+        ),
+    }
+    # Ничего не нашлось — пустой список, без запросов условий и эмитентов.
+    assert trader.ok("GET", "/instruments", query="нет такой бумаги") == []
 
 
 # --- правка сопровождением -----------------------------------------------------
