@@ -19,28 +19,39 @@ function rows(name: string) {
     .map((row) => within(row).getAllByRole('cell').map((c) => c.textContent));
 }
 
+/** Значения сейчас: классификатор → значение с датой, с которой оно действует. */
+async function tiles() {
+  const list = within(await screen.findByLabelText('Значения сейчас'));
+  const terms = list.getAllByRole('term').map((dt) => dt.textContent);
+  const values = list.getAllByRole('definition').map((dd) => dd.textContent);
+  return Object.fromEntries(terms.map((term, i) => [term, values[i]]));
+}
+
+/** Открывает выдвижную панель с формой нового значения и отдаёт форму. */
+async function openForm() {
+  await userEvent.click(await screen.findByRole('button', { name: 'Задать значение' }));
+  return within(screen.getByRole('dialog', { name: 'Новое значение классификатора' })).getByRole('form', {
+    name: 'Новое значение классификатора',
+  });
+}
+
 describe('ClassesPanel', () => {
   it('shows each classifier of bonds: the value now or that it is not set, and the history', async () => {
     const api = renderPanel();
 
-    expect(await screen.findByRole('table', { name: 'Значения сейчас' })).toBeInTheDocument();
-    expect(api.classifications).toHaveBeenCalledWith(BOND);
     // «Тип эмитента» — классификатор эмитентов, у бумаги его нет.
-    expect(rows('Значения сейчас')).toEqual([
-      ['Очерёдность', 'старший долг', 'с начала обращения'],
-      ['Транш', 'не задано', '—'],
-    ]);
+    expect(await tiles()).toEqual({ Очерёдность: 'старший долгс начала обращения', Транш: 'не задано' });
+    expect(api.classifications).toHaveBeenCalledWith(BOND);
     expect(rows('История значений')).toEqual([
       [
         'с 11.11.2026',
-        'Очерёдность',
-        'субординированнаяОтменена: Ошиблись выпуском (risk, 11.11.2026, 13:00)',
-        'risk11.11.2026, 12:00',
-        'По проспекту',
+        'Очерёдность: субординированная · с 11.11.2026risk, 11.11.2026, 12:00 · По проспекту' +
+          'Отменена: Ошиблись выпуском (risk, 11.11.2026, 13:00)',
       ],
-      ['с начала обращения', 'Очерёдность', 'старший долг', 'risk02.11.2026, 12:00', '—'],
+      ['с начала обращения', 'Очерёдность: старший долг · с начала обращенияrisk, 02.11.2026, 12:00'],
     ]);
-    expect(screen.queryByRole('form')).not.toBeInTheDocument();
+    expect(screen.getByText('Очерёдность: субординированная').closest('tr')).toHaveClass('cancelled');
+    expect(screen.queryByRole('button', { name: 'Задать значение' })).not.toBeInTheDocument();
   });
 
   it('says when there are no classifiers for this kind of subject', async () => {
@@ -50,7 +61,7 @@ describe('ClassesPanel', () => {
     renderPanel(api, true);
 
     expect(await screen.findByText(/Классификаторов для бумаг пока нет/)).toBeInTheDocument();
-    expect(screen.queryByRole('form')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Задать значение' })).not.toBeInTheDocument();
   });
 
   it('hides an empty history', async () => {
@@ -58,13 +69,14 @@ describe('ClassesPanel', () => {
     api.classifications.mockResolvedValue({ now: [], records: [] });
     renderPanel(api);
 
-    expect(await screen.findByRole('table', { name: 'Значения сейчас' })).toBeInTheDocument();
+    expect(await tiles()).toEqual({ Очерёдность: 'не задано', Транш: 'не задано' });
     expect(screen.queryByRole('table', { name: 'История значений' })).not.toBeInTheDocument();
+    expect(screen.queryByText('История записей')).not.toBeInTheDocument();
   });
 
   it('sets a value from a date or from the start', async () => {
     const api = renderPanel(fakeApi(), true);
-    const form = await screen.findByRole('form', { name: 'Новое значение классификатора' });
+    let form = await openForm();
 
     await userEvent.selectOptions(within(form).getByLabelText('Классификатор'), 'c-2');
     // Другой классификатор — его значения, первое выбрано.
@@ -77,7 +89,12 @@ describe('ClassesPanel', () => {
       valid_from: null,
       comment: null,
     });
+    // Записали — панель закрылась.
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
+    form = await openForm();
+    await userEvent.selectOptions(within(form).getByLabelText('Классификатор'), 'c-2');
+    await userEvent.selectOptions(within(form).getByLabelText('Значение'), 'v-4');
     await userEvent.type(within(form).getByLabelText('Действует с'), '2026-11-11');
     await userEvent.type(within(form).getByLabelText('Комментарий'), 'По проспекту');
     await userEvent.click(within(form).getByRole('button', { name: 'Записать' }));
@@ -87,21 +104,31 @@ describe('ClassesPanel', () => {
       valid_from: '2026-11-11',
       comment: 'По проспекту',
     });
-    expect(within(form).getByLabelText('Комментарий')).toHaveValue('');
     expect(api.classifications).toHaveBeenCalledTimes(3);
   });
 
-  it('shows why the value was not set', async () => {
+  it('keeps the panel and shows why the value was not set', async () => {
     const api = fakeApi();
     api.classify.mockRejectedValue(ruleViolation('«Очерёдность» на эту дату уже «старший долг».'));
     renderPanel(api, true);
-    const form = await screen.findByRole('form', { name: 'Новое значение классификатора' });
+    const form = await openForm();
 
     await userEvent.type(within(form).getByLabelText('Комментарий'), 'Повтор');
     await userEvent.click(within(form).getByRole('button', { name: 'Записать' }));
 
     expect(await within(form).findByRole('alert')).toHaveTextContent('уже «старший долг»');
     expect(within(form).getByLabelText('Комментарий')).toHaveValue('Повтор');
+    expect(screen.getByRole('dialog', { name: 'Новое значение классификатора' })).toBeInTheDocument();
+  });
+
+  it('closes the panel without a value', async () => {
+    const api = renderPanel(fakeApi(), true);
+    await openForm();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Закрыть' }));
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(api.classify).not.toHaveBeenCalled();
   });
 
   it('cancels a mistaken value', async () => {

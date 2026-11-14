@@ -274,17 +274,20 @@ describe('InstrumentPage', () => {
     expect((await tiles())['Ближайший купон']).toBe('26.05.2027 · не объявлен');
   });
 
-  it('shows the issuer, ratings and classifiers of the bond', async () => {
+  it('shows the issuer, ratings and classifiers of the bond on their own tabs', async () => {
     const api = renderCard();
-    await screen.findByRole('tab', { name: 'Рейтинги и классификаторы' });
+    await screen.findByRole('tab', { name: 'Рейтинги' });
 
     await tab(/^Рейтинги/);
-
-    expect(await screen.findByRole('table', { name: 'Действующие рейтинги' })).toBeInTheDocument();
-    expect(screen.getByRole('table', { name: 'Значения сейчас' })).toBeInTheDocument();
+    expect(await screen.findByRole('list', { name: 'Действующие рейтинги' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('Значения сейчас')).not.toBeInTheDocument();
     expect(api.ratings).toHaveBeenCalledWith({ instrument_id: 'i-1' });
     // Вести рейтинги может только риск-менеджмент.
-    expect(screen.queryByRole('form', { name: 'Новая запись о рейтинге' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Добавить запись' })).not.toBeInTheDocument();
+
+    await tab(/^Классификаторы/);
+    expect(await screen.findByLabelText('Значения сейчас')).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Рейтинги' })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('link', { name: 'Министерство финансов Российской Федерации' }));
     expect(screen.getByText('Карточка эмитента')).toBeInTheDocument();
@@ -292,12 +295,13 @@ describe('InstrumentPage', () => {
 
   it('gives risk management the rating and classifier forms', async () => {
     renderCard(fakeApi(), false, true);
-    await screen.findByRole('tab', { name: 'Рейтинги и классификаторы' });
+    await screen.findByRole('tab', { name: 'Рейтинги' });
 
     await tab(/^Рейтинги/);
+    expect(await screen.findByRole('button', { name: 'Добавить запись' })).toBeInTheDocument();
 
-    expect(await screen.findByRole('form', { name: 'Новая запись о рейтинге' })).toBeInTheDocument();
-    expect(await screen.findByRole('form', { name: 'Новое значение классификатора' })).toBeInTheDocument();
+    await tab(/^Классификаторы/);
+    expect(await screen.findByRole('button', { name: 'Задать значение' })).toBeInTheDocument();
   });
 
   it('shows a fund share: no issuer yet, no coupons, no ratings', async () => {
@@ -313,7 +317,7 @@ describe('InstrumentPage', () => {
     ]);
     expect(await tiles()).toEqual({ Валюта: 'RUB', 'Режим торгов': 'TQOB' });
     await tab(/^Классификаторы/);
-    expect(await screen.findByRole('table', { name: 'Значения сейчас' })).toBeInTheDocument();
+    expect(await screen.findByLabelText('Значения сейчас')).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Рейтинги' })).not.toBeInTheDocument();
     expect(api.ratings).not.toHaveBeenCalled();
   });

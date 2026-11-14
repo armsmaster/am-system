@@ -9,6 +9,8 @@
   --hover: #eef1f5;
   --accent: #2563eb;
   --accent-soft: #e8efff;
+  --accent-alt: #7c3aed;
+  --accent-alt-soft: #f3edff;
   --ok: #16a34a;
   --danger-bg: #fdecec;
   --danger-text: #9b1c1c;
@@ -33,6 +35,8 @@
     --hover: #232831;
     --accent: #7ba4f7;
     --accent-soft: #1d2a44;
+    --accent-alt: #b79cf9;
+    --accent-alt-soft: #2a2140;
     --ok: #4ade80;
     --danger-bg: #3a1d1d;
     --danger-text: #f3b4b4;
@@ -52,6 +56,8 @@
   --hover: #232831;
   --accent: #7ba4f7;
   --accent-soft: #1d2a44;
+  --accent-alt: #b79cf9;
+  --accent-alt-soft: #2a2140;
   --ok: #4ade80;
   --danger-bg: #3a1d1d;
   --danger-text: #f3b4b4;
@@ -202,7 +208,14 @@ a {
   gap: 8px;
   flex: 1;
   min-width: 0;
+  overflow: hidden;
   font-weight: 500;
+  white-space: nowrap;
+}
+
+.where > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .where-sep {
@@ -548,6 +561,7 @@ h3 {
   padding: 6px 12px;
   color: var(--muted);
   text-decoration: none;
+  white-space: nowrap;
   border-bottom: 2px solid transparent;
 }
 
@@ -561,6 +575,15 @@ h3 {
   grid-template-columns: minmax(320px, 1fr) minmax(360px, 1.2fr);
   gap: 24px;
   align-items: start;
+  margin-bottom: 16px;
+}
+
+/* Две панели рядом не помещаются — друг под другом. */
+@media (max-width: 860px) {
+  .split {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
 }
 
 .split > section,
@@ -571,6 +594,11 @@ form {
   border-radius: 8px;
   padding: 14px 16px;
   margin-bottom: 16px;
+}
+
+/* Между панелями отступ задаёт сетка — свой отступ снизу его бы удвоил. */
+.split > section {
+  margin-bottom: 0;
 }
 
 .details form {
@@ -747,8 +775,12 @@ table.data th {
   font-size: 13px;
 }
 
-table.data tr.selected {
-  outline: 1px solid var(--accent);
+table.data tr.selected td {
+  background: var(--accent-soft);
+}
+
+table.data tr.selected td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 /* Числа выравниваются по правому краю и одной ширины: разряды стоят друг под другом. */
@@ -914,6 +946,13 @@ button:disabled {
   min-width: 200px;
 }
 
+/* Пояснение под таблицей: мельче, с отступом от неё. */
+.note {
+  max-width: 72ch;
+  margin-top: 16px;
+  font-size: 13px;
+}
+
 .filter-chips {
   display: flex;
   gap: 6px;
@@ -961,6 +1000,10 @@ button:disabled {
 .tabs button:hover,
 .tabs a:hover {
   color: var(--text);
+}
+
+.tabs button:hover:not(:disabled):not([aria-selected='true']) {
+  border-bottom-color: var(--border);
 }
 
 .tabs {
@@ -1188,6 +1231,12 @@ a.tag:hover {
     padding: 7px 8px;
   }
 
+  /* В верхней панели на телефоне — только раздел, без группы. */
+  .where > .muted,
+  .where-sep {
+    display: none;
+  }
+
   .page-actions button {
     padding: 4px 10px;
   }
@@ -1253,6 +1302,213 @@ form.calculator {
   .calendar-layout {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+/*
+ * Параметры версии. Ритм: широкая карточка — пара половинок — широкая.
+ * Строки широкой карточки делятся поровну на две колонки, поэтому карточки
+ * не стоят полупустыми рядом с длинными. Колонки подписей одной ширины
+ * во всех карточках: значения выстраиваются по одной вертикали.
+ */
+.params h3 {
+  margin-bottom: 2px;
+}
+
+.param-layout {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.param-pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.param-group {
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  /* Подписи и значения меряем по ширине карточки, а не экрана. */
+  container-type: inline-size;
+}
+
+.param-group h4,
+.section-title {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.section-title {
+  margin-top: 16px;
+}
+
+.param-group.wide .kv-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 32px;
+}
+
+dl.kv {
+  margin: 0;
+}
+
+.kv-row {
+  display: grid;
+  grid-template-columns: minmax(110px, min(40%, 170px)) minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+  padding: 7px 0;
+  border-top: 1px solid var(--border);
+}
+
+.kv-row:first-child {
+  border-top: none;
+}
+
+.kv-row dt {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.kv-row dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Узкая карточка: подпись над значением, слова не рвутся. */
+@container (max-width: 300px) {
+  .kv-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1px;
+  }
+}
+
+/* Телефон: колонки широкой карточки — друг под другом, с разделителем между ними. */
+@media (max-width: 640px) {
+  .param-group.wide .kv-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .param-group.wide .kv-columns > dl + dl > .kv-row:first-child {
+    border-top: 1px solid var(--border);
+  }
+}
+
+/* Рейтинги и классификаторы: заголовок с действием, карточки «сейчас», история. */
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0 12px;
+}
+
+.panel-head h3 {
+  flex: 1;
+  margin: 0;
+}
+
+/*
+ * Карточки «что действует сейчас» — одни на рейтинги и классификаторы:
+ * подпись, значение крупно, дата. Различает цвет акцента — полоса слева
+ * и значение: рейтинги синие, классификаторы фиолетовые, «не задано» серое.
+ */
+.fact-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.fact-card {
+  --fact-accent: var(--accent);
+  --fact-soft: var(--accent-soft);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px 14px 12px 17px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: linear-gradient(90deg, var(--fact-soft), var(--surface) 70%);
+}
+
+.fact-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--fact-accent);
+}
+
+.fact-card.classifier {
+  --fact-accent: var(--accent-alt);
+  --fact-soft: var(--accent-alt-soft);
+}
+
+.fact-card.unset {
+  --fact-accent: var(--border);
+  --fact-soft: var(--surface);
+}
+
+.fact-card dd {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+}
+
+.fact-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.fact-value {
+  color: var(--fact-accent);
+  font-size: 19px;
+  font-weight: 650;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.fact-card.unset .fact-value {
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 400;
+}
+
+.fact-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.fact-meta .badge {
+  border-color: var(--fact-accent);
+  color: var(--fact-accent);
+  font-weight: 600;
+}
+
+table.data tr.cancelled td {
+  color: var(--muted);
+}
+
+table.data tr.cancelled .record-main {
+  text-decoration: line-through;
+}
+
+/* «· с 11.11.2026» не рвём: переносится целиком. */
+.record-when {
+  white-space: nowrap;
 }
 
 /* Выпуски эмитента: строки-списки, как таблица бумаг на телефоне. */

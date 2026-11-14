@@ -41,6 +41,14 @@ describe('IssuersPage', () => {
     expect(screen.getByText('Открыт эмитент e-2')).toBeInTheDocument();
   });
 
+  it('opens the issuer by a click anywhere in the row', async () => {
+    renderPage();
+
+    await userEvent.click(await screen.findByRole('cell', { name: '1228' }));
+
+    expect(screen.getByText('Открыт эмитент e-1')).toBeInTheDocument();
+  });
+
   it('searches by name or INN and says when nothing is found', async () => {
     const api = fakeApi();
     api.issuers.mockResolvedValue([]);

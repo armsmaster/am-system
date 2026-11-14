@@ -65,7 +65,7 @@ export function InstrumentPage({ api, id, basePath, canEdit, canRate, today = to
   );
 }
 
-type Tab = 'coupons' | 'amortizations' | 'offers' | 'params' | 'versions' | 'ratings';
+type Tab = 'coupons' | 'amortizations' | 'offers' | 'params' | 'versions' | 'ratings' | 'classes';
 
 function InstrumentCard({
   instrument,
@@ -154,7 +154,9 @@ function InstrumentCard({
               : []),
             { value: 'params', label: 'Параметры' },
             { value: 'versions', label: 'Версии', count: instrument.versions.length },
-            { value: 'ratings', label: isBond ? 'Рейтинги и классификаторы' : 'Классификаторы' },
+            // Рейтинг бывает у облигации, а не у пая.
+            ...(isBond ? [{ value: 'ratings' as const, label: 'Рейтинги' }] : []),
+            { value: 'classes', label: 'Классификаторы' },
           ];
           return (
             <>
@@ -183,12 +185,9 @@ function InstrumentCard({
               {tab === 'versions' && (
                 <VersionsTable versions={instrument.versions} selected={selected} onSelect={setSelected} />
               )}
-              {tab === 'ratings' && (
-                <div className="split">
-                  {/* Рейтинг бывает у облигации, а не у пая. */}
-                  {isBond && <RatingsPanel api={api} subject={subject} canEdit={canRate} />}
-                  <ClassesPanel api={api} subject={subject} target="instrument" canEdit={canRate} />
-                </div>
+              {tab === 'ratings' && <RatingsPanel api={api} subject={subject} canEdit={canRate} />}
+              {tab === 'classes' && (
+                <ClassesPanel api={api} subject={subject} target="instrument" canEdit={canRate} />
               )}
             </>
           );

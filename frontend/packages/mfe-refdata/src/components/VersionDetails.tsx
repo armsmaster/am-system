@@ -16,12 +16,13 @@ import {
   SOURCE_LABELS,
 } from '../format';
 
-/** Параметры одной версии бумаги: что в ней, откуда и кто поправил вручную. */
+/** Параметры одной версии бумаги — карточками по смыслу: выпуск, номинал, торги, купон. */
 export function VersionFacts({ version, kind }: { readonly version: Version; readonly kind: InstrumentKind }) {
   const p = version.params;
   const pinned = new Set(version.pinned);
+  const isBond = kind === 'bond';
   const row = (field: Field, label: string, value: ReactNode) => (
-    <>
+    <div className="kv-row" key={field}>
       <dt>{label}</dt>
       <dd>
         {value}
@@ -34,38 +35,77 @@ export function VersionFacts({ version, kind }: { readonly version: Version; rea
           </>
         )}
       </dd>
-    </>
+    </div>
   );
+  // Карточка группы. Широкая — во всю ширину, её строки делятся поровну на две колонки.
+  const group = (title: string, rows: readonly ReactNode[], wide = false) => {
+    const half = Math.ceil(rows.length / 2);
+    const columns = wide ? [rows.slice(0, half), rows.slice(half)] : [rows];
+    return (
+      <section className={wide ? 'param-group wide' : 'param-group'} aria-label={title}>
+        <h4>{title}</h4>
+        <div className="kv-columns">
+          {columns.map((column, i) => (
+            <dl className="kv" key={i}>
+              {column}
+            </dl>
+          ))}
+        </div>
+      </section>
+    );
+  };
+  const release = [
+    row('name', 'Название', p.name),
+    row('short_name', 'Краткое название', p.short_name),
+    row('issuer', 'Эмитент', p.issuer ?? '—'),
+    ...(isBond
+      ? [
+          row('issue_date', 'Дата выпуска', formatDate(p.issue_date)),
+          row('maturity_date', 'Дата погашения', formatDate(p.maturity_date)),
+        ]
+      : []),
+  ];
+  const trading = [row('board', 'Режим торгов', p.board), row('currency', 'Валюта', p.currency)];
+  const coupon = [
+    row('coupon_kind', 'Тип купона', couponKindLabel(p.coupon_kind)),
+    // Длину считаем по графику купонов: поля такого нет, закрепить нечего.
+    <div className="kv-row" key="coupon_length">
+      <dt>Длина купона</dt>
+      <dd>{couponLength(p.coupons) ?? '—'}</dd>
+    </div>,
+    row('coupon_frequency', 'Купонов в год', p.coupon_frequency ?? '—'),
+    ...(p.coupon_kind === 'floater' || p.floater ? [row('floater', 'Параметры флоатера', floaterText(p))] : []),
+    ...(p.iss_floater ? [row('iss_floater', 'Ставка и маржа по ISS', issFloaterText(p.iss_floater))] : []),
+  ];
 
   return (
-    <section aria-label={`Версия ${version.number}`}>
+    <section aria-label={`Версия ${version.number}`} className="params">
       <h3>
         Версия {version.number}:{' '}
         {version.valid_from ? `действует с ${formatDate(version.valid_from)}` : 'с начала обращения'}
       </h3>
-      <p className="muted">
+      <p className="subline">
         {SOURCE_LABELS[version.source]}, {version.author}
         {version.comment && ` — ${version.comment}`}
       </p>
-      <dl className="facts">
-        {row('name', 'Название', p.name)}
-        {row('short_name', 'Краткое название', p.short_name)}
-        {row('issuer', 'Эмитент', p.issuer ?? '—')}
-        {row('board', 'Режим торгов', p.board)}
-        {row('currency', 'Валюта', p.currency)}
-        {kind === 'bond' && (
+      {/* Ритм «широкая — пара — широкая»: длинные группы делятся на колонки, короткие стоят парой. */}
+      <div className="param-layout">
+        {group('Выпуск', release, true)}
+        {isBond ? (
           <>
-            {row('initial_face_value', 'Начальный номинал', formatDecimal(p.initial_face_value))}
-            {row('issue_date', 'Дата выпуска', formatDate(p.issue_date))}
-            {row('maturity_date', 'Дата погашения', formatDate(p.maturity_date))}
-            {row('coupon_kind', 'Тип купона', couponKindLabel(p.coupon_kind))}
-            {row('coupon_frequency', 'Купонов в год', p.coupon_frequency ?? '—')}
-            {row('nominal_indexation', 'Индексация номинала', INDEXATION_LABELS[p.nominal_indexation])}
-            {(p.coupon_kind === 'floater' || p.floater) && row('floater', 'Параметры флоатера', floaterText(p))}
-            {p.iss_floater && row('iss_floater', 'Ставка и маржа по ISS', issFloaterText(p.iss_floater))}
+            <div className="param-pair">
+              {group('Номинал', [
+                row('initial_face_value', 'Начальный номинал', formatDecimal(p.initial_face_value, currencySign(p.currency))),
+                row('nominal_indexation', 'Индексация номинала', INDEXATION_LABELS[p.nominal_indexation]),
+              ])}
+              {group('Торги', trading)}
+            </div>
+            {group('Купон', coupon, true)}
           </>
+        ) : (
+          group('Торги', trading, true)
         )}
-      </dl>
+      </div>
     </section>
   );
 }
@@ -76,7 +116,7 @@ function floaterText({ floater }: Params): string {
   }
   const sign = floater.margin_bp.startsWith('-') ? '' : '+';
   const capitalized = floater.capitalized ? 'капитализируется' : 'без капитализации';
-  return `${RATE_LABELS[floater.rate]} ${sign}${formatDecimal(floater.margin_bp)} бп, ${capitalized}`;
+  return `${RATE_LABELS[floater.rate]} ${sign}${formatDecimal(floater.margin_bp)}\u00a0бп, ${capitalized}`;
 }
 
 /** Как в ISS: незнакомую ставку показываем кодом ISS; маржи нет — только ставку. */
@@ -88,7 +128,7 @@ function issFloaterText(iss: IssFloater): string {
   // ISS даёт маржу в процентах: 1.30 → 130.00 бп; лишние нули не показываем.
   const margin = iss.margin_bp.includes('.') ? iss.margin_bp.replace(/\.?0+$/, '') : iss.margin_bp;
   const sign = margin.startsWith('-') ? '' : '+';
-  return `${rate} ${sign}${formatDecimal(margin)} бп`;
+  return `${rate} ${sign}${formatDecimal(margin)}\u00a0бп`;
 }
 
 /** Ближайший купон: первая выплата не раньше сегодня. */

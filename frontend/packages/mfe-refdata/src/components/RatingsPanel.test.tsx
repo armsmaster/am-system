@@ -19,20 +19,35 @@ function rows(name: string) {
     .map((row) => within(row).getAllByRole('cell').map((c) => c.textContent));
 }
 
+/** Открывает выдвижную панель с формой новой записи и отдаёт форму. */
+async function openForm() {
+  await userEvent.click(await screen.findByRole('button', { name: 'Добавить запись' }));
+  return within(screen.getByRole('dialog', { name: 'Новая запись о рейтинге' })).findByRole('form', {
+    name: 'Новая запись о рейтинге',
+  });
+}
+
 describe('RatingsPanel', () => {
   it('shows ratings in force and the history, newest first', async () => {
     const api = renderPanel();
 
-    expect(await screen.findByRole('table', { name: 'Действующие рейтинги' })).toBeInTheDocument();
+    const now = await screen.findByRole('list', { name: 'Действующие рейтинги' });
     expect(api.ratings).toHaveBeenCalledWith(ISSUER);
-    expect(rows('Действующие рейтинги')).toEqual([['АКРА', 'AA-(RU)', 'AA-', '11.11.2026']]);
-    expect(rows('История рейтингов')).toEqual([
-      ['11.11.2026', 'АКРА AA-(RU)', 'risk02.11.2026, 12:00', 'Пресс-релиз АКРА'],
-      ['10.11.2026', 'НКР A+.ruОтменена: Не тот эмитент (risk, 10.11.2026, 15:00)', 'risk02.11.2026, 12:00', '—'],
-      ['01.06.2026', 'АКРА AA+(RU)', 'risk02.11.2026, 12:00', '—'],
+    expect(within(now).getAllByRole('listitem').map((i) => i.textContent)).toEqual([
+      'АКРАAA-(RU)общая шкала AA-с 11.11.2026',
     ]);
+    expect(rows('История рейтингов')).toEqual([
+      ['11.11.2026', 'АКРА AA-(RU) · с 11.11.2026risk, 02.11.2026, 12:00 · Пресс-релиз АКРА'],
+      [
+        '10.11.2026',
+        'НКР A+.ru · с 10.11.2026risk, 02.11.2026, 12:00Отменена: Не тот эмитент (risk, 10.11.2026, 15:00)',
+      ],
+      ['01.06.2026', 'АКРА AA+(RU) · с 01.06.2026risk, 02.11.2026, 12:00'],
+    ]);
+    // Отменённая запись остаётся в истории, но приглушена.
+    expect(screen.getByText('НКР A+.ru').closest('tr')).toHaveClass('cancelled');
     // Смотрят все, записывает риск-менеджмент.
-    expect(screen.queryByRole('form')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Добавить запись' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Отменить/ })).not.toBeInTheDocument();
   });
 
@@ -43,6 +58,7 @@ describe('RatingsPanel', () => {
 
     expect(await screen.findByText(/Рейтинг ещё не вводили/)).toBeInTheDocument();
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    expect(screen.queryByText('История записей')).not.toBeInTheDocument();
     unmount();
 
     api.ratings.mockResolvedValueOnce({ now: { status: 'unrated', ratings: [] }, records: RATINGS.records });
@@ -50,9 +66,9 @@ describe('RatingsPanel', () => {
     expect(await screen.findByText(/Рейтинга нет: агентства/)).toBeInTheDocument();
   });
 
-  it('records a new rating of the chosen agency', async () => {
+  it('records a new rating of the chosen agency and closes the panel', async () => {
     const api = renderPanel(fakeApi(), true);
-    const form = await screen.findByRole('form', { name: 'Новая запись о рейтинге' });
+    const form = await openForm();
 
     expect(within(form).getByLabelText('С даты')).toHaveValue('2026-11-17');
     await userEvent.selectOptions(within(form).getByLabelText('Рейтинг'), 'AA-(RU)');
@@ -72,12 +88,12 @@ describe('RatingsPanel', () => {
       comment: 'Пресс-релиз',
     });
     expect(api.ratings).toHaveBeenCalledTimes(2);
-    expect(within(form).getByLabelText('Комментарий')).toHaveValue('');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('records a withdrawal and "no rating" without the fields they do not need', async () => {
     const api = renderPanel(fakeApi(), true);
-    const form = await screen.findByRole('form', { name: 'Новая запись о рейтинге' });
+    let form = await openForm();
 
     await userEvent.selectOptions(within(form).getByLabelText('Что произошло'), 'withdrawn');
     expect(within(form).queryByLabelText('Рейтинг')).not.toBeInTheDocument();
@@ -90,23 +106,35 @@ describe('RatingsPanel', () => {
       comment: null,
     });
 
+    form = await openForm();
     await userEvent.selectOptions(within(form).getByLabelText('Что произошло'), 'unrated');
     expect(within(form).queryByLabelText('Агентство')).not.toBeInTheDocument();
     await userEvent.click(within(form).getByRole('button', { name: 'Записать' }));
     expect(api.addRating).toHaveBeenLastCalledWith(ISSUER, expect.objectContaining({ action: 'unrated', agency: null }));
   });
 
-  it('keeps the comment when the service refuses', async () => {
+  it('keeps the panel and the comment when the service refuses', async () => {
     const api = fakeApi();
     api.addRating.mockRejectedValue(ruleViolation('Дата — не позже сегодняшней.'));
     renderPanel(api, true);
-    const form = await screen.findByRole('form', { name: 'Новая запись о рейтинге' });
+    const form = await openForm();
 
     await userEvent.type(within(form).getByLabelText('Комментарий'), 'Пресс-релиз');
     await userEvent.click(within(form).getByRole('button', { name: 'Записать' }));
 
     expect(await within(form).findByRole('alert')).toHaveTextContent('Дата — не позже сегодняшней.');
     expect(within(form).getByLabelText('Комментарий')).toHaveValue('Пресс-релиз');
+    expect(screen.getByRole('dialog', { name: 'Новая запись о рейтинге' })).toBeInTheDocument();
+  });
+
+  it('closes the panel without a record', async () => {
+    const api = renderPanel(fakeApi(), true);
+    await openForm();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Закрыть' }));
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(api.addRating).not.toHaveBeenCalled();
   });
 
   it('cancels a mistaken record with a reason', async () => {

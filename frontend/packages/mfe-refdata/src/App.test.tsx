@@ -96,11 +96,11 @@ describe('RefdataApp', () => {
     renderInShell([...roles], '/refdata/issuers/e-1');
 
     expect(await screen.findByRole('heading', { name: 'Министерство финансов Российской Федерации' })).toBeInTheDocument();
-    expect(await screen.findByRole('table', { name: 'Действующие рейтинги' })).toBeInTheDocument();
+    expect(await screen.findByRole('list', { name: 'Действующие рейтинги' })).toBeInTheDocument();
     if (canRate) {
-      expect(await screen.findByRole('form', { name: 'Новая запись о рейтинге' })).toBeInTheDocument();
+      expect(await screen.findByRole('button', { name: 'Добавить запись' })).toBeInTheDocument();
     } else {
-      expect(screen.queryByRole('form', { name: 'Новая запись о рейтинге' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Добавить запись' })).not.toBeInTheDocument();
     }
   });
 

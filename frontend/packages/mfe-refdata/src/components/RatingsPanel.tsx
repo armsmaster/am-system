@@ -1,4 +1,4 @@
-import { ErrorNote, LoadedView, useAction, useLoad } from '@am/ui';
+import { Drawer, ErrorNote, LoadedView, useAction, useLoad } from '@am/ui';
 import { useCallback, useState, type FormEvent } from 'react';
 
 import type { IsoDate, RatingAction, RatingRecord, Ratings, RatingScale, RefdataApi, Subject } from '../api';
@@ -6,8 +6,9 @@ import { formatDate, formatTime, RATING_ACTION_LABELS, todayInMoscow } from '../
 import { CancelRecord } from './CancelRecord';
 
 /**
- * Рейтинги бумаги или эмитента: что действует сегодня и вся история записей.
- * Рейтинги ведёт риск-менеджмент — по ним лимиты относят облигацию к рейтинговой группе.
+ * Рейтинги бумаги или эмитента: действующие — карточками агентств, ниже вся история
+ * записей. Рейтинги ведёт риск-менеджмент — по ним лимиты относят облигацию
+ * к рейтинговой группе. Новая запись — в выдвижной панели.
  */
 export function RatingsPanel({
   api,
@@ -23,14 +24,28 @@ export function RatingsPanel({
 }) {
   const load = useCallback(() => api.ratings(subject), [api, subject]);
   const [state, reload] = useLoad(load);
+  const [adding, setAdding] = useState(false);
+  const saved = useCallback(() => {
+    setAdding(false);
+    reload();
+  }, [reload]);
 
   return (
-    <section aria-label="Рейтинги">
-      <h3>Рейтинги</h3>
+    <section aria-label="Рейтинги" className="panel">
+      <div className="panel-head">
+        <h3>Рейтинги</h3>
+        {canEdit && (
+          <button type="button" className="primary" onClick={() => setAdding(true)}>
+            Добавить запись
+          </button>
+        )}
+      </div>
       <LoadedView state={state}>
         {(ratings) => <RatingsView ratings={ratings} api={api} canEdit={canEdit} onDone={reload} />}
       </LoadedView>
-      {canEdit && <RatingForm api={api} subject={subject} today={today} onSaved={reload} />}
+      <Drawer title="Новая запись о рейтинге" open={adding} onClose={() => setAdding(false)}>
+        <RatingForm api={api} subject={subject} today={today} onSaved={saved} />
+      </Drawer>
     </section>
   );
 }
@@ -50,53 +65,57 @@ function RatingsView({
     <>
       <Now ratings={ratings} />
       {ratings.records.length > 0 && (
-        <table className="data" aria-label="История рейтингов">
-          <thead>
-            <tr>
-              <th>С даты</th>
-              <th>Запись</th>
-              <th>Кто</th>
-              <th>Комментарий</th>
-              {canEdit && <th />}
-            </tr>
-          </thead>
-          <tbody>
-            {[...ratings.records].reverse().map((record) => (
-              <tr key={record.id} className={record.cancelled_at ? 'cancelled' : undefined}>
-                <td>{formatDate(record.valid_from)}</td>
-                <td>
-                  {recordText(record)}
-                  {record.cancelled_at && (
-                    <div className="muted">
-                      Отменена: {record.cancel_comment} ({record.cancelled_by}, {formatTime(record.cancelled_at)})
-                    </div>
-                  )}
-                </td>
-                <td>
-                  {record.author}
-                  <div className="muted">{formatTime(record.created_at)}</div>
-                </td>
-                <td>{record.comment ?? '—'}</td>
-                {canEdit && (
+        <>
+          <h4 className="section-title">История записей</h4>
+          <table className="data" aria-label="История рейтингов">
+            <thead>
+              <tr>
+                <th className="hide-sm">С даты</th>
+                <th>Запись</th>
+                {canEdit && <th />}
+              </tr>
+            </thead>
+            <tbody>
+              {[...ratings.records].reverse().map((record) => (
+                <tr key={record.id} className={record.cancelled_at ? 'cancelled' : undefined}>
+                  <td className="hide-sm">{formatDate(record.valid_from)}</td>
                   <td>
-                    {!record.cancelled_at && (
-                      <CancelRecord
-                        what={`запись от ${formatDate(record.valid_from)}: ${recordText(record)}`}
-                        cancel={(comment) => api.cancelRating(record.id, comment)}
-                        onDone={onDone}
-                      />
+                    <span className="record-main">{recordText(record)}</span>
+                    {/* На телефоне колонки дат нет — дата рядом с записью. */}
+                    <span className="show-sm"> </span>
+                    <span className="show-sm muted record-when">· с {formatDate(record.valid_from)}</span>
+                    <div className="subline">
+                      {record.author}, {formatTime(record.created_at)}
+                      {record.comment && ` · ${record.comment}`}
+                    </div>
+                    {record.cancelled_at && (
+                      <div className="subline">
+                        Отменена: {record.cancel_comment} ({record.cancelled_by}, {formatTime(record.cancelled_at)})
+                      </div>
                     )}
                   </td>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                  {canEdit && (
+                    <td>
+                      {!record.cancelled_at && (
+                        <CancelRecord
+                          what={`запись от ${formatDate(record.valid_from)}: ${recordText(record)}`}
+                          cancel={(comment) => api.cancelRating(record.id, comment)}
+                          onDone={onDone}
+                        />
+                      )}
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
       )}
     </>
   );
 }
 
+/** Что действует сегодня: карточка на агентство — рейтинг крупно, ступень общей шкалы бейджем. */
 function Now({ ratings }: { readonly ratings: Ratings }) {
   if (ratings.now.status === 'unknown') {
     return (
@@ -107,29 +126,21 @@ function Now({ ratings }: { readonly ratings: Ratings }) {
     );
   }
   if (ratings.now.status === 'unrated') {
-    return <p>Рейтинга нет: агентства его не присваивали или отозвали.</p>;
+    return <p className="notice">Рейтинга нет: агентства его не присваивали или отозвали.</p>;
   }
   return (
-    <table className="data" aria-label="Действующие рейтинги">
-      <thead>
-        <tr>
-          <th>Агентство</th>
-          <th>Рейтинг</th>
-          <th>Общая шкала</th>
-          <th>С даты</th>
-        </tr>
-      </thead>
-      <tbody>
-        {ratings.now.ratings.map((r) => (
-          <tr key={r.agency}>
-            <td>{r.agency_name}</td>
-            <td className="code">{r.rating}</td>
-            <td>{r.grade}</td>
-            <td>{formatDate(r.since)}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <ul className="fact-cards" aria-label="Действующие рейтинги">
+      {ratings.now.ratings.map((r) => (
+        <li key={r.agency} className="fact-card">
+          <span className="fact-label">{r.agency_name}</span>
+          <span className="fact-value">{r.rating}</span>
+          <span className="fact-meta">
+            общая шкала <span className="badge">{r.grade}</span>
+          </span>
+          <span className="fact-meta">с {formatDate(r.since)}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -209,7 +220,6 @@ function RatingFields({
 
   return (
     <form onSubmit={(e) => void submit(e)} aria-label="Новая запись о рейтинге">
-      <h4>Новая запись</h4>
       <label>
         Что произошло
         <select value={action} onChange={(e) => setAction(e.target.value as RatingAction)}>

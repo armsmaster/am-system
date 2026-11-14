@@ -51,13 +51,39 @@ describe('VersionFacts', () => {
       Эмитент: 'Министерство финансов Российской Федерации',
       'Режим торгов': 'TQOB',
       Валюта: 'RUB',
-      'Начальный номинал': '1 000',
+      'Начальный номинал': '1\u00a0000\u00a0₽',
       'Дата выпуска': '16.06.2021',
       'Дата погашения': '15.05.2041 закреплено',
       'Тип купона': 'фиксированный',
+      'Длина купона': '182D',
       'Купонов в год': '2',
       'Индексация номинала': 'нет',
     });
+    // Параметры разложены по смыслу: выпуск, торги, номинал, купон.
+    expect(screen.getAllByRole('heading', { level: 4 }).map((h) => h.textContent)).toEqual([
+      'Выпуск',
+      'Номинал',
+      'Торги',
+      'Купон',
+    ]);
+    expect(
+      within(screen.getByRole('region', { name: 'Купон' }))
+        .getAllByRole('term')
+        .map((t) => t.textContent),
+    ).toEqual(['Тип купона', 'Длина купона', 'Купонов в год']);
+    // «Выпуск» и «Купон» — во всю ширину, строки поровну в две колонки; номинал и торги — пополам.
+    const release = screen.getByRole('region', { name: 'Выпуск' });
+    expect(release).toHaveClass('wide');
+    expect(screen.getByRole('region', { name: 'Купон' })).toHaveClass('wide');
+    expect(screen.getByRole('region', { name: 'Номинал' })).not.toHaveClass('wide');
+    expect(within(release).getAllByRole('definition')).toHaveLength(5);
+    expect(within(release).getAllByRole('term').map((t) => t.textContent)).toEqual([
+      'Название',
+      'Краткое название',
+      'Эмитент',
+      'Дата выпуска',
+      'Дата погашения',
+    ]);
   });
 
   it.each([
@@ -65,17 +91,17 @@ describe('VersionFacts', () => {
     [
       'a margin over the key rate',
       floaterParams({ floater: { rate: 'key_rate', margin_bp: '130', capitalized: false } }),
-      'ключевая ставка ЦБ +130 бп, без капитализации',
+      'ключевая ставка ЦБ +130\u00a0бп, без капитализации',
     ],
     [
       'a negative capitalized margin over RUONIA',
       floaterParams({ floater: { rate: 'ruonia', margin_bp: '-15.5', capitalized: true } }),
-      'RUONIA -15,5 бп, капитализируется',
+      'RUONIA -15,5\u00a0бп, капитализируется',
     ],
     [
       'terms left from a floater that became fixed',
       params({ floater: { rate: 'rusfar', margin_bp: '50', capitalized: false } }),
-      'RUSFAR +50 бп, без капитализации',
+      'RUSFAR +50\u00a0бп, без капитализации',
     ],
   ])('shows floater terms: %s', (_name, p, expected) => {
     render(<VersionFacts version={version(1, { params: p })} kind="bond" />);
@@ -84,10 +110,10 @@ describe('VersionFacts', () => {
   });
 
   it.each([
-    ['a known rate', { benchmark: 'RREFKEYR', rate: 'key_rate', margin_bp: '130.00' }, 'ключевая ставка ЦБ +130 бп'],
-    ['an unknown ISS code', { benchmark: 'MOSPRIME3M', rate: 'other', margin_bp: '-20.50' }, 'MOSPRIME3M -20,5 бп'],
+    ['a known rate', { benchmark: 'RREFKEYR', rate: 'key_rate', margin_bp: '130.00' }, 'ключевая ставка ЦБ +130\u00a0бп'],
+    ['an unknown ISS code', { benchmark: 'MOSPRIME3M', rate: 'other', margin_bp: '-20.50' }, 'MOSPRIME3M -20,5\u00a0бп'],
     ['no margin', { benchmark: 'RUONIA', rate: 'ruonia', margin_bp: null }, 'RUONIA'],
-    ['a whole margin', { benchmark: 'RUONIA', rate: 'ruonia', margin_bp: '100' }, 'RUONIA +100 бп'],
+    ['a whole margin', { benchmark: 'RUONIA', rate: 'ruonia', margin_bp: '100' }, 'RUONIA +100\u00a0бп'],
   ] as const)('shows the floater terms published by ISS: %s', (_name, iss, expected) => {
     render(<VersionFacts version={version(1, { params: floaterParams({ iss_floater: iss }) })} kind="bond" />);
 
@@ -106,12 +132,17 @@ describe('VersionFacts', () => {
     expect(facts()).toMatchObject({ Эмитент: '—' });
     expect(screen.queryByText('Тип купона')).not.toBeInTheDocument();
     expect(screen.queryByText('Начальный номинал')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('heading', { level: 4 }).map((h) => h.textContent)).toEqual(['Выпуск', 'Торги']);
+    // У пая обе карточки широкие: строки поровну в две колонки.
+    expect(screen.getByRole('region', { name: 'Торги' })).toHaveClass('wide');
   });
 
-  it('shows a dash for an unknown coupon frequency', () => {
-    render(<VersionFacts version={version(1, { params: params({ coupon_frequency: null }) })} kind="bond" />);
+  it('shows a dash for an unknown coupon frequency and length', () => {
+    render(
+      <VersionFacts version={version(1, { params: params({ coupon_frequency: null, coupons: [] }) })} kind="bond" />,
+    );
 
-    expect(facts()['Купонов в год']).toBe('—');
+    expect(facts()).toMatchObject({ 'Длина купона': '—', 'Купонов в год': '—' });
   });
 });
 

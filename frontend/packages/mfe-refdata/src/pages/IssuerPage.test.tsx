@@ -33,10 +33,10 @@ describe('IssuerPage', () => {
     expect(within(screen.getByRole('region', { name: 'Выпуски' })).getAllByRole('listitem').map((i) => i.textContent)).toEqual(
       ['ОФЗ 26238SU26238RMFS4фикс 7,1% · погашение 15.05.2041 · оферта 17.05.2028', 'LQDTLQDTпай фонда'],
     );
-    expect(await screen.findByRole('table', { name: 'Действующие рейтинги' })).toBeInTheDocument();
+    expect(await screen.findByRole('list', { name: 'Действующие рейтинги' })).toBeInTheDocument();
     expect(api.ratings).toHaveBeenCalledWith({ issuer_id: 'e-1' });
     // У эмитента — классификаторы эмитентов.
-    expect(await screen.findByRole('table', { name: 'Значения сейчас' })).toHaveTextContent('Тип эмитента');
+    expect(await screen.findByLabelText('Значения сейчас')).toHaveTextContent('Тип эмитента');
     expect(screen.queryByRole('form')).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('link', { name: 'ОФЗ 26238' }));
@@ -49,8 +49,8 @@ describe('IssuerPage', () => {
     renderPage(api, true);
 
     expect(await screen.findByText(/^ИНН — ·/)).toBeInTheDocument();
-    expect(await screen.findByRole('form', { name: 'Новая запись о рейтинге' })).toBeInTheDocument();
-    expect(await screen.findByRole('form', { name: 'Новое значение классификатора' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Добавить запись' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Задать значение' })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('link', { name: '← Все эмитенты' }));
     expect(screen.getByText('Все эмитенты')).toBeInTheDocument();
