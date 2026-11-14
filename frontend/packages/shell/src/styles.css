@@ -12,6 +12,8 @@
   --accent-alt: #7c3aed;
   --accent-alt-soft: #f3edff;
   --ok: #16a34a;
+  --ok-bg: #e5f6eb;
+  --ok-text: #15803d;
   --danger-bg: #fdecec;
   --danger-text: #9b1c1c;
   --warning-bg: #fff6dc;
@@ -38,6 +40,8 @@
     --accent-alt: #b79cf9;
     --accent-alt-soft: #2a2140;
     --ok: #4ade80;
+    --ok-bg: #16301f;
+    --ok-text: #86efac;
     --danger-bg: #3a1d1d;
     --danger-text: #f3b4b4;
     --warning-bg: #3a3118;
@@ -59,6 +63,8 @@
   --accent-alt: #b79cf9;
   --accent-alt-soft: #2a2140;
   --ok: #4ade80;
+  --ok-bg: #16301f;
+  --ok-text: #86efac;
   --danger-bg: #3a1d1d;
   --danger-text: #f3b4b4;
   --warning-bg: #3a3118;
@@ -657,12 +663,6 @@ fieldset {
 legend {
   color: var(--muted);
   font-size: 13px;
-}
-
-h2.year {
-  display: flex;
-  align-items: center;
-  gap: 12px;
 }
 
 form.inline {
@@ -1271,36 +1271,468 @@ a.tag:hover {
   font-weight: 600;
 }
 
-/* Торговый календарь: таблица исключений шире, справа — калькулятор и узкая форма. */
+/*
+ * Торговый календарь. Год — сеткой месяцев: будни белые, выходные — серой
+ * полосой, праздники красные, рабочие выходные зелёные, сегодня обведено.
+ * Справа калькулятор и список исключений; на узком экране они наверху.
+ */
+.calendar-toolbar {
+  justify-content: space-between;
+  gap: 10px 16px;
+}
+
+.year-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.year-title {
+  min-width: 3.2em;
+  margin: 0;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.link-button {
+  margin-left: 6px;
+  padding: 2px 4px;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.cal-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 0;
+  padding: 0;
+  color: var(--muted);
+  font-size: 12px;
+  list-style: none;
+}
+
+.cal-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cal-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+}
+
+.cal-swatch.holiday {
+  background: var(--danger-bg);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger-text) 30%, transparent);
+}
+
+.cal-swatch.working {
+  background: var(--ok-bg);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ok-text) 30%, transparent);
+}
+
+.cal-swatch.weekend {
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.cal-swatch.today {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
 .calendar-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
   gap: 20px;
   align-items: start;
 }
 
-form.calculator {
+/* Сводка года: по ней сверяются с календарём биржи. */
+.calendar-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 0 14px;
+}
+
+.calendar-stats div {
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.calendar-stats dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.calendar-stats dd {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.calendar-stats .holiday dd {
+  color: var(--danger-text);
+}
+
+.calendar-stats .working dd {
+  color: var(--ok-text);
+}
+
+.calendar-year {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.cal-month {
+  padding: 10px 10px 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.cal-month-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px 6px;
+}
+
+.cal-month-head h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.cal-month-head span {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+table.cal-grid {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 2px;
+  table-layout: fixed;
+}
+
+.cal-grid th {
+  padding: 2px 0 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  text-align: center;
+}
+
+.cal-grid th.weekend {
+  color: color-mix(in srgb, var(--muted) 65%, var(--surface));
+}
+
+.cal-grid td {
+  padding: 0;
+  text-align: center;
+}
+
+.cal-day {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 30px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.cal-day.weekend {
+  background: var(--bg);
+  color: var(--muted);
+}
+
+.cal-day.holiday {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  font-weight: 650;
+}
+
+.cal-day.working {
+  background: var(--ok-bg);
+  color: var(--ok-text);
+  font-weight: 650;
+}
+
+.cal-day.today {
+  box-shadow: inset 0 0 0 2px var(--accent);
+  font-weight: 700;
+}
+
+.cal-day.today.regular {
+  color: var(--accent);
+}
+
+button.cal-day {
+  cursor: pointer;
+  transition: box-shadow 0.1s ease;
+}
+
+button.cal-day:hover {
+  box-shadow: inset 0 0 0 1px var(--muted);
+}
+
+button.cal-day.today:hover {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+button.cal-day:focus-visible {
+  outline-offset: 0;
+}
+
+/* Справа: калькулятор и список исключений. */
+.calendar-side {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.calendar-side form.calculator {
+  margin: 0;
+  padding: 12px 16px 14px;
   border-color: transparent;
+  border-radius: 12px;
   background: var(--accent-soft);
+}
+
+.calculator h3,
+.calendar-card h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
 }
 
 .calc-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 90px;
+  grid-template-columns: minmax(0, 1fr) 96px;
   gap: 8px;
 }
 
+.calc-row label {
+  margin-bottom: 8px;
+}
+
+.calc-row input {
+  background: var(--surface);
+}
+
+.calculator .filter-chips button {
+  background: var(--surface);
+}
+
+/* На голубой карточке выбранный шаг — заливкой, иначе он теряется. */
+.calculator .filter-chips button[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--surface);
+}
+
+.calc-answer {
+  margin-top: 12px;
+}
+
+.calc-caption {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .calc-result {
-  margin: 10px 0 0;
+  margin: 0;
   color: var(--accent);
   font-size: 22px;
   font-weight: 600;
+  line-height: 1.25;
   font-variant-numeric: tabular-nums;
 }
 
+.calc-answer .subline {
+  margin: 4px 0 0;
+}
+
+.calculator .hint {
+  margin: 10px 0 0;
+  color: var(--muted);
+}
+
+.calendar-card {
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.exception-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.exception-row {
+  display: grid;
+  grid-template-columns: 78px 10px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 0;
+  border: none;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+
+.exception-list li:first-child .exception-row {
+  border-top: none;
+}
+
+button.exception-row {
+  cursor: pointer;
+}
+
+button.exception-row:hover {
+  color: var(--accent);
+}
+
+.exception-date {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.exception-mark {
+  width: 10px;
+  height: 10px;
+  margin-top: 5px;
+  border-radius: 3px;
+}
+
+.exception-mark.holiday {
+  background: var(--danger-text);
+}
+
+.exception-mark.working {
+  background: var(--ok);
+}
+
+.exception-text .subline {
+  display: block;
+}
+
+/* Панель дня: что сейчас и два варианта карточками. */
+.day-now {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.drawer-form .option-cards {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 14px;
+  padding: 0;
+  border: none;
+}
+
+.drawer-form .option-card {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.drawer-form .option-card:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.option-card input {
+  margin: 3px 0 0;
+  accent-color: var(--accent);
+}
+
+.option-card .hint {
+  display: block;
+  margin: 2px 0 0;
+  font-size: 12px;
+}
+
+/* Узкий экран: калькулятор и исключения наверху, рядом. */
 @media (max-width: 900px) {
   .calendar-layout {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .calendar-side {
+    order: -1;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  }
+}
+
+/* Телефон: калькулятор — сверху, длинный список исключений — под годом. */
+@media (max-width: 640px) {
+  .calendar-side {
+    display: contents;
+  }
+
+  .calendar-side form.calculator {
+    order: -1;
+  }
+
+  .calendar-side .calendar-card {
+    order: 1;
+  }
+
+  .calendar-stats {
+    gap: 6px;
+  }
+
+  .calendar-stats div {
+    padding: 8px 10px;
+  }
+
+  .calendar-stats dd {
+    font-size: 19px;
+  }
+
+  .cal-day {
+    height: 36px;
+    font-size: 14px;
   }
 }
 

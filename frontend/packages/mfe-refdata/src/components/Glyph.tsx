@@ -11,6 +11,8 @@ const PATHS = {
   check: <path d="M5 12l5 5L20 7" />,
   x: <path d="M18 6 6 18M6 6l12 12" />,
   plus: <path d="M12 5v14M5 12h14" />,
+  chevronLeft: <path d="M15 6l-6 6 6 6" />,
+  chevronRight: <path d="M9 6l6 6-6 6" />,
   file: (
     <>
       <path d="M14 3v4a1 1 0 0 0 1 1h4" />

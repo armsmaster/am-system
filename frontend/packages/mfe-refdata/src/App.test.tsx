@@ -50,8 +50,8 @@ describe('RefdataApp', () => {
 
     await userEvent.click(screen.getByRole('link', { name: 'Торговый календарь' }));
     expect(await screen.findByText(/Исключений за \d{4} год нет/)).toBeInTheDocument();
-    // Трейдинг календарь не ведёт.
-    expect(screen.queryByRole('form', { name: 'Исключение календаря' })).not.toBeInTheDocument();
+    // Трейдинг календарь не ведёт: дни не открываются.
+    expect(screen.queryByRole('button', { name: /^1 января, / })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('link', { name: 'Бумаги' }));
     expect(await screen.findByText(/пока нет бумаг/)).toBeInTheDocument();
@@ -61,7 +61,7 @@ describe('RefdataApp', () => {
     stubService();
     renderInShell(['operations'], '/refdata/calendar');
 
-    expect(await screen.findByRole('form', { name: 'Исключение календаря' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /^1 января, / })).toBeInTheDocument();
   });
 
   it.each([
