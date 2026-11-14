@@ -85,7 +85,7 @@ describe('RefdataApp', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/refdata/issuers', expect.anything());
 
     await userEvent.click(screen.getByRole('link', { name: 'Классификаторы' }));
-    expect(await screen.findByRole('form', { name: 'Новый классификатор' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Новый классификатор' })).toBeInTheDocument();
   });
 
   it.each([

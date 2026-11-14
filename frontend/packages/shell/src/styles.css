@@ -1511,6 +1511,264 @@ table.data tr.cancelled .record-main {
   white-space: nowrap;
 }
 
+/* --- Классификаторы: карточки со значениями-чипами, панели «завести» и «изменить». --- */
+
+.glyph {
+  flex: none;
+}
+
+.toolbar-end {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.classifier-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.classifier-card {
+  padding: 12px 16px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.classifier-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.classifier-head h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.classifier-head .icon-button {
+  margin-left: auto;
+}
+
+.classifier-card > .subline {
+  margin: 2px 0 0;
+}
+
+/* К чему относится: значок и подпись в контурной капсуле. */
+.target-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* Значения — чипами фиолетового акцента, как классификаторы в карточке эмитента. */
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.value-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--accent-alt-soft);
+  color: var(--accent-alt);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.chip-remove {
+  display: inline-flex;
+  margin-right: -4px;
+  padding: 1px;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  color: inherit;
+  opacity: 0.7;
+}
+
+.chip-remove:hover {
+  opacity: 1;
+}
+
+/* Панели: поля в столбик, наборы полей без рамки. */
+.drawer-form .segmented-field,
+.drawer-form .values-field {
+  margin: 0 0 14px;
+  padding: 0;
+  border: none;
+}
+
+.drawer-form legend {
+  margin-bottom: 4px;
+  padding: 0;
+}
+
+.drawer-form fieldset .hint,
+.drawer-form fieldset .field-error {
+  margin: 4px 0 0;
+}
+
+.drawer-form > .hint {
+  margin: 0 0 8px;
+}
+
+.drawer-form .hint,
+.optional {
+  color: var(--muted);
+}
+
+.drawer-form .values-field .chip-list {
+  margin: 0 0 8px;
+}
+
+.field-error {
+  margin: -6px 0 10px;
+  color: var(--danger-text);
+  font-size: 13px;
+}
+
+/* Выбор из двух — сегментами; радиокнопки остаются для клавиатуры и экранного диктора. */
+.segmented-choice {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.drawer-form .segmented-choice label {
+  position: relative;
+  display: block;
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.segmented-choice input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.segmented-choice span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+.segmented-choice label + label span {
+  border-left: 1px solid var(--border);
+}
+
+.segmented-choice input:checked + span {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.segmented-choice input:focus-visible + span {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Поле ввода значения с кнопкой «+» справа. */
+.chip-input {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.drawer-body form.chip-input {
+  margin: 0 0 10px;
+}
+
+.chip-input input {
+  flex: 1;
+  min-width: 0;
+}
+
+.chip-input .notice,
+.value-row .notice {
+  flex-basis: 100%;
+  margin: 4px 0 0;
+}
+
+/* Значения в панели изменения: чип и карандаш; карандаш превращает строку в поле. */
+.value-list {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.value-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 4px 0;
+  border-top: 1px solid var(--border);
+}
+
+.value-row:first-child {
+  border-top: none;
+}
+
+.value-row > .icon-button {
+  margin-left: auto;
+}
+
+.drawer-body form.inline-form {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+}
+
+.inline-form input {
+  flex: 1;
+  min-width: 0;
+}
+
+.icon-button.ok {
+  color: var(--ok);
+}
+
+.drawer-form > .drawer-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
 /* Выпуски эмитента: строки-списки, как таблица бумаг на телефоне. */
 .issues li {
   padding: 8px 0;
