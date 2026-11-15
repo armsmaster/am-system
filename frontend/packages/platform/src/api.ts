@@ -18,6 +18,8 @@ export interface ApiClient {
   put<T>(path: string, body?: unknown): Promise<T>;
   patch<T>(path: string, body: unknown): Promise<T>;
   delete<T>(path: string): Promise<T>;
+  /** Файл, например детализация расчёта в Excel. */
+  blob(path: string): Promise<Blob>;
 }
 
 type Fetch = (input: string, init: RequestInit) => Promise<Response>;
@@ -26,18 +28,19 @@ export function createApiClient(
   session: Pick<Session, 'getAccessToken'>,
   fetchImpl: Fetch = (input, init) => fetch(input, init),
 ): ApiClient {
-  async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  async function send(method: string, path: string, accept: string, body?: unknown): Promise<Response> {
     const token = await session.getAccessToken();
-    const headers: Record<string, string> = {
-      Accept: 'application/json',
-      Authorization: `Bearer ${token}`,
-    };
+    const headers: Record<string, string> = { Accept: accept, Authorization: `Bearer ${token}` };
     const init: RequestInit = { method, headers };
     if (body !== undefined) {
       headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(body);
     }
-    const response = await fetchImpl(path, init);
+    return fetchImpl(path, init);
+  }
+
+  async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    const response = await send(method, path, 'application/json', body);
     const payload: unknown = await readBody(response);
     if (!response.ok) {
       throw new ApiError(response.status, payload);
@@ -52,6 +55,13 @@ export function createApiClient(
     put: (path, body) => request('PUT', path, body),
     patch: (path, body) => request('PATCH', path, body),
     delete: (path) => request('DELETE', path),
+    blob: async (path) => {
+      const response = await send('GET', path, '*/*');
+      if (!response.ok) {
+        throw new ApiError(response.status, await readBody(response));
+      }
+      return response.blob();
+    },
   };
 }
 

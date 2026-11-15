@@ -11,6 +11,7 @@ describe('marketdataApi', () => {
     put: vi.fn((..._args: unknown[]) => Promise.resolve(null)),
     patch: vi.fn((..._args: unknown[]) => Promise.resolve(null)),
     delete: vi.fn((..._args: unknown[]) => Promise.resolve(null)),
+    blob: vi.fn((..._args: unknown[]) => Promise.resolve(null)),
   };
   const api = marketdataApi(client as unknown as ApiClient);
   const rule = {
@@ -54,6 +55,14 @@ describe('marketdataApi', () => {
       () => api.analytics('i-1', { yield: '15.5' }),
       'get',
       ['/api/marketdata/instruments/i-1/analytics?yield=15.5'],
+    ],
+    [
+      'analytics workbook by a continuous spread at a moment',
+      () => api.analyticsWorkbook('i-1', { spread: '80', measure: 'continuous' }, '2026-10-27T23:59:59+03:00'),
+      'blob',
+      [
+        '/api/marketdata/instruments/i-1/analytics.xlsx?spread=80&measure=continuous&at=2026-10-27T23%3A59%3A59%2B03%3A00',
+      ],
     ],
     ['rates', () => api.rates(), 'get', ['/api/marketdata/rates']],
     ['rates on a date', () => api.rates('2026-10-26'), 'get', ['/api/marketdata/rates?date=2026-10-26']],

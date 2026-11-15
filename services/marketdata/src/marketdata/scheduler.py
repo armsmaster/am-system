@@ -36,6 +36,9 @@ logger = logging.getLogger(__name__)
 
 # Загрузку истории, начатую упавшим экземпляром, через полчаса заберёт другой.
 STALE_AFTER = timedelta(minutes=30)
+# Историю ставок догружаем назад, если она начинается позже нужного больше чем на неделю:
+# в выходные и праздники ставок нет, и первая дата бывает на пару дней позже начала.
+RATES_SLACK = timedelta(days=7)
 # Часовые свечи ISS (решение 153): открытые данные — с задержкой 15 минут;
 # последнюю вечернюю свечу забираем в первый час следующего дня.
 CANDLE_MINUTES = 60
@@ -114,67 +117,109 @@ async def load_due_history(
     return loaded
 
 
-async def load_due_rates(
-    resources: Resources, refdata: RefdataClient, iss: IssClient, now: datetime
-) -> int:
-    """Догружает ключевую ставку и RUSFAR из индексов ISS до последнего торгового дня.
+class RatesLoader:
+    """Ключевая ставка и RUSFAR из индексов ISS: до последнего торгового дня и назад —
+    на 5 лет (решение 157).
 
     Захват не нужен: ставка на дату записывается поверх, повторная загрузка безвредна.
+    Историю назад спрашиваем раз за жизнь экземпляра: если у ISS нет таких старых
+    значений, иначе спрашивали бы их на каждом цикле.
     """
-    settings = cast(MarketdataSettings, resources.settings)
-    database = resources.require_database()
-    target = await history_target(refdata, settings, now)
-    loaded = 0
-    for kind, secid in ISS_INDICES.items():
-        async with database.session() as session:
-            last = await Repository(session).last_rate_date(kind, ISS)
-        since = last + timedelta(days=1) if last else settings.history_from
-        if since > target:
-            continue
-        try:
-            values = await iss.index_history(secid, since, target)
-        except IssError as exc:
-            logger.warning("ISS index %s failed, will retry: %s", secid, exc)
-            continue
-        received = moscow_now()
-        async with database.session() as session, session.begin():
-            await Repository(session).upsert_rates(
-                [
-                    {
-                        "kind": kind.value,
-                        "as_of": day,
-                        "source": ISS,
-                        "value": value,
-                        "received_at": received,
-                        "batch_id": None,
-                    }
-                    for day, value in values
+
+    def __init__(self, iss: IssClient) -> None:
+        self._iss = iss
+        self._backfilled: set[RateKind] = set()
+
+    async def load_due(self, resources: Resources, refdata: RefdataClient, now: datetime) -> int:
+        settings = cast(MarketdataSettings, resources.settings)
+        database = resources.require_database()
+        target = await history_target(refdata, settings, now)
+        start = now.date() - timedelta(days=settings.rates_history_days)
+        loaded = 0
+        for kind, secid in ISS_INDICES.items():
+            async with database.session() as session:
+                repo = Repository(session)
+                first, last = (
+                    await repo.first_rate_date(kind, ISS),
+                    await repo.last_rate_date(kind, ISS),
+                )
+            backfill = kind not in self._backfilled
+            periods = _rate_periods(start, first, last, target, backfill=backfill)
+            if not periods:
+                continue
+            try:
+                values = [
+                    v
+                    for since, till in periods
+                    for v in await self._iss.index_history(secid, since, till)
                 ]
-            )
-        loaded += len(values)
-    return loaded
+            except IssError as exc:
+                logger.warning("ISS index %s failed, will retry: %s", secid, exc)
+                continue
+            self._backfilled.add(kind)
+            received = moscow_now()
+            async with database.session() as session, session.begin():
+                await Repository(session).upsert_rates(
+                    [
+                        {
+                            "kind": kind.value,
+                            "as_of": day,
+                            "source": ISS,
+                            "value": value,
+                            "received_at": received,
+                            "batch_id": None,
+                        }
+                        for day, value in values
+                    ]
+                )
+            loaded += len(values)
+        return loaded
 
 
-class RuoniaLoader:
-    """RUONIA из веб-сервиса Банка России до последнего опубликованного дня (решение 148).
+def _rate_periods(
+    start: date, first: date | None, last: date | None, target: date, *, backfill: bool
+) -> list[tuple[date, date]]:
+    """Что догрузить: всё с ``start``, если ставок нет; иначе — назад до ``start``
+    (если ``backfill``) и вперёд до ``target``."""
+    if first is None or last is None:
+        return [(start, target)]
+    periods: list[tuple[date, date]] = []
+    if backfill and first - start > RATES_SLACK:
+        periods.append((start, first - timedelta(days=1)))
+    if last < target:
+        periods.append((last + timedelta(days=1), target))
+    return periods
+
+
+class CbrRateLoader:
+    """Ставка из веб-сервиса Банка России до последнего опубликованного дня: RUONIA
+    (решение 148) и ключевая ставка — её история для базиса (решение 157).
 
     Пока ставки за ожидаемый день нет, ЦБ спрашиваем не чаще ``ruonia_retry_seconds``:
     иначе в торговый день, когда ЦБ не работает, задача спрашивала бы каждые 5 минут.
     Время попытки — в памяти экземпляра: несколько экземпляров спросят по разу, это
-    безвредно — ставка на дату записывается поверх.
+    безвредно — ставка на дату записывается поверх. Историю назад, на 5 лет
+    (решение 157), — тоже раз за жизнь экземпляра.
     """
 
-    def __init__(self, cbr: CbrClient) -> None:
+    def __init__(self, cbr: CbrClient, kind: RateKind) -> None:
         self._cbr = cbr
+        self._kind = kind
         self._tried: datetime | None = None
+        self._backfilled = False
 
     async def load_due(self, resources: Resources, refdata: RefdataClient, now: datetime) -> int:
         settings = cast(MarketdataSettings, resources.settings)
         database = resources.require_database()
         target = await published_through(refdata, now, settings.ruonia_at)
+        start = now.date() - timedelta(days=settings.rates_history_days)
         async with database.session() as session:
-            last = await Repository(session).last_rate_date(RateKind.RUONIA, CBR)
-        if last is not None and last >= target:
+            repo = Repository(session)
+            first = await repo.first_rate_date(self._kind, CBR)
+            last = await repo.last_rate_date(self._kind, CBR)
+        # История за 5 лет — для базиса RUONIA к ключевой ставке (решение 157).
+        backfill = not self._backfilled and first is not None and first - start > RATES_SLACK
+        if last is not None and last >= target and not backfill:
             return 0
         retry = timedelta(seconds=settings.ruonia_retry_seconds)
         if self._tried is not None and now - self._tried < retry:
@@ -182,19 +227,22 @@ class RuoniaLoader:
         self._tried = now
         # Последние дни — заново: ЦБ мог исправить ставку задним числом.
         since = (
-            last - timedelta(days=settings.ruonia_refresh_days) if last else settings.history_from
+            start
+            if last is None or backfill
+            else last - timedelta(days=settings.ruonia_refresh_days)
         )
         try:
-            values = await self._cbr.ruonia(since, target)
+            values = await self._cbr.rates(self._kind, since, target)
         except CbrError as exc:
-            logger.warning("CBR RUONIA failed, will retry: %s", exc)
+            logger.warning("CBR %s failed, will retry: %s", self._kind.value, exc)
             return 0
+        self._backfilled = True
         received = moscow_now()
         async with database.session() as session, session.begin():
             await Repository(session).upsert_rates(
                 [
                     {
-                        "kind": RateKind.RUONIA.value,
+                        "kind": self._kind.value,
                         "as_of": day,
                         "source": CBR,
                         "value": value,
@@ -312,12 +360,15 @@ def history_worker(
 ) -> Worker:
     async def iss_history(resources: Resources) -> None:
         refdata, iss = refdata_client(resources), iss_client(resources)
-        ruonia = RuoniaLoader(cbr_client(resources))
+        cbr, rates = cbr_client(resources), RatesLoader(iss)
+        ruonia = CbrRateLoader(cbr, RateKind.RUONIA)
+        key_rate = CbrRateLoader(cbr, RateKind.KEY_RATE)
         while True:
             try:
                 await load_due_history(resources, refdata, iss, clock())
-                await load_due_rates(resources, refdata, iss, clock())
+                await rates.load_due(resources, refdata, clock())
                 await ruonia.load_due(resources, refdata, clock())
+                await key_rate.load_due(resources, refdata, clock())
             except _ERRORS as exc:
                 logger.warning("ISS history load failed, will retry: %s", exc)
             await asyncio.sleep(settings.history_check_seconds)

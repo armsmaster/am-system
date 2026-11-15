@@ -16,6 +16,8 @@ class MarketdataSettings(ServiceSettings):
     iss_timeout: float = 20.0
     # Историю ISS раньше этой даты не грузим: учёт в системе начинается с неё.
     history_from: date = date(2026, 1, 1)
+    # Ставки — за 5 лет: на них считается базис RUONIA к ключевой ставке (решение 157).
+    rates_history_days: int = 1826
     # Итоги вчерашнего дня ISS публикует ночью — забираем утром, по Москве.
     history_at: time = time(6, 30)
     history_check_seconds: float = 300.0

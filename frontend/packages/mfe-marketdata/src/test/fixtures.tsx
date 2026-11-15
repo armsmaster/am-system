@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { MemoryRouter, Route, Routes, useParams } from 'react-router';
 import { vi } from 'vitest';
 
-import type { Analytics, Batch, MarketdataApi, PriceView, Rate, RuleRecord, Series } from '../api';
+import type { Analytics, Batch, KnownRate, MarketdataApi, PriceView, Rate, RuleRecord, Series } from '../api';
 
 export function session(...roles: Role[]): Session {
   return {
@@ -149,6 +149,13 @@ export function fixedAnalytics(fields: Partial<Analytics> = {}): Analytics {
         dv01: '0.325955',
         convexity: '60.252300',
         problem: null,
+        // Непрерывная капитализация: эталоны libs/am-quant/tests/test_continuous.py.
+        continuous: {
+          yield_percent: '14.786146',
+          modified_duration: '6.824692',
+          dv01: '0.377897',
+          convexity: '74.160286',
+        },
       },
     ],
     spread: null,
@@ -156,12 +163,20 @@ export function fixedAnalytics(fields: Partial<Analytics> = {}): Analytics {
   };
 }
 
-export const RUONIA: Rate = {
+export const RUONIA: KnownRate = {
   rate: 'ruonia',
   label: 'RUONIA',
-  date: '2026-10-28',
+  date: '2026-10-27',
   value: '13.9000',
   source: 'cbr',
+};
+
+export const KEY_RATE: KnownRate = {
+  rate: 'key_rate',
+  label: 'Ключевая ставка',
+  date: '2026-10-26',
+  value: '14.0000',
+  source: 'iss',
 };
 
 /** Газпром нефть 003P-08R: КС + 130 бп раз в месяц, цена 100,07 (эталон design/04). */
@@ -175,9 +190,17 @@ export function floaterAnalytics(): Analytics {
       rate: 'key_rate',
       margin_bp: '130.00',
       capitalized: false,
-      funding: RUONIA,
+      // Оценка RUONIA: КС 14,00% + базис −10 бп за 27.10 = 13,90%.
+      funding: {
+        key_rate: KEY_RATE,
+        ruonia: RUONIA,
+        basis_bp: '-10.00',
+        basis_since: '2026-10-27',
+        basis_through: '2026-10-27',
+        value_percent: '13.900000',
+      },
       funding_percent: '14.909369',
-      index: { rate: 'key_rate', label: 'Ключевая ставка', date: '2026-10-26', value: '14.0000', source: 'iss' },
+      index: KEY_RATE,
       spread_bp: '81.51',
       yield_percent: '15.724468',
       breakdown: {
@@ -189,6 +212,20 @@ export function floaterAnalytics(): Analytics {
       },
       spread_duration: '0.103286',
       spread_dv01: '0.010405',
+      continuous: {
+        funding_percent: '13.897354',
+        spread_bp: '70.68',
+        yield_percent: '14.604190',
+        breakdown: {
+          basis_bp: '10.00',
+          capitalization_bp: '-7.73',
+          margin_bp: '128.45',
+          other_bp: '-1.89',
+          price_bp: '-58.15',
+        },
+        spread_duration: '0.119528',
+        spread_dv01: '0.012041',
+      },
     },
   });
 }
@@ -205,6 +242,7 @@ export function fakeApi() {
     manualPrice: answer(series().manual[0]!),
     batches: answer<Batch[]>([BATCH]),
     analytics: answer(fixedAnalytics()),
+    analyticsWorkbook: answer(new Blob(['PK'])),
     rates: answer<Rate[]>([RUONIA]),
   } satisfies Record<keyof MarketdataApi, unknown>;
 }

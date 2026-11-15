@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -14,13 +14,15 @@ from am_common.app import Resources
 from am_common.clock import MOSCOW
 from am_common.testing import TokenFactory
 from marketdata.db import rate
+from marketdata.rates import RateKind
 from marketdata.refdata import refdata_client
 from marketdata.scheduler import (
-    RuoniaLoader,
+    CbrRateLoader,
+    RatesLoader,
+    _rate_periods,
     cbr_client,
     history_worker,
     iss_client,
-    load_due_rates,
 )
 from marketdata.settings import MarketdataSettings
 
@@ -65,16 +67,52 @@ async def stored(resources: Resources) -> list[tuple[str, str, str]]:
     return sorted((r.kind, r.as_of.isoformat(), str(r.value)) for r in rows)
 
 
-async def test_iss_rates_are_loaded_once(resources: Resources) -> None:
-    refdata, iss = refdata_client(resources), iss_client(resources)
+async def test_iss_rates_are_loaded_once(resources: Resources, world: World) -> None:
+    refdata, loader = refdata_client(resources), RatesLoader(iss_client(resources))
 
-    # Ключевая ставка и RUSFAR с 20.10 по 26.10 — по 5 торговых дней.
-    assert await load_due_rates(resources, refdata, iss, NOW) == 10
-    assert await load_due_rates(resources, refdata, iss, NOW) == 0
+    # Ключевая ставка и RUSFAR с 20.10 по 26.10 — по 5 торговых дней. Первый раз — за 5 лет.
+    assert await loader.load_due(resources, refdata, NOW) == 10
+    assert "from=2021-10-27&till=2026-10-26" in world.iss_urls[0]
+    assert await loader.load_due(resources, refdata, NOW) == 0
 
     rows = await stored(resources)
     assert ("key_rate", "2026-10-26", "14.0000") in rows
     assert ("rusfar", "2026-10-22", "14.2200") in rows
+
+
+async def test_iss_rates_history_is_backfilled_once(resources: Resources, world: World) -> None:
+    refdata = refdata_client(resources)
+    await RatesLoader(iss_client(resources)).load_due(resources, refdata, NOW)
+    world.iss_urls.clear()
+
+    # Новый экземпляр: история начинается 20.10 — спросит ISS назад, до 5 лет. У ISS старых
+    # значений нет, и тот же экземпляр больше не спрашивает.
+    loader = RatesLoader(iss_client(resources))
+    assert await loader.load_due(resources, refdata, NOW) == 0
+    assert len(world.iss_urls) == 2
+    assert all("from=2021-10-27&till=2026-10-19" in url for url in world.iss_urls)
+    assert await loader.load_due(resources, refdata, NOW) == 0
+    assert len(world.iss_urls) == 2
+
+
+def test_rate_periods() -> None:
+    start, target = date(2021, 10, 27), date(2026, 10, 26)
+    first, last = date(2026, 10, 20), date(2026, 10, 23)
+
+    assert _rate_periods(start, None, None, target, backfill=False) == [(start, target)]
+    assert _rate_periods(start, first, last, target, backfill=True) == [
+        (start, date(2026, 10, 19)),
+        (date(2026, 10, 24), target),
+    ]
+    assert _rate_periods(start, first, last, target, backfill=False) == [
+        (date(2026, 10, 24), target)
+    ]
+    # В выходные и праздники ставок нет: начало истории позже на неделю — не догружаем.
+    assert _rate_periods(start, date(2021, 11, 3), target, target, backfill=True) == []
+
+
+def ruonia_loader(resources: Resources) -> CbrRateLoader:
+    return CbrRateLoader(cbr_client(resources), RateKind.RUONIA)
 
 
 async def ruonia(resources: Resources) -> dict[str, tuple[str, str]]:
@@ -86,11 +124,11 @@ async def ruonia(resources: Resources) -> dict[str, tuple[str, str]]:
 
 
 async def test_ruonia_comes_from_the_bank_of_russia(resources: Resources, world: World) -> None:
-    loader, refdata = RuoniaLoader(cbr_client(resources)), refdata_client(resources)
+    loader, refdata = ruonia_loader(resources), refdata_client(resources)
 
     # 09.11 после 15:00 ЦБ уже опубликовал ставку за пятницу 06.11. Первый раз — с начала учёта.
     assert await loader.load_due(resources, refdata, at(9, 15, 30)) == 7
-    assert world.cbr_asked == [("2026-01-01", "2026-11-06")]
+    assert world.cbr_asked == [("2021-11-09", "2026-11-06")]
     found = await ruonia(resources)
     assert len(found) == 7
     assert found["2026-11-06"] == ("13.7200", "cbr-ws")
@@ -100,13 +138,40 @@ async def test_ruonia_comes_from_the_bank_of_russia(resources: Resources, world:
     assert len(world.cbr_asked) == 1
 
 
+async def test_ruonia_history_is_backfilled_once(resources: Resources, world: World) -> None:
+    refdata = refdata_client(resources)
+    await ruonia_loader(resources).load_due(resources, refdata, at(9, 15, 30))
+
+    # Новый экземпляр: ставка за 06.11 есть, но история — с конца октября. Спросит ЦБ за
+    # 5 лет один раз.
+    loader = ruonia_loader(resources)
+    assert await loader.load_due(resources, refdata, at(9, 18)) == 7
+    assert world.cbr_asked[-1] == ("2021-11-09", "2026-11-06")
+    assert await loader.load_due(resources, refdata, at(9, 19)) == 0
+    assert len(world.cbr_asked) == 2
+
+
+async def test_key_rate_history_comes_from_the_bank_of_russia(
+    resources: Resources, world: World
+) -> None:
+    # Индекс KEYRATE в ISS начинается 24.08.2026 — 5 лет ключевой ставки берём у ЦБ.
+    world.key_rates = {"2021-11-09": "7.50", "2026-11-06": "16.50"}
+    loader = CbrRateLoader(cbr_client(resources), RateKind.KEY_RATE)
+    refdata = refdata_client(resources)
+
+    assert await loader.load_due(resources, refdata, at(9, 15, 30)) == 2
+    assert world.cbr_key_asked == [("2021-11-09", "2026-11-06")]
+    assert ("key_rate", "2021-11-09", "7.5000") in await stored(resources)
+    assert world.cbr_asked == []  # RUONIA — отдельной загрузкой
+
+
 async def test_ruonia_waits_for_publication(resources: Resources, world: World) -> None:
-    loader, refdata = RuoniaLoader(cbr_client(resources)), refdata_client(resources)
+    loader, refdata = ruonia_loader(resources), refdata_client(resources)
     del world.ruonia["2026-11-06"]
 
     # До 15:00 ставку за 06.11 не ждём: только за 05.11.
     assert await loader.load_due(resources, refdata, at(9, 10)) == 6
-    assert world.cbr_asked == [("2026-01-01", "2026-11-05")]
+    assert world.cbr_asked == [("2021-11-09", "2026-11-05")]
 
     # После 15:00 ждём 06.11, а ЦБ задерживает. Последние 7 дней — заново: 29.10–05.11.
     assert await loader.load_due(resources, refdata, at(9, 15, 5)) == 5
@@ -128,10 +193,10 @@ async def test_ruonia_waits_for_publication(resources: Resources, world: World) 
 async def test_ruonia_is_retried_when_the_bank_is_down(
     resources: Resources, world: World, caplog: pytest.LogCaptureFixture
 ) -> None:
-    loader, refdata = RuoniaLoader(cbr_client(resources)), refdata_client(resources)
+    loader, refdata = ruonia_loader(resources), refdata_client(resources)
     world.cbr_down = True
     assert await loader.load_due(resources, refdata, at(9, 15, 30)) == 0
-    assert "CBR RUONIA failed, will retry" in caplog.text
+    assert "CBR ruonia failed, will retry" in caplog.text
 
     world.cbr_down = False
     assert await loader.load_due(resources, refdata, at(9, 16)) == 0
@@ -139,32 +204,33 @@ async def test_ruonia_is_retried_when_the_bank_is_down(
 
 
 async def test_failed_iss_rates_are_retried(resources: Resources, world: World) -> None:
-    refdata, iss = refdata_client(resources), iss_client(resources)
+    refdata, loader = refdata_client(resources), RatesLoader(iss_client(resources))
     world.iss_down = True
-    assert await load_due_rates(resources, refdata, iss, NOW) == 0
+    assert await loader.load_due(resources, refdata, NOW) == 0
 
     world.iss_down = False
-    assert await load_due_rates(resources, refdata, iss, NOW) == 10
+    assert await loader.load_due(resources, refdata, NOW) == 10
 
 
 async def test_history_worker_loads_rates_too(
-    settings: MarketdataSettings, resources: Resources
+    settings: MarketdataSettings, resources: Resources, world: World
 ) -> None:
     quick = settings.model_copy(update={"history_check_seconds": 0.05})
     task = asyncio.ensure_future(history_worker(quick, clock=lambda: NOW)(resources))
-    # Ждём все десять: под нагрузкой воркер может успеть записать только часть.
+    # Ждём все десять ставок ISS и вопрос ЦБ о ключевой ставке — он идёт последним.
     for _ in range(100):
-        if len(await stored(resources)) == 10:
+        if len(await stored(resources)) == 10 and world.cbr_key_asked:
             break
         await asyncio.sleep(0.05)
     task.cancel()
     assert len(await stored(resources)) == 10
+    assert world.cbr_key_asked
 
 
 async def test_script_rate_wins_over_iss_on_the_same_day(
     client: TestClient, tokens: TokenFactory, resources: Resources
 ) -> None:
-    await load_due_rates(resources, refdata_client(resources), iss_client(resources), NOW)
+    await RatesLoader(iss_client(resources)).load_due(resources, refdata_client(resources), NOW)
     result = send(
         client,
         tokens,

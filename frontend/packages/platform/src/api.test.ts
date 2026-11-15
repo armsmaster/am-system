@@ -55,6 +55,29 @@ describe('createApiClient', () => {
     ]);
   });
 
+  it('downloads a file as a blob', async () => {
+    const fetchImpl = respond(200, 'PK-xlsx');
+
+    const file = await createApiClient(session, fetchImpl).blob('/api/x.xlsx');
+
+    expect(await file.text()).toBe('PK-xlsx');
+    const [path, init] = fetchImpl.mock.calls[0]!;
+    expect(path).toBe('/api/x.xlsx');
+    expect(init).toEqual({
+      method: 'GET',
+      headers: { Accept: '*/*', Authorization: 'Bearer token-123' },
+    });
+  });
+
+  it('a failed download throws ApiError with the problem', async () => {
+    const client = createApiClient(session, respond(422, '{"detail":{"code":"no_price"}}'));
+
+    const error = await client.blob('/api/x.xlsx').catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).body).toEqual({ detail: { code: 'no_price' } });
+  });
+
   it('throws ApiError with status and parsed body on failure', async () => {
     const client = createApiClient(session, respond(403, '{"detail":"forbidden"}'));
 

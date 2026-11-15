@@ -2,8 +2,10 @@
 
 Условия выпуска — из справочника на дату расчётов S (следующий торговый день
 после дня цены, вопрос 80). Цена — цена для оценки на момент или введённая
-трейдером: чистая цена, доходность или спред («что если»). НКД и номинал —
-на дату расчётов (шаг 3). Ставки — последние известные на день цены.
+трейдером: чистая цена, доходность или спред («что если») — в годовых или
+непрерывных (решение 156). НКД и номинал — на дату расчётов (шаг 3). Текущая
+RUONIA — ключевая ставка плюс сглаженный базис (решение 157); ставки индексов
+флоатеров — последние известные на день цены.
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,9 +39,12 @@ from am_quant.spread import (
     floater_spread,
     linker_flows,
     linker_spread,
+    price_at_continuous_spread,
     price_at_spread,
     reset_duration,
 )
+from am_quant.yields import from_continuous
+from marketdata.funding import HISTORY_DAYS, Funding, estimate
 from marketdata.prices import Choice
 from marketdata.queries import (
     accrued_on_date,
@@ -59,6 +64,13 @@ class BondType(StrEnum):
     FIXED = "fixed"  # фиксированный купон: доходность
     FLOATER = "floater"  # спред над фондированием
     LINKER = "linker"  # номинал на RUONIA: спред над фондированием
+
+
+class Measure(StrEnum):
+    """В каком измерении доходность и спред «что если» (решение 156)."""
+
+    ANNUAL = "annual"  # эффективные годовые
+    CONTINUOUS = "continuous"  # непрерывная капитализация
 
 
 class PriceBasis(StrEnum):
@@ -94,6 +106,7 @@ class Inputs:
     price: Decimal | None = None  # чистая, %
     yield_percent: Decimal | None = None  # % годовых
     spread_bp: Decimal | None = None
+    measure: Measure = Measure.ANNUAL  # в каком измерении доходность и спред
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,8 +119,8 @@ class HorizonYield:
 @dataclass(frozen=True, slots=True)
 class SpreadView:
     result: SpreadResult
-    funding: RatePoint  # RUONIA
-    index: RatePoint | None  # ставка индекса флоатера; у линкера — нет
+    funding: Funding  # оценка текущей RUONIA: КС + базис (решение 157)
+    index: RatePoint | None  # ставка индекса флоатера на КС или RUSFAR; на RUONIA — оценка выше
     terms: Terms
     # Модифицированная дюрация до ближайшего купона — для лимитов (design/09); у линкера — нет.
     reset_duration: Decimal | None = None
@@ -128,6 +141,8 @@ class Analytics:
     dirty: Decimal
     yields: list[HorizonYield]
     spread: SpreadView | None
+    terms: Terms  # условия выпуска — для детализации в Excel
+    inputs: Inputs  # что ввёл трейдер — для детализации в Excel
 
 
 async def analytics(
@@ -161,7 +176,7 @@ async def analytics(
         horizons=ahead,
         face=await _face_value(session, instrument_id, terms, settle),
         accrued=await _accrued(session, refdata, instrument_id, settle),
-        rates=await _rates(repo, terms, day),
+        **await _market_rates(repo, terms, day),
     )
 
     valuation: Choice | None = None
@@ -195,6 +210,8 @@ async def analytics(
         dirty=dirty,
         yields=[_yield(terms.bond, settle, h, dirty) for h in ahead] if fixed else [],
         spread=None if fixed else _spread(setup, dirty),
+        terms=terms,
+        inputs=inputs,
     )
 
 
@@ -207,7 +224,13 @@ class _Setup:
     horizons: list[Horizon]  # первый — главный (вопрос 78)
     face: Decimal
     accrued: Decimal
-    rates: dict[RateKind, RatePoint]
+    funding: Funding | None = None  # у облигации с фиксированным купоном — не нужна
+    index: RatePoint | None = None  # индекс флоатера на КС или RUSFAR
+
+    @property
+    def ruonia(self) -> Decimal:
+        """Оценка текущей RUONIA, доля; есть у флоатера и линкера."""
+        return cast(Funding, self.funding).value / HUNDRED
 
 
 def _from_inputs(setup: _Setup, inputs: Inputs) -> tuple[Decimal, PriceBasis] | None:
@@ -219,6 +242,8 @@ def _from_inputs(setup: _Setup, inputs: Inputs) -> tuple[Decimal, PriceBasis] | 
                 "yield_for_floater", "У флоатера и линкера задайте спред, а не доходность."
             )
         rate = inputs.yield_percent / HUNDRED
+        if inputs.measure is Measure.CONTINUOUS:
+            rate = from_continuous(rate)
         return price_at_yield(setup.terms.bond, setup.settle, horizon, rate), PriceBasis.YIELD
     if inputs.spread_bp is not None:
         if setup.terms.type is BondType.FIXED:
@@ -226,9 +251,11 @@ def _from_inputs(setup: _Setup, inputs: Inputs) -> tuple[Decimal, PriceBasis] | 
                 "spread_for_fixed", "У облигации с фиксированным купоном задайте доходность."
             )
         flows = _spread_flows(setup, horizon)
-        ruonia = setup.rates[RateKind.RUONIA].value / HUNDRED
         spread = inputs.spread_bp / BASIS_POINTS
-        return price_at_spread(flows, setup.settle, ruonia, spread), PriceBasis.SPREAD
+        at_spread = (
+            price_at_continuous_spread if inputs.measure is Measure.CONTINUOUS else price_at_spread
+        )
+        return at_spread(flows, setup.settle, setup.ruonia, spread), PriceBasis.SPREAD
     return None
 
 
@@ -356,37 +383,38 @@ async def _face_value(
     return found.value
 
 
-async def _rates(repo: Repository, terms: Terms, day: date) -> dict[RateKind, RatePoint]:
-    """RUONIA — для фондирования; у флоатера ещё ставка индекса."""
+async def _market_rates(repo: Repository, terms: Terms, day: date) -> dict[str, Any]:
+    """Оценка текущей RUONIA — флоатеру и линкеру (решение 157); флоатеру на ключевую
+    ставку или RUSFAR — ещё ставка индекса."""
     if terms.type is BondType.FIXED:
         return {}
-    kinds = {RateKind.RUONIA} | ({terms.floater.rate} if terms.floater else set())
-    points = await repo.rates(kinds, day)
-    found: dict[RateKind, RatePoint] = {}
-    for kind in sorted(kinds):
-        point = rate_on((p for p in points if p.kind is kind), day)
-        if point is None:
-            hint = (
-                " — сервис загружает её с сайта Банка России на следующий рабочий день после 15:00"
-                if kind is RateKind.RUONIA
-                else ""
-            )
-            raise QuantError("rate_missing", f"Нет ставки {kind.value} на {day:%d.%m.%Y}{hint}.")
-        found[kind] = point
-    return found
+    # Ключевая ставка — с запасом в месяц до начала ряда: она действует до смены.
+    since = day - timedelta(days=HISTORY_DAYS + 31)
+    funding = estimate(
+        await repo.rate_history({RateKind.RUONIA, RateKind.KEY_RATE}, since, day), day
+    )
+    spec = terms.floater
+    if spec is None or spec.rate is RateKind.RUONIA:
+        return {"funding": funding}
+    if spec.rate is RateKind.KEY_RATE:
+        return {"funding": funding, "index": funding.key_rate}
+    point = rate_on(await repo.rates({spec.rate}, day), day)
+    if point is None:
+        raise QuantError("rate_missing", f"Нет ставки {spec.rate.value} на {day:%d.%m.%Y}.")
+    return {"funding": funding, "index": point}
 
 
-def _floater_terms(spec: FloaterSpec, rates: dict[RateKind, RatePoint]) -> FloaterTerms:
-    return FloaterTerms(rates[spec.rate].value / HUNDRED, spec.margin, spec.capitalized)
+def _floater_terms(spec: FloaterSpec, setup: _Setup) -> FloaterTerms:
+    index = setup.ruonia if setup.index is None else setup.index.value / HUNDRED
+    return FloaterTerms(index, spec.margin, spec.capitalized)
 
 
 def _spread_flows(setup: _Setup, horizon: Horizon) -> tuple[CashFlow, ...]:
     """Потоки флоатера или линкера: у линкера нет параметров флоатера."""
     spec = setup.terms.floater
     if spec is None:
-        ruonia = setup.rates[RateKind.RUONIA].value / HUNDRED
-        return linker_flows(setup.terms.bond, setup.settle, horizon, setup.face, ruonia)
-    return floater_flows(setup.terms.bond, setup.settle, horizon, _floater_terms(spec, setup.rates))
+        return linker_flows(setup.terms.bond, setup.settle, horizon, setup.face, setup.ruonia)
+    return floater_flows(setup.terms.bond, setup.settle, horizon, _floater_terms(spec, setup))
 
 
 def _yield(bond: Bond, settle: date, horizon: Horizon, dirty: Decimal) -> HorizonYield:
@@ -398,21 +426,17 @@ def _yield(bond: Bond, settle: date, horizon: Horizon, dirty: Decimal) -> Horizo
 
 def _spread(setup: _Setup, dirty: Decimal) -> SpreadView:
     terms, horizon = setup.terms, setup.horizons[0]
-    funding = setup.rates[RateKind.RUONIA]
-    common = {
-        "ruonia": funding.value / HUNDRED,
-        "dirty": dirty,
-        "accrued": setup.accrued,
-    }
+    funding = cast(Funding, setup.funding)
+    common = {"ruonia": setup.ruonia, "dirty": dirty, "accrued": setup.accrued}
     if terms.floater is None:
         result = linker_spread(terms.bond, setup.settle, horizon, face_value=setup.face, **common)
         return SpreadView(result, funding, None, terms)
-    floater = _floater_terms(terms.floater, setup.rates)
+    floater = _floater_terms(terms.floater, setup)
     result = floater_spread(terms.bond, setup.settle, horizon, terms=floater, **common)
     return SpreadView(
         result,
         funding,
-        setup.rates[terms.floater.rate],
+        setup.index,
         terms,
         reset_duration(terms.bond, setup.settle, floater, terms.frequency),
     )

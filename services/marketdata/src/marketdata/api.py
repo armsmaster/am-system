@@ -18,9 +18,18 @@ from am_common.auth import CurrentPrincipal, Principal, Role, require_any_role
 from am_common.clock import MOSCOW
 from am_common.events import Actor
 from am_quant.bond import Horizon, HorizonKind, QuantError
+from am_quant.spread import Breakdown
 from am_quant.yields import BASIS_POINTS
 from marketdata.accrual import OnDate
-from marketdata.analytics import Analytics, BondType, Inputs, PriceBasis, SpreadView, analytics
+from marketdata.analytics import (
+    Analytics,
+    BondType,
+    Inputs,
+    Measure,
+    PriceBasis,
+    SpreadView,
+    analytics,
+)
 from marketdata.commands import Commands, refresh_instruments
 from marketdata.feed import (
     BarsIn,
@@ -32,6 +41,7 @@ from marketdata.feed import (
     ingest_quotes,
     ingest_rates,
 )
+from marketdata.funding import Funding
 from marketdata.prices import Choice, PriceType, Rule, RuleViolationError
 from marketdata.queries import (
     Overview,
@@ -46,6 +56,7 @@ from marketdata.rates import RATE_LABELS, RateKind, RatePoint, rate_on
 from marketdata.refdata import RefdataClient, RefdataUnavailableError, refdata_client
 from marketdata.repository import NotFoundError, Repository, RuleRecord
 from marketdata.settings import MarketdataSettings
+from marketdata.workbook import workbook
 
 Feed = Annotated[Principal, Depends(require_any_role(Role.PRICE_FEED))]
 Trading = Annotated[Principal, Depends(require_any_role(Role.TRADING))]
@@ -215,6 +226,15 @@ class HorizonOut(BaseModel):
     price: Decimal  # % от непогашенного номинала
 
 
+class ContinuousYieldOut(BaseModel):
+    """Доходность и метрики в непрерывной капитализации (решение 156)."""
+
+    yield_percent: Decimal  # ln(1 + y), % годовых
+    modified_duration: Decimal  # равна дюрации Маколея
+    dv01: Decimal  # ₽ на бумагу за 1 бп непрерывной доходности
+    convexity: Decimal
+
+
 class YieldOut(BaseModel):
     horizon: HorizonOut
     yield_percent: Decimal | None = None
@@ -224,6 +244,7 @@ class YieldOut(BaseModel):
     dv01: Decimal | None = None  # ₽ на бумагу за 1 бп
     convexity: Decimal | None = None
     problem: ProblemOut | None = None  # почему к этому горизонту не посчитать
+    continuous: ContinuousYieldOut | None = None  # то же в непрерывной капитализации
 
 
 class BreakdownOut(BaseModel):
@@ -234,12 +255,34 @@ class BreakdownOut(BaseModel):
     price_bp: Decimal
 
 
+class FundingOut(BaseModel):
+    """Текущая RUONIA для расчёта: ключевая ставка плюс сглаженный базис (решение 157)."""
+
+    key_rate: RateOut  # КС на день цены
+    ruonia: RateOut  # последняя RUONIA, известная до дня цены, — для справки
+    basis_bp: Decimal  # Б — DEMA базиса RUONIA − КС, бп
+    basis_since: date  # с какого дня ряд базиса
+    basis_through: date  # по какой день (последняя RUONIA)
+    value_percent: Decimal  # R̂ = КС + Б, % годовых
+
+
+class ContinuousSpreadOut(BaseModel):
+    """Спред в непрерывной капитализации (решение 156)."""
+
+    funding_percent: Decimal  # 365·ln(1 + R̂/365)
+    spread_bp: Decimal  # ln(1 + Eф + s) − ln(1 + Eф)
+    yield_percent: Decimal
+    breakdown: BreakdownOut
+    spread_duration: Decimal  # равна дюрации Маколея по спреду
+    spread_dv01: Decimal  # ₽ на бумагу за 1 бп непрерывного спреда
+
+
 class SpreadOut(BaseModel):
     horizon: HorizonOut
     rate: RateKind | None  # плавающая ставка флоатера; у линкера — None
     margin_bp: Decimal | None
     capitalized: bool | None
-    funding: RateOut  # RUONIA
+    funding: FundingOut  # оценка текущей RUONIA
     funding_percent: Decimal  # эффективная годовая ставка фондирования
     index: RateOut | None  # ставка индекса флоатера
     spread_bp: Decimal
@@ -249,6 +292,7 @@ class SpreadOut(BaseModel):
     spread_dv01: Decimal  # ₽ на бумагу за 1 бп спреда
     # Флоатер: модифицированная дюрация до ближайшего купона — для лимитов (design/09).
     reset_duration: Decimal | None = None
+    continuous: ContinuousSpreadOut  # то же в непрерывной капитализации
 
 
 class PriceUsedOut(BaseModel):
@@ -481,6 +525,29 @@ async def rates(
     ]
 
 
+def what_if(
+    price: Annotated[Decimal | None, Query(gt=0, le=1000, description="Чистая цена, %")] = None,
+    yield_percent: Annotated[
+        Decimal | None, Query(alias="yield", gt=-99, lt=1000, description="Доходность, %")
+    ] = None,
+    spread_bp: Annotated[
+        Decimal | None, Query(alias="spread", ge=-5000, le=10000, description="Спред, бп")
+    ] = None,
+    measure: Annotated[
+        Measure, Query(description="Доходность и спред — годовые или непрерывные (решение 156)")
+    ] = Measure.ANNUAL,
+) -> Inputs:
+    """«Что если»: одно из ``price``, ``yield`` или ``spread``; ничего — цена для оценки."""
+    given = [v for v in (price, yield_percent, spread_bp) if v is not None]
+    if len(given) > 1:
+        raise QuantError("one_input", "Задайте что-то одно: цену, доходность или спред.")
+    return Inputs(price=price, yield_percent=yield_percent, spread_bp=spread_bp, measure=measure)
+
+
+WhatIf = Annotated[Inputs, Depends(what_if)]
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
 @router.get("/instruments/{instrument_id}/analytics", tags=["analytics"])
 async def bond_analytics(
     instrument_id: UUID,
@@ -489,24 +556,38 @@ async def bond_analytics(
     session: DbSession,
     refdata: Refdata,
     now: Now,
+    inputs: WhatIf,
     at: At = None,
-    price: Annotated[Decimal | None, Query(gt=0, le=1000, description="Чистая цена, %")] = None,
-    yield_percent: Annotated[
-        Decimal | None, Query(alias="yield", gt=-99, lt=1000, description="Доходность, %")
-    ] = None,
-    spread_bp: Annotated[
-        Decimal | None, Query(alias="spread", ge=-5000, le=10000, description="Спред, бп")
-    ] = None,
 ) -> AnalyticsOut:
-    """Доходность и метрики или вменённый спред по цене для оценки (design/04).
-
-    «Что если»: задайте одно из ``price``, ``yield`` или ``spread``.
-    """
-    given = [v for v in (price, yield_percent, spread_bp) if v is not None]
-    if len(given) > 1:
-        raise QuantError("one_input", "Задайте что-то одно: цену, доходность или спред.")
-    inputs = Inputs(price=price, yield_percent=yield_percent, spread_bp=spread_bp)
+    """Доходность и метрики или вменённый спред по цене для оценки (design/04) —
+    в годовых и в непрерывной капитализации (решение 156)."""
     return _analytics_out(await analytics(session, refdata, instrument_id, at or now, inputs))
+
+
+@router.get(
+    "/instruments/{instrument_id}/analytics.xlsx",
+    tags=["analytics"],
+    response_class=Response,
+    responses={200: {"content": {XLSX: {}}, "description": "Детализация расчёта"}},
+)
+async def bond_analytics_workbook(
+    instrument_id: UUID,
+    *,
+    _user: Viewer,
+    session: DbSession,
+    refdata: Refdata,
+    now: Now,
+    inputs: WhatIf,
+    at: At = None,
+) -> Response:
+    """Тот же расчёт в Excel — формулами, с проверками (решение 158)."""
+    found = await analytics(session, refdata, instrument_id, at or now, inputs)
+    name = f"calculation-{found.instrument.secid}-{found.trading_day:%Y-%m-%d}.xlsx"
+    return Response(
+        workbook(found),
+        media_type=XLSX,
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
 
 
 # --- правило и ручная цена ------------------------------------------------------
@@ -683,7 +764,7 @@ def _analytics_out(found: Analytics) -> AnalyticsOut:
                 )
             )
             continue
-        metrics = item.result.risk
+        metrics, smooth = item.result.risk, item.result.continuous_risk
         yields.append(
             YieldOut(
                 horizon=_horizon_out(item.horizon),
@@ -693,6 +774,12 @@ def _analytics_out(found: Analytics) -> AnalyticsOut:
                 modified_duration=_six(metrics.modified),
                 dv01=_six(metrics.dv01),
                 convexity=_six(metrics.convexity),
+                continuous=ContinuousYieldOut(
+                    yield_percent=_six(item.result.continuous_rate * 100),
+                    modified_duration=_six(smooth.modified),
+                    dv01=_six(smooth.dv01),
+                    convexity=_six(smooth.convexity),
+                ),
             )
         )
     return AnalyticsOut(
@@ -714,29 +801,52 @@ def _analytics_out(found: Analytics) -> AnalyticsOut:
     )
 
 
+def _breakdown_out(parts: Breakdown) -> BreakdownOut:
+    return BreakdownOut(
+        basis_bp=_bp(parts.basis),
+        capitalization_bp=_bp(parts.capitalization),
+        margin_bp=_bp(parts.margin),
+        other_bp=_bp(parts.other),
+        price_bp=_bp(parts.price),
+    )
+
+
+def _funding_out(funding: Funding) -> FundingOut:
+    return FundingOut(
+        key_rate=_rate_out(RateKind.KEY_RATE, funding.key_rate),
+        ruonia=_rate_out(RateKind.RUONIA, funding.ruonia),
+        basis_bp=_places(funding.basis * 100, 2),
+        basis_since=funding.since,
+        basis_through=funding.through,
+        value_percent=_six(funding.value),
+    )
+
+
 def _spread_out(view: SpreadView) -> SpreadOut:
     result, spec = view.result, view.terms.floater
-    parts = result.breakdown
+    smooth = result.continuous
     return SpreadOut(
         horizon=_horizon_out(result.horizon),
         rate=None if spec is None else spec.rate,
         margin_bp=None if spec is None else _bp(spec.margin),
         capitalized=None if spec is None else spec.capitalized,
-        funding=_rate_out(view.funding.kind, view.funding),
+        funding=_funding_out(view.funding),
         funding_percent=_six(result.funding * 100),
         index=None if view.index is None else _rate_out(view.index.kind, view.index),
         spread_bp=_bp(result.spread),
         yield_percent=_six((result.funding + result.spread) * 100),
-        breakdown=BreakdownOut(
-            basis_bp=_bp(parts.basis),
-            capitalization_bp=_bp(parts.capitalization),
-            margin_bp=_bp(parts.margin),
-            other_bp=_bp(parts.other),
-            price_bp=_bp(parts.price),
-        ),
+        breakdown=_breakdown_out(result.breakdown),
         spread_duration=_six(result.risk.modified),
         spread_dv01=_six(result.risk.dv01),
         reset_duration=None if view.reset_duration is None else _six(view.reset_duration),
+        continuous=ContinuousSpreadOut(
+            funding_percent=_six(smooth.funding * 100),
+            spread_bp=_bp(smooth.spread),
+            yield_percent=_six((smooth.funding + smooth.spread) * 100),
+            breakdown=_breakdown_out(smooth.breakdown),
+            spread_duration=_six(smooth.risk.modified),
+            spread_dv01=_six(smooth.risk.dv01),
+        ),
     )
 
 

@@ -8,6 +8,7 @@ dependencies = [
     "am-quant",
     "defusedxml>=0.7.1",
     "uvicorn[standard]>=0.54",
+    "xlsxwriter>=3.2",
 ]
 
 [tool.uv.sources]

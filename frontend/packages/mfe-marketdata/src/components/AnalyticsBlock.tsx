@@ -1,7 +1,9 @@
+import { errorMessage } from '@am/platform';
 import { ErrorNote, FilterChips, LoadedView, useLoad, type Choice } from '@am/ui';
 import { useCallback, useState, type FormEvent, type ReactNode } from 'react';
 
-import type { Analytics, HorizonYield, MarketdataApi, Rate, Spread, WhatIf } from '../api';
+import type { Analytics, Breakdown, HorizonYield, KnownRate, MarketdataApi, Measure, Spread, WhatIf } from '../api';
+import { saveFile } from '../download';
 import { formatDate, formatNumber, PRICE_LABELS, sourceLabel } from '../format';
 import { END_OF_DAY, endOfPreviousMonth, monthGenitive, moscowMoment, shiftDay } from '../moment';
 import { REFRESH_MS, useEvery } from '../refresh';
@@ -27,13 +29,36 @@ const TITLES: Readonly<Record<Analytics['type'], string>> = {
   linker: 'Спред над фондированием',
 };
 
-type Input = keyof WhatIf;
+/** Решение 156: по умолчанию — непрерывная капитализация, приближение однодневной ставки. */
+const MEASURES: readonly Choice<Measure>[] = [
+  { value: 'continuous', label: 'Непрерывные' },
+  { value: 'annual', label: 'Годовые' },
+];
+const MEASURE_KEY = 'am.marketdata.measure';
 
-const INPUT_LABELS: Readonly<Record<Input, string>> = {
-  price: 'Чистая цена, %',
-  yield: 'Доходность, %',
-  spread: 'Спред, бп',
+type Input = Exclude<keyof WhatIf, 'measure'>;
+
+const INPUT_LABELS: Readonly<Record<Input, Readonly<Record<Measure, string>>>> = {
+  price: { continuous: 'Чистая цена, %', annual: 'Чистая цена, %' },
+  yield: { continuous: 'Доходность, % непрерывная', annual: 'Доходность, % годовых' },
+  spread: { continuous: 'Спред, бп непрерывный', annual: 'Спред, бп годовой' },
 };
+
+function storedMeasure(): Measure {
+  try {
+    return localStorage.getItem(MEASURE_KEY) === 'annual' ? 'annual' : 'continuous';
+  } catch {
+    return 'continuous';
+  }
+}
+
+function storeMeasure(measure: Measure): void {
+  try {
+    localStorage.setItem(MEASURE_KEY, measure);
+  } catch {
+    // Хранилище недоступно (приватный режим) — выбор просто не запомнится.
+  }
+}
 
 function row(label: string, value: ReactNode) {
   return (
@@ -46,7 +71,8 @@ function row(label: string, value: ReactNode) {
 
 /**
  * Калькулятор доходности (design/04): доходность и метрики или вменённый спред над
- * фондированием с разложением — на выбранную дату; «что если».
+ * фондированием с разложением — на выбранную дату, в непрерывной капитализации или
+ * в годовых; «что если»; детализация расчёта в Excel.
  */
 export function AnalyticsBlock({
   api,
@@ -59,6 +85,9 @@ export function AnalyticsBlock({
 }) {
   const [day, setDay] = useState(today);
   const [whatIf, setWhatIf] = useState<WhatIf>({});
+  const [measure, setMeasure] = useState<Measure>(storedMeasure);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   // Сегодня — по текущей цене; другой день — на его конец, как отметки для оценки.
   const at = day === today ? undefined : moscowMoment(day, END_OF_DAY);
   const load = useCallback(() => api.analytics(id, whatIf, at), [api, id, whatIf, at]);
@@ -66,16 +95,48 @@ export function AnalyticsBlock({
   const active = Object.keys(whatIf).length > 0;
   // По текущей цене для оценки расчёт следует за ценой; прошлое и «что если» не обновляем.
   useEvery(reload, REFRESH_MS, !active && at === undefined);
-  const type = state.status === 'ready' ? state.data.type : null;
+  const found = state.status === 'ready' ? state.data : null;
   const quick: readonly Choice<string>[] = [
     { value: today, label: 'Сегодня' },
     { value: shiftDay(today, -1), label: 'Вчера' },
     { value: endOfPreviousMonth(today), label: `Конец ${monthGenitive(endOfPreviousMonth(today))}` },
   ];
 
+  function chooseMeasure(next: Measure) {
+    setMeasure(next);
+    storeMeasure(next);
+  }
+
+  async function download(of: Analytics) {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const file = await api.analyticsWorkbook(id, whatIf, at);
+      saveFile(file, `Расчёт ${of.instrument.secid} ${formatDate(of.trading_day)}.xlsx`);
+    } catch (error) {
+      setSaveError(errorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <section aria-label="Калькулятор доходности" className="price-panel">
-      <h3>{type === null ? 'Калькулятор доходности' : TITLES[type]}</h3>
+      <div className="panel-head">
+        <h3>{found === null ? 'Калькулятор доходности' : TITLES[found.type]}</h3>
+        {found !== null && (
+          <button
+            type="button"
+            className="analytics-download"
+            title="Детализация расчёта в Excel: формулы, потоки, проверки"
+            disabled={saving}
+            onClick={() => void download(found)}
+          >
+            {saving ? 'Готовлю файл…' : 'Скачать расчёт'}
+          </button>
+        )}
+      </div>
+      <ErrorNote message={saveError} />
       <div className="analytics-when">
         <input
           type="date"
@@ -86,19 +147,23 @@ export function AnalyticsBlock({
         />
         <FilterChips label="Быстрый выбор даты" choices={quick} value={day} onChange={setDay} />
       </div>
+      <div className="analytics-measure">
+        <span className="muted">Доходность и спред</span>
+        <FilterChips label="Капитализация" choices={MEASURES} value={measure} onChange={chooseMeasure} />
+      </div>
       <LoadedView state={state}>
-        {(found) => (
+        {(data) => (
           <>
-            <PriceFacts found={found} past={at !== undefined} />
-            {found.spread === null ? (
-              <Yields yields={found.yields} />
+            <PriceFacts found={data} past={at !== undefined} />
+            {data.spread === null ? (
+              <Yields yields={data.yields} measure={measure} />
             ) : (
-              <SpreadView spread={found.spread} type={found.type} />
+              <SpreadView spread={data.spread} type={data.type} measure={measure} />
             )}
           </>
         )}
       </LoadedView>
-      <WhatIfForm type={type} active={active} onApply={setWhatIf} />
+      <WhatIfForm type={found?.type ?? null} measure={measure} active={active} onApply={setWhatIf} />
     </section>
   );
 }
@@ -126,26 +191,44 @@ function PriceFacts({ found, past }: { readonly found: Analytics; readonly past:
   );
 }
 
-function Yields({ yields }: { readonly yields: readonly HorizonYield[] }) {
+/** Доходность и метрики в выбранном измерении; без непрерывных (старый сервис) — годовые. */
+function yieldFigures(item: HorizonYield, measure: Measure) {
+  const smooth = item.continuous;
+  if (measure === 'annual' || smooth === null) {
+    return {
+      ...item,
+      other: smooth === null ? null : row('Непрерывная', `${formatNumber(smooth.yield_percent, 2)}%`),
+    };
+  }
+  return {
+    ...item,
+    ...smooth,
+    other: row('Эффективная годовая', `${formatNumber(item.yield_percent, 2)}%`),
+  };
+}
+
+function Yields({ yields, measure }: { readonly yields: readonly HorizonYield[]; readonly measure: Measure }) {
   return (
     <>
       {yields.map((item) => {
         const label = `${HORIZON_LABELS[item.horizon.kind]} ${formatDate(item.horizon.date)}`;
+        const shown = yieldFigures(item, measure);
         return (
           <section key={item.horizon.kind} className="horizon" aria-label={label}>
             <div className="horizon-head">
               <span>{label}</span>
-              {item.problem === null && <strong>{formatNumber(item.yield_percent, 2)}%</strong>}
+              {item.problem === null && <strong>{formatNumber(shown.yield_percent, 2)}%</strong>}
             </div>
             {item.problem === null ? (
               <dl className="kv">
+                {shown.other}
                 {row(
                   'Дюрация',
                   `${formatNumber(item.macaulay_years, 2)} г · ${formatNumber(item.macaulay_days, 0)} дн.`,
                 )}
-                {row('Мод. дюрация', formatNumber(item.modified_duration, 2))}
-                {row('DV01', `${formatNumber(item.dv01, 4)} ₽`)}
-                {row('Выпуклость', formatNumber(item.convexity, 2))}
+                {row('Мод. дюрация', formatNumber(shown.modified_duration, 2))}
+                {row('DV01', `${formatNumber(shown.dv01, 4)} ₽`)}
+                {row('Выпуклость', formatNumber(shown.convexity, 2))}
               </dl>
             ) : (
               <p className="muted">{item.problem.message}</p>
@@ -157,15 +240,24 @@ function Yields({ yields }: { readonly yields: readonly HorizonYield[] }) {
   );
 }
 
-function rateLine(rate: Rate): string {
-  if (rate.date === null) {
-    return `${rate.label} — нет`;
-  }
+function rateLine(rate: KnownRate): string {
   return `${rate.label} ${formatNumber(rate.value, 2)}% на ${formatDate(rate.date)}, ${sourceLabel(rate.source)}`;
 }
 
-function SpreadView({ spread, type }: { readonly spread: Spread; readonly type: Analytics['type'] }) {
-  const parts = spread.breakdown;
+function SpreadView({
+  spread,
+  type,
+  measure,
+}: {
+  readonly spread: Spread;
+  readonly type: Analytics['type'];
+  readonly measure: Measure;
+}) {
+  const continuous = measure === 'continuous';
+  const shown = continuous ? spread.continuous : spread;
+  const other = continuous ? spread : spread.continuous;
+  const parts: Breakdown = shown.breakdown;
+  const funding = spread.funding;
   const terms =
     spread.rate === null
       ? 'линкер: номинал растёт с RUONIA'
@@ -177,15 +269,20 @@ function SpreadView({ spread, type }: { readonly spread: Spread; readonly type: 
     <section className="horizon" aria-label={label}>
       <div className="horizon-head">
         <span>{label}</span>
-        <strong>{formatNumber(spread.spread_bp, 1)} бп</strong>
+        <strong>{formatNumber(shown.spread_bp, 1)} бп</strong>
       </div>
       <p className="subline">
-        {terms}. Доходность при плоском прогнозе ставки — {formatNumber(spread.yield_percent, 2)}%.
+        {terms}. Доходность при плоском прогнозе ставки — {formatNumber(shown.yield_percent, 2)}%.
       </p>
       <p className="subline">
-        Фондирование: {rateLine(spread.funding)} → {formatNumber(spread.funding_percent, 2)}% эффективных
-        годовых.
-        {spread.index !== null && spread.index.rate !== 'ruonia' && ` Индекс: ${rateLine(spread.index)}.`}
+        Фондирование: RUONIA {formatNumber(funding.value_percent, 2)}% = КС {formatNumber(funding.key_rate.value, 2)}% +
+        базис {formatNumber(funding.basis_bp, 1)} бп → {formatNumber(shown.funding_percent, 2)}%{' '}
+        {continuous ? 'непрерывных' : 'эффективных годовых'}.
+        {spread.index !== null && ` Индекс: ${rateLine(spread.index)}.`}
+      </p>
+      <p className="subline muted">
+        Базис — DEMA разницы RUONIA и КС с полураспадом полгода, по {formatDate(funding.basis_through)}. Последняя{' '}
+        {rateLine(funding.ruonia)}.
       </p>
       <dl className="kv" aria-label="Разложение спреда">
         {row('Базис ставки', `${formatNumber(parts.basis_bp, 1)} бп`)}
@@ -193,8 +290,9 @@ function SpreadView({ spread, type }: { readonly spread: Spread; readonly type: 
         {row(type === 'linker' ? 'Купон' : 'Маржа', `${formatNumber(parts.margin_bp, 1)} бп`)}
         {row('Прочее', `${formatNumber(parts.other_bp, 1)} бп`)}
         {row('Поправка на цену', `${formatNumber(parts.price_bp, 1)} бп`)}
-        {row('Спред-дюрация', `${formatNumber(spread.spread_duration, 2)} года`)}
-        {row('DV01 по спреду', `${formatNumber(spread.spread_dv01, 4)} ₽`)}
+        {row('Спред-дюрация', `${formatNumber(shown.spread_duration, 2)} года`)}
+        {row('DV01 по спреду', `${formatNumber(shown.spread_dv01, 4)} ₽`)}
+        {row(continuous ? 'Спред в годовых' : 'Спред непрерывный', `${formatNumber(other.spread_bp, 1)} бп`)}
       </dl>
     </section>
   );
@@ -202,11 +300,13 @@ function SpreadView({ spread, type }: { readonly spread: Spread; readonly type: 
 
 function WhatIfForm({
   type,
+  measure,
   active,
   onApply,
 }: {
   /** null — расчёт не удался, тип бумаги неизвестен: предлагаем всё. */
   readonly type: Analytics['type'] | null;
+  readonly measure: Measure;
   readonly active: boolean;
   readonly onApply: (whatIf: WhatIf) => void;
 }) {
@@ -224,7 +324,8 @@ function WhatIfForm({
       return;
     }
     setError(null);
-    onApply({ [input]: number });
+    // Доходность и спред — в том измерении, что выбрано сейчас; цене измерение не нужно.
+    onApply(input === 'price' ? { price: number } : { [input]: number, measure });
   }
 
   return (
@@ -234,7 +335,7 @@ function WhatIfForm({
         <select value={input} onChange={(e) => setInput(e.target.value as Input)}>
           {inputs.map((name) => (
             <option key={name} value={name}>
-              {INPUT_LABELS[name]}
+              {INPUT_LABELS[name][measure]}
             </option>
           ))}
         </select>

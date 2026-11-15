@@ -60,8 +60,11 @@ class World:
         self.requests: list[str] = []
         # Что ЦБ уже опубликовал, и какие периоды у него спрашивали.
         self.ruonia: dict[str, str] = dict(RUONIA)
+        # Ключевая ставка в веб-сервисе ЦБ (метод KeyRate); по умолчанию — пусто.
+        self.key_rates: dict[str, str] = {}
         self.cbr_down = False
-        self.cbr_asked: list[tuple[str, str]] = []
+        self.cbr_asked: list[tuple[str, str]] = []  # Ruonia: с какого по какой день
+        self.cbr_key_asked: list[tuple[str, str]] = []  # KeyRate
         self.instruments: list[dict[str, Any]] = [
             _instrument(
                 OFZ,
@@ -185,7 +188,16 @@ class World:
         file = FIXTURES / name
         if not file.exists():
             return httpx2.Response(404)
-        return httpx2.Response(200, json=json.loads(file.read_text(encoding="utf-8")))
+        payload = json.loads(file.read_text(encoding="utf-8"))
+        if "/markets/index/" in path:
+            # Индексы — только за запрошенные даты: так ISS отвечает на догрузку истории назад.
+            params = request.url.params
+            history = payload["history"]
+            history["data"] = [
+                row for row in history["data"] if params["from"] <= row[0] <= params["till"]
+            ]
+            payload["history.cursor"]["data"] = [[0, len(history["data"]), 100]]
+        return httpx2.Response(200, json=payload)
 
     def _cbr(self, request: httpx2.Request) -> httpx2.Response:
         if self.cbr_down:
@@ -196,24 +208,32 @@ class World:
         till = re.search(r"<ToDate>(.+?)</ToDate>", body)
         assert since is not None
         assert till is not None
+        if "<KeyRate " in body:
+            self.cbr_key_asked.append((since[1], till[1]))
+            found = "".join(
+                f"<KR><DT>{day}T00:00:00+03:00</DT><Rate>{value}</Rate></KR>"
+                for day, value in sorted(self.key_rates.items(), reverse=True)
+                if since[1] <= day <= till[1]
+            )
+            return httpx2.Response(200, content=_soap("KeyRate", found))
         self.cbr_asked.append((since[1], till[1]))
         found = "".join(
             f"<ro><D0>{day}T00:00:00+03:00</D0><ruo>{value}</ruo></ro>"
             for day, value in sorted(self.ruonia.items())
             if since[1] <= day <= till[1]
         )
-        return httpx2.Response(200, content=_soap(found))
+        return httpx2.Response(200, content=_soap("Ruonia", found))
 
 
-def _soap(rows: str) -> bytes:
-    """Ответ метода Ruonia в той же обёртке, что у ЦБ: таблица — без пространства имён."""
+def _soap(method: str, rows: str) -> bytes:
+    """Ответ метода DailyInfo в той же обёртке, что у ЦБ: таблица — без пространства имён."""
     return (
         '<?xml version="1.0" encoding="utf-8"?>'
         '<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"><soap:Body>'
-        '<RuoniaResponse xmlns="http://web.cbr.ru/"><RuoniaResult>'
+        f'<{method}Response xmlns="http://web.cbr.ru/"><{method}Result>'
         '<diffgr:diffgram xmlns:diffgr="urn:schemas-microsoft-com:xml-diffgram-v1">'
-        f'<Ruonia xmlns="">{rows}</Ruonia></diffgr:diffgram>'
-        "</RuoniaResult></RuoniaResponse></soap:Body></soap:Envelope>"
+        f'<{method} xmlns="">{rows}</{method}></diffgr:diffgram>'
+        f"</{method}Result></{method}Response></soap:Body></soap:Envelope>"
     ).encode()
 
 

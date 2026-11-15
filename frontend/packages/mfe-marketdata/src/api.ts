@@ -155,10 +155,24 @@ export type Rate = {
   | { readonly date: null; readonly value: null; readonly source: null }
 );
 
+/** Ставка, которая точно есть: без неё расчёт не состоялся бы. */
+export type KnownRate = Extract<Rate, { readonly date: string }>;
+
 export interface Horizon {
   readonly kind: 'offer' | 'maturity';
   readonly date: string;
   readonly price: Decimal;
+}
+
+/** Доходность и спред: эффективные годовые или непрерывная капитализация (решение 156). */
+export type Measure = 'annual' | 'continuous';
+
+/** Доходность и метрики в непрерывной капитализации: модифицированная дюрация — дюрация Маколея. */
+export interface ContinuousYield {
+  readonly yield_percent: Decimal;
+  readonly modified_duration: Decimal;
+  readonly dv01: Decimal;
+  readonly convexity: Decimal;
 }
 
 /** Доходность и метрики к горизонту; ``problem`` — почему к нему не посчитать. */
@@ -171,6 +185,37 @@ export interface HorizonYield {
   readonly dv01: Decimal | null;
   readonly convexity: Decimal | null;
   readonly problem: { readonly code: string; readonly message: string } | null;
+  /** То же в непрерывной капитализации; null — к горизонту не посчитать. */
+  readonly continuous: ContinuousYield | null;
+}
+
+export interface Breakdown {
+  readonly basis_bp: Decimal;
+  readonly capitalization_bp: Decimal;
+  readonly margin_bp: Decimal;
+  readonly other_bp: Decimal;
+  readonly price_bp: Decimal;
+}
+
+/** Оценка текущей RUONIA: ключевая ставка плюс DEMA базиса RUONIA − КС (решение 157). */
+export interface Funding {
+  readonly key_rate: KnownRate;
+  /** Последняя опубликованная RUONIA — для сравнения. */
+  readonly ruonia: KnownRate;
+  readonly basis_bp: Decimal;
+  readonly basis_since: string;
+  readonly basis_through: string;
+  readonly value_percent: Decimal;
+}
+
+/** Спред в непрерывной капитализации. */
+export interface ContinuousSpread {
+  readonly funding_percent: Decimal;
+  readonly spread_bp: Decimal;
+  readonly yield_percent: Decimal;
+  readonly breakdown: Breakdown;
+  readonly spread_duration: Decimal;
+  readonly spread_dv01: Decimal;
 }
 
 export interface Spread {
@@ -179,20 +224,17 @@ export interface Spread {
   readonly rate: RateKind | null;
   readonly margin_bp: Decimal | null;
   readonly capitalized: boolean | null;
-  readonly funding: Rate;
+  readonly funding: Funding;
+  /** Эффективная годовая ставка фондирования. */
   readonly funding_percent: Decimal;
-  readonly index: Rate | null;
+  /** Индекс флоатера на КС или RUSFAR; на RUONIA и у линкера — null. */
+  readonly index: KnownRate | null;
   readonly spread_bp: Decimal;
   readonly yield_percent: Decimal;
-  readonly breakdown: {
-    readonly basis_bp: Decimal;
-    readonly capitalization_bp: Decimal;
-    readonly margin_bp: Decimal;
-    readonly other_bp: Decimal;
-    readonly price_bp: Decimal;
-  };
+  readonly breakdown: Breakdown;
   readonly spread_duration: Decimal;
   readonly spread_dv01: Decimal;
+  readonly continuous: ContinuousSpread;
 }
 
 export interface Analytics {
@@ -213,11 +255,12 @@ export interface Analytics {
   readonly spread: Spread | null;
 }
 
-/** «Что если»: одно из трёх; ничего — по цене для оценки. */
+/** «Что если»: одно из трёх; ничего — по цене для оценки. Доходность и спред — в ``measure``. */
 export interface WhatIf {
   readonly price?: string;
   readonly yield?: string;
   readonly spread?: string;
+  readonly measure?: Measure;
 }
 
 const BASE = '/api/marketdata';
@@ -238,6 +281,9 @@ export function marketdataApi(client: ApiClient) {
     batches: () => client.get<Batch[]>(`${BASE}/feed/batches`),
     analytics: (id: string, whatIf: WhatIf = {}, at?: string) =>
       client.get<Analytics>(`${BASE}/instruments/${id}/analytics${query({ ...whatIf, at })}`),
+    /** Тот же расчёт в Excel — формулами, с проверками (решение 158). */
+    analyticsWorkbook: (id: string, whatIf: WhatIf = {}, at?: string) =>
+      client.blob(`${BASE}/instruments/${id}/analytics.xlsx${query({ ...whatIf, at })}`),
     rates: (date?: string) => client.get<Rate[]>(`${BASE}/rates${query({ date })}`),
   };
 }

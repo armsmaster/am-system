@@ -6,6 +6,10 @@
     P = Σ CFᵢ / (1 + y)^tᵢ,    tᵢ = (Dᵢ − S) / 365
 
 Считаем в Decimal с 40 значащими цифрами: (1 + y)^−t = exp(−t · ln(1 + y)).
+
+Непрерывное измерение (решение 156): y_c = ln(1 + y) — приближение однодневной
+ставки. Дисконт тот же: (1 + y)^−t = e^(−y_c·t), поэтому цена и дюрация Маколея
+от измерения не зависят.
 """
 
 from __future__ import annotations
@@ -36,6 +40,20 @@ class Risk:
     @property
     def macaulay_days(self) -> Decimal:
         return self.macaulay * DAYS
+
+
+def continuous(rate: Decimal) -> Decimal:
+    """Эффективная годовая ставка → непрерывная: y_c = ln(1 + y)."""
+    with localcontext() as context:
+        context.prec = PRECISION
+        return (1 + rate).ln()
+
+
+def from_continuous(rate: Decimal) -> Decimal:
+    """Непрерывная ставка → эффективная годовая: y = e^(y_c) − 1."""
+    with localcontext() as context:
+        context.prec = PRECISION
+        return rate.exp() - 1
 
 
 def years(settle: date, day: date) -> Decimal:
@@ -89,6 +107,22 @@ def risk(flows: Sequence[CashFlow], settle: date, rate: Decimal) -> Risk:
             modified=modified,
             dv01=modified * value / BASIS_POINTS,
             convexity=squared / (value * (1 + rate) ** 2),
+        )
+
+
+def continuous_risk(flows: Sequence[CashFlow], settle: date, rate: Decimal) -> Risk:
+    """Метрики к непрерывной доходности: модифицированная дюрация = дюрации Маколея,
+    DV01 — на 1 бп непрерывной доходности, выпуклость — Σ t²·PV / P (решение 156)."""
+    with localcontext() as context:
+        context.prec = PRECISION
+        value, weighted, squared = _sums(flows, settle, rate)
+        macaulay = weighted / value
+        return Risk(
+            macaulay=macaulay,
+            modified=macaulay,
+            dv01=macaulay * value / BASIS_POINTS,
+            # Σ t(t+1)·PV − Σ t·PV = Σ t²·PV.
+            convexity=(squared - weighted) / value,
         )
 
 

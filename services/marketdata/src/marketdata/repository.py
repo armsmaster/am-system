@@ -418,6 +418,29 @@ class Repository:
             for row in result
         ]
 
+    async def rate_history(
+        self, kinds: Iterable[RateKind], since: date, till: date
+    ) -> list[RatePoint]:
+        """Все значения ставок с ``since`` по ``till`` — для ряда базиса (решение 157)."""
+        result = await self._session.execute(
+            select(rate).where(
+                rate.c.kind.in_([k.value for k in kinds]),
+                rate.c.as_of >= since,
+                rate.c.as_of <= till,
+            )
+        )
+        return [
+            RatePoint(RateKind(row.kind), row.as_of, row.value, row.source, row.received_at)
+            for row in result
+        ]
+
+    async def first_rate_date(self, kind: RateKind, source: str) -> date | None:
+        result = await self._session.execute(
+            select(func.min(rate.c.as_of)).where(rate.c.kind == kind.value, rate.c.source == source)
+        )
+        first: date | None = result.scalar_one()
+        return first
+
     async def last_rate_date(self, kind: RateKind, source: str) -> date | None:
         result = await self._session.execute(
             select(func.max(rate.c.as_of)).where(rate.c.kind == kind.value, rate.c.source == source)

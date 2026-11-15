@@ -24,7 +24,7 @@ from marketdata.db import accrued_interest
 from marketdata.main import build_app
 from marketdata.refdata import refdata_client
 from marketdata.repository import SETTLEMENT, Repository
-from marketdata.scheduler import iss_client, load_due_rates, poll_if_due
+from marketdata.scheduler import RatesLoader, iss_client, poll_if_due
 from marketdata.settings import MarketdataSettings
 
 if TYPE_CHECKING:
@@ -113,11 +113,17 @@ async def bonds(resources: Resources, world: World, **floater: Any) -> None:
 
 async def rates(resources: Resources) -> None:
     """Ключевая ставка из ISS (последняя — 14,00% за 26.10)."""
-    await load_due_rates(resources, refdata_client(resources), iss_client(resources), AT)
+    loader = RatesLoader(iss_client(resources))
+    await loader.load_due(resources, refdata_client(resources), AT)
 
 
-def ruonia(api: Api, day: str = "2026-10-28") -> None:
+def ruonia(api: Api, day: str = "2026-10-27") -> None:
+    """RUONIA 13,90% за день до дня цены: базис к ключевой ставке −10 бп, оценка R̂ = 13,90%."""
     api.feed("rates", [{"rate": "ruonia", "date": day, "value": 13.9}])
+
+
+def near(a: str | Decimal, b: str | Decimal, tolerance: str) -> bool:
+    return abs(Decimal(a) - Decimal(b)) <= Decimal(tolerance)
 
 
 def metrics(item: dict[str, Any]) -> list[str]:
@@ -152,6 +158,14 @@ async def test_ofz_by_entered_price(api: Api, resources: Resources) -> None:
     assert metrics(maturity) == [
         "15.935227", "6.824692", "2491.01", "5.886642", "0.325955", "60.252300"
     ]  # fmt: skip
+    # Непрерывная капитализация (решение 156): эталоны libs/am-quant/tests/test_continuous.py;
+    # модифицированная дюрация равна дюрации Маколея.
+    assert maturity["continuous"] == {
+        "yield_percent": "14.786146",
+        "modified_duration": "6.824692",
+        "dv01": "0.377897",
+        "convexity": "74.160286",
+    }
 
 
 async def test_ofz_by_valuation_price(api: Api, resources: Resources) -> None:
@@ -175,6 +189,9 @@ async def test_ofz_what_if_yield(api: Api, resources: Resources) -> None:
     assert found["price"]["basis"] == "yield"
     assert abs(Decimal(found["price"]["clean"]) - Decimal("52.493")) < Decimal("0.00001")
     assert found["yields"][0]["yield_percent"] == "15.935227"
+    # Та же доходность в непрерывной капитализации — та же цена.
+    smooth = api.analytics(OFZ, **{"yield": "14.786146", "measure": "continuous"})
+    assert near(smooth["price"]["clean"], "52.493", "0.00001")
 
 
 async def test_offer_bond_to_maturity_is_not_computed(
@@ -212,12 +229,15 @@ async def test_key_rate_floater(api: Api, resources: Resources, world: World) ->
         "130.00",
         False,
     )
-    assert spread["funding"] | {"label": ""} == {
-        "rate": "ruonia",
-        "label": "",
-        "date": "2026-10-28",
-        "value": "13.9000",
-        "source": "cbr",
+    # Оценка RUONIA (решение 157): КС 14,00% + базис −10 бп за 27.10 = 13,90%.
+    funding = spread["funding"]
+    assert (funding["key_rate"]["date"], funding["key_rate"]["value"]) == ("2026-10-26", "14.0000")
+    assert (funding["ruonia"]["date"], funding["ruonia"]["value"]) == ("2026-10-27", "13.9000")
+    assert {k: v for k, v in funding.items() if k not in {"key_rate", "ruonia"}} == {
+        "basis_bp": "-10.00",
+        "basis_since": "2026-10-27",
+        "basis_through": "2026-10-27",
+        "value_percent": "13.900000",
     }
     assert (spread["index"]["date"], spread["index"]["value"], spread["index"]["source"]) == (
         "2026-10-26",
@@ -240,6 +260,21 @@ async def test_key_rate_floater(api: Api, resources: Resources, world: World) ->
     assert spread["yield_percent"] == "15.724468"
     # Для лимитов — дюрация до купона 12.11: 14 дней от расчётов 29.10, прогноз КС 14% + 1,3%.
     assert spread["reset_duration"] == "0.032946"
+    continuous_spread(spread)
+
+
+def continuous_spread(spread: dict[str, Any]) -> None:
+    """Спред в непрерывной капитализации — те же числа, пересчитанные по формулам решения 156."""
+    smooth, y = spread["continuous"], Decimal(spread["yield_percent"]) / 100
+    funding = Decimal(spread["funding"]["value_percent"]) / 100
+    assert near(smooth["funding_percent"], 365 * (1 + funding / 365).ln() * 100, "0.000001")
+    assert near(smooth["yield_percent"], (1 + y).ln() * 100, "0.000001")
+    in_bp = (Decimal(smooth["yield_percent"]) - Decimal(smooth["funding_percent"])) * 100
+    assert near(smooth["spread_bp"], in_bp, "0.01")
+    parts = sum((Decimal(v) for v in smooth["breakdown"].values()), Decimal(0))
+    assert near(parts, smooth["spread_bp"], "0.03")
+    # Спред-дюрация в непрерывных — дюрация Маколея: годовая × (1 + y).
+    assert near(smooth["spread_duration"], Decimal(spread["spread_duration"]) * (1 + y), "0.00001")
 
 
 async def test_floater_what_if_spread(api: Api, resources: Resources, world: World) -> None:
@@ -251,12 +286,36 @@ async def test_floater_what_if_spread(api: Api, resources: Resources, world: Wor
 
     assert found["price"]["basis"] == "spread"
     assert abs(Decimal(found["price"]["clean"]) - Decimal("100.07")) < Decimal("0.0001")
+    # Тот же спред в непрерывной капитализации — та же цена.
+    smooth = api.analytics(GPN, price="100.07")["spread"]["continuous"]["spread_bp"]
+    back = api.analytics(GPN, spread=smooth, measure="continuous")["price"]["clean"]
+    assert near(back, "100.07", "0.0001")
+
+
+async def test_rusfar_floater(api: Api, resources: Resources, world: World) -> None:
+    await bonds(resources, world, floater=GPN_FLOATER | {"rate": "rusfar"})
+    # Ключевая ставка и RUONIA есть, RUSFAR ещё не загружен — спред не посчитать.
+    api.feed("rates", [{"rate": "key_rate", "date": "2026-10-26", "value": 14}])
+    ruonia(api)
+    assert api.problem(GPN, price="100.07") == (422, "rate_missing")
+
+    await rates(resources)
+    spread = api.analytics(GPN, price="100.07")["spread"]
+
+    assert (spread["rate"], spread["index"]["value"], spread["index"]["source"]) == (
+        "rusfar",
+        "13.9600",
+        "iss",
+    )
+    # Фондирование — та же оценка RUONIA, индекс купона — RUSFAR.
+    assert spread["funding"]["value_percent"] == "13.900000"
 
 
 async def test_veb_linker(api_now: Api, resources: Resources) -> None:
     # Данные дня ISS 27.10: на дату расчётов 28.10 номинал 1065,92 ₽, НКД 8,97 ₽.
     await refresh_instruments(resources.require_database(), refdata_client(resources))
     await poll_if_due(resources, refdata_client(resources), iss_client(resources), NOW)
+    await rates(resources)
     ruonia(api_now, "2026-10-26")
 
     found = api_now.analytics(LINKER, price="99.75")
@@ -278,6 +337,7 @@ async def test_veb_linker(api_now: Api, resources: Resources) -> None:
         "0.234609",
     )
     assert spread["reset_duration"] is None
+    continuous_spread(spread)
     # «Что если»: цена по спреду — обратная задача.
     back = api_now.analytics(LINKER, spread="224.8461")["price"]["clean"]
     assert abs(Decimal(back) - Decimal("99.75")) < Decimal("0.0001")

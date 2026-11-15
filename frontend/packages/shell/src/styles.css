@@ -2371,6 +2371,26 @@ td.num .flag {
   margin-bottom: 8px;
 }
 
+/* Заголовок калькулятора и «Скачать расчёт» — в одну строку. */
+.price-panel .panel-head {
+  margin: 0 0 8px;
+}
+
+.analytics-download {
+  flex-shrink: 0;
+  font-size: 13px;
+}
+
+/* Измерение доходности и спреда: непрерывные или годовые (решение 156). */
+.analytics-measure {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
 .price-panel > .subline,
 .price-panel dl.kv {
   margin-bottom: 6px;

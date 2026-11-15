@@ -11,7 +11,7 @@ from datetime import date
 from decimal import Decimal
 
 from am_quant.bond import Bond, CashFlow, Horizon, announced, cash_flows
-from am_quant.yields import Risk, present_value, risk, solve_yield
+from am_quant.yields import Risk, continuous, continuous_risk, present_value, risk, solve_yield
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +20,8 @@ class YieldResult:
     flows: tuple[CashFlow, ...]
     yield_rate: Decimal  # эффективная годовая доходность, доля
     risk: Risk
+    continuous_rate: Decimal  # непрерывная доходность ln(1 + y), доля (решение 156)
+    continuous_risk: Risk  # метрики к непрерывной доходности
 
 
 def fixed_flows(bond: Bond, settle: date, horizon: Horizon) -> tuple[CashFlow, ...]:
@@ -30,7 +32,14 @@ def yield_to(bond: Bond, settle: date, horizon: Horizon, dirty: Decimal) -> Yiel
     """Доходность и метрики по грязной цене на дату расчётов."""
     flows = fixed_flows(bond, settle, horizon)
     rate = solve_yield(flows, settle, dirty)
-    return YieldResult(horizon, flows, rate, risk(flows, settle, rate))
+    return YieldResult(
+        horizon,
+        flows,
+        rate,
+        risk(flows, settle, rate),
+        continuous(rate),
+        continuous_risk(flows, settle, rate),
+    )
 
 
 def price_at_yield(bond: Bond, settle: date, horizon: Horizon, rate: Decimal) -> Decimal:

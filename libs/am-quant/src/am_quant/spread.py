@@ -8,6 +8,9 @@
 Прогноз ставки — плоский: ставка индекса на все будущие периоды равна
 текущей. Разложение спреда — цепочкой, все части в эффективных годовых
 (раздел «Разложение спреда» в design/04).
+
+Непрерывное измерение (решение 156): фондирование 365·ln(1 + R/365), спред
+ln(1 + Eф + s) − ln(1 + Eф), разложение — той же цепочкой в непрерывных.
 """
 
 from __future__ import annotations
@@ -18,7 +21,18 @@ from datetime import date
 from decimal import Decimal, localcontext
 
 from am_quant.bond import ZERO, Bond, CashFlow, Coupon, Horizon, QuantError, cash_flows
-from am_quant.yields import DAYS, PRECISION, Risk, power, present_value, risk, solve_yield
+from am_quant.yields import (
+    DAYS,
+    PRECISION,
+    Risk,
+    continuous,
+    continuous_risk,
+    from_continuous,
+    power,
+    present_value,
+    risk,
+    solve_yield,
+)
 
 ONE = Decimal(1)
 
@@ -48,6 +62,16 @@ class Breakdown:
 
 
 @dataclass(frozen=True, slots=True)
+class Measured:
+    """Спред в одном измерении: фондирование, спред, разложение и метрики по спреду."""
+
+    funding: Decimal
+    spread: Decimal
+    breakdown: Breakdown
+    risk: Risk
+
+
+@dataclass(frozen=True, slots=True)
 class SpreadResult:
     horizon: Horizon
     flows: tuple[CashFlow, ...]
@@ -55,6 +79,7 @@ class SpreadResult:
     spread: Decimal
     breakdown: Breakdown
     risk: Risk  # по доходности Eф + s: спред-дюрация и DV01 по спреду
+    continuous: Measured  # то же в непрерывном измерении (решение 156)
 
 
 def funding_rate(ruonia: Decimal) -> Decimal:
@@ -62,6 +87,13 @@ def funding_rate(ruonia: Decimal) -> Decimal:
     with localcontext() as context:
         context.prec = PRECISION
         return (ONE + ruonia / DAYS) ** 365 - ONE
+
+
+def funding_continuous(ruonia: Decimal) -> Decimal:
+    """Eф_c = 365 · ln(1 + R/365) — фондирование в непрерывном измерении, ≈ R."""
+    with localcontext() as context:
+        context.prec = PRECISION
+        return DAYS * (ONE + ruonia / DAYS).ln()
 
 
 def floater_coupon(outstanding: Decimal, days: int, terms: FloaterTerms) -> Decimal:
@@ -165,18 +197,32 @@ def floater_spread(
     with localcontext() as context:
         context.prec = PRECISION
         index = funding_rate(terms.index)
+        index_c = funding_continuous(terms.index)
         basis = index - funding_rate(ruonia)
+        basis_c = index_c - funding_continuous(ruonia)
         if terms.capitalized:
             compounded = power(ONE + terms.index / DAYS, tau * DAYS)
-            capitalization = ZERO
+            capitalization = capitalization_c = ZERO
             margin = power(compounded + terms.margin * tau, ONE / tau) - ONE - index
+            margin_c = (compounded + terms.margin * tau).ln() / tau - index_c
         else:
             simple = power(ONE + terms.index * tau, ONE / tau) - ONE
+            simple_c = (ONE + terms.index * tau).ln() / tau
             capitalization = simple - index
+            capitalization_c = simple_c - index_c
             margin = power(ONE + (terms.index + terms.margin) * tau, ONE / tau) - ONE - simple
+            margin_c = (ONE + (terms.index + terms.margin) * tau).ln() / tau - simple_c
     par = bond.outstanding(settle) + accrued
-    parts = (basis, capitalization, margin)
-    return _spread(flows, settle, horizon, ruonia=ruonia, dirty=dirty, par=par, parts=parts)
+    return _spread(
+        flows,
+        settle,
+        horizon,
+        ruonia=ruonia,
+        dirty=dirty,
+        par=par,
+        parts=(basis, capitalization, margin),
+        parts_c=(basis_c, capitalization_c, margin_c),
+    )
 
 
 def linker_spread(
@@ -198,9 +244,18 @@ def linker_spread(
         context.prec = PRECISION
         rate = sum(rates, ZERO) / len(rates)
         coupon = (ONE + funding_rate(ruonia)) * (power(ONE + rate * tau, ONE / tau) - ONE)
+        coupon_c = (ONE + rate * tau).ln() / tau
     par = face_value + accrued
-    parts = (ZERO, ZERO, coupon)
-    return _spread(flows, settle, horizon, ruonia=ruonia, dirty=dirty, par=par, parts=parts)
+    return _spread(
+        flows,
+        settle,
+        horizon,
+        ruonia=ruonia,
+        dirty=dirty,
+        par=par,
+        parts=(ZERO, ZERO, coupon),
+        parts_c=(ZERO, ZERO, coupon_c),
+    )
 
 
 def price_at_spread(
@@ -212,6 +267,16 @@ def price_at_spread(
         return present_value(flows, settle, funding_rate(ruonia) + spread)
 
 
+def price_at_continuous_spread(
+    flows: Sequence[CashFlow], settle: date, ruonia: Decimal, spread: Decimal
+) -> Decimal:
+    """Грязная цена при непрерывном спреде: доходность e^(Eф_c + s_c) − 1."""
+    with localcontext() as context:
+        context.prec = PRECISION
+        rate = from_continuous(funding_continuous(ruonia) + spread)
+        return present_value(flows, settle, rate)
+
+
 def _spread(
     flows: tuple[CashFlow, ...],
     settle: date,
@@ -221,22 +286,45 @@ def _spread(
     dirty: Decimal,
     par: Decimal,
     parts: tuple[Decimal, Decimal, Decimal],
+    parts_c: tuple[Decimal, Decimal, Decimal],
 ) -> SpreadResult:
     with localcontext() as context:
         context.prec = PRECISION
         funding = funding_rate(ruonia)
+        funding_c = funding_continuous(ruonia)
         market = solve_yield(flows, settle, dirty)
+        par_yield = solve_yield(flows, settle, par)
         spread = market - funding
-        at_par = solve_yield(flows, settle, par) - funding
-        basis, capitalization, margin = parts
-        breakdown = Breakdown(
-            basis=basis,
-            capitalization=capitalization,
-            margin=margin,
-            other=at_par - basis - capitalization - margin,
-            price=spread - at_par,
+        spread_c = continuous(market) - funding_c
+        continuous_view = Measured(
+            funding=funding_c,
+            spread=spread_c,
+            breakdown=_breakdown(parts_c, spread_c, continuous(par_yield) - funding_c),
+            risk=continuous_risk(flows, settle, market),
         )
-        return SpreadResult(horizon, flows, funding, spread, breakdown, risk(flows, settle, market))
+        return SpreadResult(
+            horizon,
+            flows,
+            funding,
+            spread,
+            _breakdown(parts, spread, par_yield - funding),
+            risk(flows, settle, market),
+            continuous_view,
+        )
+
+
+def _breakdown(
+    parts: tuple[Decimal, Decimal, Decimal], spread: Decimal, at_par: Decimal
+) -> Breakdown:
+    """Цепочка частей: «прочее» и поправка на цену замыкают её на спред точно."""
+    basis, capitalization, margin = parts
+    return Breakdown(
+        basis=basis,
+        capitalization=capitalization,
+        margin=margin,
+        other=at_par - basis - capitalization - margin,
+        price=spread - at_par,
+    )
 
 
 def _periods(bond: Bond, settle: date, horizon: Horizon) -> list[Coupon]:
