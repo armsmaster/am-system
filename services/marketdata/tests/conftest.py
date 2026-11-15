@@ -55,6 +55,7 @@ class World:
         self.tokens = tokens
         self.iss_down = False
         self.iss_empty: set[str] = set()
+        self.iss_urls: list[str] = []  # запросы к ISS целиком — с параметрами
         self.refdata_down = False
         self.requests: list[str] = []
         # Что ЦБ уже опубликовал, и какие периоды у него спрашивали.
@@ -69,6 +70,7 @@ class World:
                 kind="bond",
                 short_name="ОФЗ 26238",
                 board="TQOB",
+                maturity_date="2041-05-15",
             ),
             _instrument(
                 LINKER,
@@ -77,6 +79,7 @@ class World:
                 kind="bond",
                 short_name="ВЭБ2Р-58",
                 board="TQCB",
+                maturity_date="2029-06-16",
             ),
             _instrument(
                 FUND,
@@ -158,6 +161,7 @@ class World:
     def _iss(self, request: httpx2.Request) -> httpx2.Response:
         if self.iss_down:
             raise httpx2.ConnectError("ISS is down", request=request)
+        self.iss_urls.append(str(request.url))
         path = request.url.path
         if match := re.fullmatch(
             r"/iss/history/engines/stock/markets/\w+/securities/(\w+)\.json", path
@@ -171,6 +175,11 @@ class World:
                 return httpx2.Response(200, json=empty)
         elif match := re.fullmatch(r"/iss/engines/stock/markets/(\w+)/securities\.json", path):
             name = f"intraday_{match[1]}.json"
+        elif match := re.fullmatch(
+            r"/iss/engines/stock/markets/\w+/boards/\w+/securities/(\w+)/candles\.json", path
+        ):
+            # Свечей пая в записанных ответах нет — ISS ответит ошибкой.
+            name = f"candles_{match[1]}_{request.url.params['start']}.json"
         else:
             return httpx2.Response(404)
         file = FIXTURES / name
@@ -209,7 +218,14 @@ def _soap(rows: str) -> bytes:
 
 
 def _instrument(
-    instrument_id: UUID, *, secid: str, isin: str, kind: str, short_name: str, board: str
+    instrument_id: UUID,
+    *,
+    secid: str,
+    isin: str,
+    kind: str,
+    short_name: str,
+    board: str,
+    maturity_date: str | None = None,
 ) -> dict[str, Any]:
     return {
         "id": str(instrument_id),
@@ -218,6 +234,7 @@ def _instrument(
         "kind": kind,
         "short_name": short_name,
         "board": board,
+        "maturity_date": maturity_date,
     }
 
 

@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -49,6 +50,20 @@ class DemaPoint:
     value: Decimal
     ema: Decimal  # E1
     ema_of_ema: Decimal  # E2
+
+
+# DEMA по умолчанию (решение 154): часовые свечи ISS, период полураспада 4 часа.
+DEFAULT_TIMEFRAME = 60
+DEFAULT_HALF_LIFE = Decimal(240)
+# Окно расчёта (решение 155): бары общей длиной в 30 периодов полураспада —
+# вклад более старых меньше 2^-30.
+WINDOW_HALF_LIVES = 30
+
+
+def window(timeframe: int, half_lives: Sequence[HalfLife]) -> int:
+    """Сколько последних баров нужно DEMA: 30 самых длинных периодов полураспада."""
+    longest = max(h.minutes for h in half_lives)
+    return math.ceil(WINDOW_HALF_LIVES * longest / timeframe)
 
 
 def alpha(timeframe: int, half_life: Decimal) -> Decimal:

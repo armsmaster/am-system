@@ -1,16 +1,17 @@
 """Фоновые задачи: список бумаг из справочника, история и ставки ISS, данные дня ISS,
-RUONIA из веб-сервиса Банка России.
+часовые свечи ISS, RUONIA из веб-сервиса Банка России.
 
 Каждая задача раз в несколько минут проверяет, есть ли работа. При нескольких
 экземплярах сервиса работу забирает один: загрузку истории — по бумаге
-(захват в ``instrument``), опрос данных дня — по 5-минутному слоту (``iss_poll``).
+(захват в ``instrument``), опрос данных дня — по 5-минутному слоту (``iss_poll``),
+свечи — по 15-минутному (``candle_poll``).
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import date, datetime, time, timedelta
 from typing import cast
 from uuid import UUID
@@ -35,6 +36,12 @@ logger = logging.getLogger(__name__)
 
 # Загрузку истории, начатую упавшим экземпляром, через полчаса заберёт другой.
 STALE_AFTER = timedelta(minutes=30)
+# Часовые свечи ISS (решение 153): открытые данные — с задержкой 15 минут;
+# последнюю вечернюю свечу забираем в первый час следующего дня.
+CANDLE_MINUTES = 60
+CANDLE = timedelta(minutes=CANDLE_MINUTES)
+ISS_DELAY = timedelta(minutes=15)
+AFTER_SESSION = time(1, 0)
 _ERRORS = (SQLAlchemyError, OSError, RefdataUnavailableError)
 
 
@@ -227,6 +234,60 @@ async def poll_if_due(
     return True
 
 
+def live(records: Sequence[InstrumentRecord], today: date) -> list[InstrumentRecord]:
+    """Живые бумаги (решение 153): облигация ещё не погашена; паи — все."""
+    return [
+        r
+        for r in records
+        if r.kind != "bond" or r.maturity_date is None or r.maturity_date >= today
+    ]
+
+
+async def load_candles_if_due(
+    resources: Resources, refdata: RefdataClient, iss: IssClient, now: datetime
+) -> bool:
+    """Догружает часовые свечи ISS по живым бумагам, если этот слот ещё никто не взял.
+
+    В торговый день (и в первый час после него — за последнюю вечернюю свечу) —
+    по всем живым бумагам; в остальные дни — только по новым, у которых свечей нет.
+    """
+    settings = cast(MarketdataSettings, resources.settings)
+    step = max(1, int(settings.candles_seconds // 60))
+    slot = now.replace(minute=now.minute - now.minute % step, second=0, microsecond=0)
+    exceptions = await calendar_around(refdata, now.date())
+    trading = is_trading_day(now.date(), exceptions) or (
+        now.time() < AFTER_SESSION and is_trading_day(now.date() - timedelta(days=1), exceptions)
+    )
+    database = resources.require_database()
+    async with database.session() as session, session.begin():
+        repo = Repository(session)
+        if not await repo.claim_candle_poll(slot):
+            return False
+        records = live(await _with_board(repo), now.date())
+    loaded = failed = 0
+    for record in records:
+        async with database.session() as session:
+            last = await Repository(session).last_candle(record.id, CANDLE_MINUTES)
+        if last is not None and not trading:
+            continue
+        since = last.date() if last else now.date() - timedelta(days=settings.candles_backfill_days)
+        try:
+            candles = await iss.candles(record.secid, record.kind, cast(str, record.board), since)
+        except IssError as exc:
+            logger.warning("ISS candles for %s failed: %s", record.secid, exc)
+            failed += 1
+            continue
+        # Закрытая свеча — закончилась не меньше 15 минут назад: открытые данные ISS с задержкой.
+        closed = [c for c in candles if c.start + CANDLE + ISS_DELAY <= now]
+        async with database.session() as session, session.begin():
+            loaded += await Repository(session).add_candles(
+                record.id, CANDLE_MINUTES, closed, moscow_now()
+            )
+    async with database.session() as session, session.begin():
+        await Repository(session).finish_candle_poll(slot, moscow_now(), loaded, failed)
+    return True
+
+
 async def _with_board(repo: Repository) -> list[InstrumentRecord]:
     """Бумаги с известным режимом торгов. Пока режима нет, ISS отдал бы строки всех
     режимов сразу (TQOB и SPOB) — такие бумаги ждут следующей сверки со справочником."""
@@ -278,3 +339,19 @@ def intraday_worker(
             await asyncio.sleep(min(settings.intraday_seconds, 60.0))
 
     return iss_intraday
+
+
+def candles_worker(
+    settings: MarketdataSettings, clock: Callable[[], datetime] = moscow_now
+) -> Worker:
+    async def iss_candles(resources: Resources) -> None:
+        refdata, iss = refdata_client(resources), iss_client(resources)
+        while True:
+            try:
+                await load_candles_if_due(resources, refdata, iss, clock())
+            except _ERRORS as exc:
+                logger.warning("ISS candles load failed, will retry: %s", exc)
+            # Проверяем чаще слота, чтобы не пропустить его начало.
+            await asyncio.sleep(min(settings.candles_seconds, 60.0))
+
+    return iss_candles

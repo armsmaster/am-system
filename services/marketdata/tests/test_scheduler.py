@@ -18,17 +18,34 @@ from sqlalchemy.exc import SQLAlchemyError
 from am_common.app import Resources
 from am_common.clock import MOSCOW
 from am_common.db import Database
+from am_common.migrations import schema_diff
 from am_common.testing import TokenFactory
 from marketdata.commands import refresh_instruments
-from marketdata.db import accrued_interest, face_value, iss_poll, outbox, quote
+from marketdata.db import (
+    accrued_interest,
+    bar,
+    candle_poll,
+    face_value,
+    iss_poll,
+    metadata,
+    outbox,
+    quote,
+)
+from marketdata.dema import DEFAULT_HALF_LIFE, HalfLife, dema
+from marketdata.prices import PriceType
+from marketdata.queries import price_views
+from marketdata.queries import series as chart_series
 from marketdata.refdata import refdata_client
-from marketdata.repository import Repository
+from marketdata.repository import InstrumentRecord, Repository
 from marketdata.scheduler import (
+    candles_worker,
     history_target,
     history_worker,
     instruments_worker,
     intraday_worker,
     iss_client,
+    live,
+    load_candles_if_due,
     load_due_history,
     poll_if_due,
 )
@@ -288,8 +305,9 @@ async def test_without_refdata_weekdays_are_trading_days(
         # Часы — во время торгов: в выходной опрос данных дня не идёт в БД и не падает.
         lambda s: history_worker(s, clock=lambda: NOW),
         lambda s: intraday_worker(s, clock=lambda: NOW),
+        lambda s: candles_worker(s, clock=lambda: NOW),
     ],
-    ids=["instruments", "history", "intraday"],
+    ids=["instruments", "history", "intraday", "candles"],
 )
 async def test_workers_keep_running_after_errors(
     settings: MarketdataSettings,
@@ -304,6 +322,7 @@ async def test_workers_keep_running_after_errors(
             "refdata_sync_seconds": 0.05,
             "history_check_seconds": 0.05,
             "intraday_seconds": 0.05,
+            "candles_seconds": 0.05,
         }
     )
 
@@ -368,3 +387,172 @@ async def test_accrued_interest_and_face_value_on_dates(
     assert get(f"/instruments/{OFZ}/accrued-interest", date="2026-10-24")["detail"]["code"] == (
         "refdata_unavailable"
     )
+
+
+# --- часовые свечи ISS (решения 153–155) -------------------------------------------
+
+
+async def iss_bars(resources: Resources, instrument_id: UUID) -> list[datetime]:
+    async with resources.require_database().session() as session:
+        rows = await session.execute(
+            select(bar.c.start_at)
+            .where(bar.c.instrument_id == instrument_id, bar.c.source == "iss")
+            .order_by(bar.c.start_at)
+        )
+    return [row.start_at.astimezone(MOSCOW) for row in rows]
+
+
+async def candle_slots(resources: Resources) -> list[tuple[time, int, int]]:
+    async with resources.require_database().session() as session:
+        rows = (await session.execute(select(candle_poll).order_by(candle_poll.c.slot))).all()
+    return [(r.slot.astimezone(MOSCOW).time(), r.polled, r.failed) for r in rows]
+
+
+def candle_requests(world: World) -> list[str]:
+    return [url for url in world.iss_urls if url.split("?")[0].endswith("/candles.json")]
+
+
+async def test_candles_are_loaded_once_per_slot_and_only_closed(
+    resources: Resources, world: World
+) -> None:
+    await prepared(resources)
+    refdata, iss = refdata_client(resources), iss_client(resources)
+
+    assert await load_candles_if_due(resources, refdata, iss, NOW) is True
+    assert (
+        await load_candles_if_due(resources, refdata, iss, at(27, 11, 14)) is False
+    )  # тот же слот
+
+    # По новой бумаге — свечи за 30 дней. Свеча 10:00 закончится в 11:00 и с задержкой ISS
+    # станет видна в 11:15 — в 11:05 её ещё нет.
+    assert all("from=2026-09-27" in url for url in candle_requests(world))
+    starts = await iss_bars(resources, OFZ)
+    assert (len(starts), starts[0], starts[-1]) == (15, at(26, 7), at(27, 9))
+    assert [s.time() for s in await iss_bars(resources, LINKER)] == [time(7), time(8), time(9)]
+    # Свечей пая в ответах ISS нет — ошибка учтена, остальные бумаги загружены.
+    assert await candle_slots(resources) == [(time(11, 0), 18, 1)]
+
+    # Следующий слот: свеча 10:00 закрыта, а уже записанные не дублируются.
+    world.iss_urls.clear()
+    assert await load_candles_if_due(resources, refdata, iss, at(27, 11, 20)) is True
+    assert all("from=2026-10-27" in url for url in candle_requests(world) if "LQDT" not in url)
+    assert len(await iss_bars(resources, OFZ)) == 16
+    assert (await candle_slots(resources))[-1] == (time(11, 15), 2, 1)
+
+
+async def test_candles_skip_matured_bonds_and_wait_on_days_off(
+    resources: Resources, world: World
+) -> None:
+    world.instruments[1]["maturity_date"] = "2026-10-01"  # линкер погашен
+    await prepared(resources)
+    refdata, iss = refdata_client(resources), iss_client(resources)
+
+    # В субботу новые бумаги всё равно получают свечи за 30 дней; погашенные — нет.
+    assert await load_candles_if_due(resources, refdata, iss, at(31, 12)) is True
+    assert len(await iss_bars(resources, OFZ)) == 16
+    assert await iss_bars(resources, LINKER) == []
+    assert not any("RU000A10F504" in url for url in candle_requests(world))
+
+    # Ночью после торгового дня — за последнюю вечернюю свечу.
+    world.iss_urls.clear()
+    assert await load_candles_if_due(resources, refdata, iss, at(31, 0, 30)) is True
+    assert any("SU26238RMFS4" in url for url in candle_requests(world))
+
+    # В выходной днём по бумагам со свечами не спрашиваем — только по тем, где их нет.
+    world.iss_urls.clear()
+    assert await load_candles_if_due(resources, refdata, iss, at(1, 12, month=11)) is True
+    assert [url.split("/securities/")[1].split("/")[0] for url in candle_requests(world)] == [
+        "LQDT"
+    ]
+
+
+async def test_no_candle_is_closed_early_in_the_morning(resources: Resources) -> None:
+    await prepared(resources)
+    refdata, iss = refdata_client(resources), iss_client(resources)
+
+    # В 08:00 свеча линкера 07:00 ещё не видна: закроется с задержкой ISS в 08:15.
+    assert await load_candles_if_due(resources, refdata, iss, at(27, 8)) is True
+    assert await iss_bars(resources, LINKER) == []
+    assert await candle_slots(resources) == [(time(8, 0), 12, 1)]
+
+
+def test_live_instruments() -> None:
+    def record(kind: str, maturity: date | None) -> InstrumentRecord:
+        return InstrumentRecord(OFZ, "X", None, kind, "X", "TQOB", None, maturity)
+
+    alive = [
+        record("bond", date(2026, 10, 27)),
+        record("bond", None),
+        record("fund_share", None),
+    ]
+    assert live([*alive, record("bond", date(2026, 10, 26))], date(2026, 10, 27)) == alive
+
+
+async def test_default_dema_from_iss_candles_until_script_bars_are_fresher(
+    resources: Resources,
+) -> None:
+    await prepared(resources)
+    refdata, iss = refdata_client(resources), iss_client(resources)
+    await load_candles_if_due(resources, refdata, iss, NOW)
+    database = resources.require_database()
+
+    async with database.session() as session:
+        repo = Repository(session)
+        candles = await repo.bars(OFZ, 60, ending_by=NOW, iss=True)
+        [view] = await price_views(session, refdata, NOW, [OFZ])
+        found = await chart_series(session, OFZ, at(27, 0), NOW)
+        # Окно — последние бары, по порядку времени.
+        assert [b.start for b in await repo.bars(OFZ, 60, ending_by=NOW, iss=True, last=2)] == [
+            at(27, 8),
+            at(27, 9),
+        ]
+
+    # DEMA по умолчанию — по часовым свечам ISS с H = 240 минут; в оценку не идёт.
+    expected = dema(candles, [HalfLife(since=at(1, 0, month=1), minutes=DEFAULT_HALF_LIFE)])
+    [smoothed] = [c for c in view.candidates if c.type is PriceType.DEMA]
+    assert (smoothed.source, smoothed.time, smoothed.value) == (
+        "iss",
+        at(27, 10),
+        expected[-1].value,
+    )
+    assert view.price is None
+    # График с 27.10: свечи прогрева — из понедельника, значения те же, что по всем свечам.
+    assert [p.value for p in found.dema] == [p.value for p in expected if p.time >= at(27, 0)]
+    assert len(found.bars[60]) == 3
+
+    # Бары скрипта того же таймфрейма свежее — DEMA и свечи графика по ним.
+    async with database.session() as session, session.begin():
+        await Repository(session).add_bars(
+            [
+                {
+                    "instrument_id": OFZ,
+                    "source": "quik",
+                    "timeframe": 60,
+                    "start_at": at(27, 10),
+                    "open": Decimal("51.81"),
+                    "high": Decimal("51.82"),
+                    "low": Decimal("51.80"),
+                    "close": Decimal("51.81"),
+                    "batch_id": UUID(int=1),
+                }
+            ]
+        )
+    async with database.session() as session:
+        [view] = await price_views(session, refdata, NOW, [OFZ])
+        found = await chart_series(session, OFZ, at(27, 0), NOW)
+    [smoothed] = [c for c in view.candidates if c.type is PriceType.DEMA]
+    assert (smoothed.source, smoothed.time, smoothed.value) == (
+        "bars",
+        at(27, 11),
+        Decimal("51.81"),
+    )
+    assert [b.close for b in found.bars[60]] == [Decimal("51.81")]
+
+
+async def test_migrations_match_the_model(settings: MarketdataSettings) -> None:
+    assert settings.database_url is not None
+    assert settings.database_schema is not None
+    diff = await schema_diff(
+        settings.database_url.get_secret_value(), settings.database_schema, metadata
+    )
+    assert diff == []

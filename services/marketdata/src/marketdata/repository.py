@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from marketdata.db import (
     bar,
+    candle_poll,
     feed_batch,
     instrument,
     iss_poll,
@@ -24,11 +25,13 @@ from marketdata.db import (
     rate,
 )
 from marketdata.dema import Bar
+from marketdata.iss import Candle
 from marketdata.prices import ManualPrice, Observation, PriceType, Rule
 from marketdata.rates import RateKind, RatePoint
 from marketdata.refdata import RefInstrument
 
 HISTORY = "iss_history"  # точка из истории торгов — на дату торгов
+ISS_BARS = "iss"  # свечи ISS; остальные бары — от скрипта (решение 155)
 SETTLEMENT = "iss_settlement"  # точка из данных дня — на дату расчётов
 
 
@@ -48,6 +51,7 @@ class InstrumentRecord:
     short_name: str
     board: str | None
     history_till: date | None
+    maturity_date: date | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +85,7 @@ class Repository:
                     "isin": item.isin,
                     "kind": item.kind,
                     "short_name": item.short_name,
+                    "maturity_date": item.maturity_date,
                 }
                 for item in items
             ]
@@ -93,6 +98,7 @@ class Repository:
                     "isin": statement.excluded.isin,
                     "kind": statement.excluded.kind,
                     "short_name": statement.excluded.short_name,
+                    "maturity_date": statement.excluded.maturity_date,
                 },
             )
         )
@@ -225,9 +231,15 @@ class Repository:
         timeframe: int,
         *,
         ending_by: datetime,
+        iss: bool,
         starting_from: datetime | None = None,
+        last: int | None = None,
     ) -> list[Bar]:
-        """Бары таймфрейма, закрытые к ``ending_by``; из повторных — последний полученный."""
+        """Бары таймфрейма, закрытые к ``ending_by``; из повторных — последний полученный.
+
+        ``iss`` — свечи ISS или бары скрипта: их не смешиваем (решение 155);
+        ``last`` — только столько последних баров (окно DEMA, решение 155).
+        """
         conditions = [
             bar.c.instrument_id == instrument_id,
             bar.c.timeframe == timeframe,
@@ -235,12 +247,18 @@ class Repository:
         ]
         if starting_from is not None:
             conditions.append(bar.c.start_at >= starting_from)
-        result = await self._session.execute(
+        conditions.append((bar.c.source == ISS_BARS) if iss else (bar.c.source != ISS_BARS))
+        latest = (
             select(bar)
             .where(*conditions)
             .ext(distinct_on(bar.c.start_at))
             .order_by(bar.c.start_at, bar.c.received_at.desc())
+            .subquery()
         )
+        statement = select(latest).order_by(latest.c.start_at.desc())
+        if last is not None:
+            statement = statement.limit(last)
+        result = await self._session.execute(statement)
         return [
             Bar(
                 start=row.start_at,
@@ -250,8 +268,74 @@ class Repository:
                 low=row.low,
                 close=row.close,
             )
-            for row in result
+            for row in reversed(result.all())
         ]
+
+    async def prefers_iss_bars(
+        self, instrument_id: UUID, timeframe: int, ending_by: datetime
+    ) -> bool:
+        """Брать ли свечи ISS, а не бары скрипта (решение 155): у ISS последний закрытый бар
+        свежее. При равенстве — скрипт: пока он шлёт бары, они без задержки и всегда свежее."""
+        is_iss = (bar.c.source == ISS_BARS).label("is_iss")
+        result = await self._session.execute(
+            select(is_iss, func.max(bar.c.start_at).label("latest"))
+            .where(
+                bar.c.instrument_id == instrument_id,
+                bar.c.timeframe == timeframe,
+                bar.c.start_at <= ending_by - timedelta(minutes=timeframe),
+            )
+            .group_by(is_iss)
+        )
+        latest = {row.is_iss: row.latest for row in result}
+        script = latest.get(False)
+        candles = latest.get(True)
+        return candles is not None and (script is None or candles > script)
+
+    async def last_candle(self, instrument_id: UUID, timeframe: int) -> datetime | None:
+        """Начало последней сохранённой свечи ISS."""
+        found: datetime | None = (
+            await self._session.execute(
+                select(func.max(bar.c.start_at)).where(
+                    bar.c.instrument_id == instrument_id,
+                    bar.c.timeframe == timeframe,
+                    bar.c.source == ISS_BARS,
+                )
+            )
+        ).scalar_one()
+        return found
+
+    async def add_candles(
+        self, instrument_id: UUID, timeframe: int, candles: Sequence[Candle], received_at: datetime
+    ) -> int:
+        """Записывает закрытые свечи ISS; уже записанные пропускает. Возвращает число новых."""
+        if not candles:
+            return 0
+        statement = (
+            insert(bar)
+            .values(
+                [
+                    {
+                        "instrument_id": instrument_id,
+                        "source": ISS_BARS,
+                        "timeframe": timeframe,
+                        "start_at": c.start,
+                        "open": c.open,
+                        "high": c.high,
+                        "low": c.low,
+                        "close": c.close,
+                        "volume": c.volume,
+                        "received_at": received_at,
+                    }
+                    for c in candles
+                ]
+            )
+            .on_conflict_do_nothing(
+                index_elements=[bar.c.instrument_id, bar.c.timeframe, bar.c.start_at],
+                index_where=bar.c.source == ISS_BARS,
+            )
+            .returning(bar.c.id)
+        )
+        return len((await self._session.execute(statement)).all())
 
     async def bar_timeframes(self, instrument_id: UUID) -> list[int]:
         result = await self._session.execute(
@@ -461,6 +545,25 @@ class Repository:
             .values(finished_at=now, polled=polled, failed=failed)
         )
 
+    async def claim_candle_poll(self, slot: datetime) -> bool:
+        """Забирает 15-минутный слот загрузки свечей ISS: его выполнит один экземпляр."""
+        result = await self._session.execute(
+            insert(candle_poll)
+            .values(slot=slot)
+            .on_conflict_do_nothing(index_elements=[candle_poll.c.slot])
+            .returning(candle_poll.c.slot)
+        )
+        return result.one_or_none() is not None
+
+    async def finish_candle_poll(
+        self, slot: datetime, now: datetime, loaded: int, failed: int
+    ) -> None:
+        await self._session.execute(
+            update(candle_poll)
+            .where(candle_poll.c.slot == slot)
+            .values(finished_at=now, polled=loaded, failed=failed)
+        )
+
 
 def _instrument(row: Row[Any]) -> InstrumentRecord:
     return InstrumentRecord(
@@ -471,6 +574,7 @@ def _instrument(row: Row[Any]) -> InstrumentRecord:
         short_name=row.short_name,
         board=row.board,
         history_till=row.history_till,
+        maturity_date=row.maturity_date,
     )
 
 

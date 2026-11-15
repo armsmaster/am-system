@@ -12,7 +12,12 @@ from am_common.logs import configure_logging
 from am_common.outbox import relay_worker
 from marketdata.api import install_error_handlers, install_feed_limit, router
 from marketdata.db import outbox
-from marketdata.scheduler import history_worker, instruments_worker, intraday_worker
+from marketdata.scheduler import (
+    candles_worker,
+    history_worker,
+    instruments_worker,
+    intraday_worker,
+)
 from marketdata.settings import MarketdataSettings
 
 
@@ -25,7 +30,12 @@ def build_app(
     """``clock`` — время для API: в тестах его подменяют, в работе — Москва сейчас."""
     settings = settings or MarketdataSettings()
     background = (
-        [instruments_worker(settings), history_worker(settings), intraday_worker(settings)]
+        [
+            instruments_worker(settings),
+            history_worker(settings),
+            intraday_worker(settings),
+            candles_worker(settings),
+        ]
         if settings.background_jobs
         else []
     )

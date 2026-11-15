@@ -8,7 +8,7 @@ from decimal import Decimal
 import pytest
 
 from am_common.clock import MOSCOW
-from marketdata.dema import Bar, HalfLife, alpha, dema
+from marketdata.dema import Bar, HalfLife, alpha, dema, window
 
 START = datetime(2026, 10, 27, 10, 0, tzinfo=MOSCOW)
 H60 = HalfLife(since=START, minutes=Decimal(60))
@@ -107,3 +107,19 @@ def test_history_before_the_first_setting_warms_up_the_average() -> None:
 
 def test_nothing_without_settings() -> None:
     assert dema(bars("100"), []) == []
+
+
+def test_window_covers_thirty_longest_half_lives() -> None:
+    start = datetime(2026, 10, 1, tzinfo=MOSCOW)
+    # Часовые свечи и H = 240 минут — 120 баров; при смене H окно — по самому длинному.
+    assert window(60, [HalfLife(since=start, minutes=Decimal(240))]) == 120
+    assert (
+        window(
+            10,
+            [
+                HalfLife(since=start, minutes=Decimal(60)),
+                HalfLife(since=start, minutes=Decimal(120)),
+            ],
+        )
+        == 360
+    )

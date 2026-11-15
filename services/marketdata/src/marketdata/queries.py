@@ -16,7 +16,15 @@ from am_common.calendar import add_trading_days, previous_trading_day
 from am_common.clock import MOSCOW
 from marketdata.accrual import CouponPeriod, OnDate, accrued_on, face_value_on
 from marketdata.db import accrued_interest, face_value
-from marketdata.dema import Bar, DemaPoint, HalfLife, dema
+from marketdata.dema import (
+    DEFAULT_HALF_LIFE,
+    DEFAULT_TIMEFRAME,
+    Bar,
+    DemaPoint,
+    HalfLife,
+    dema,
+    window,
+)
 from marketdata.prices import (
     DEFAULT_RULE,
     Choice,
@@ -30,11 +38,11 @@ from marketdata.prices import (
     spread_bp,
 )
 from marketdata.refdata import RefdataClient, RefdataUnavailableError
-from marketdata.repository import InstrumentRecord, Repository, RuleRecord
+from marketdata.repository import ISS_BARS, InstrumentRecord, Repository, RuleRecord
 
 logger = logging.getLogger(__name__)
 
-BARS = "bars"  # источник DEMA: сервис считает её сам по барам
+BARS = "bars"  # источник DEMA по барам скрипта; по свечам ISS — источник iss
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,10 +120,10 @@ async def price_views(
         history = rules.get(record.id, [])
         rule = rule_at(history, at)
         found = list(quotes.get(record.id, []))
-        smoothed = await _dema(repo, record.id, history, rule, at)
+        smoothed, source = await _dema(repo, record.id, history, rule, at)
         if smoothed:
             last = smoothed[-1]
-            found.append(Observation(PriceType.DEMA, BARS, last.time, last.value))
+            found.append(Observation(PriceType.DEMA, source, last.time, last.value))
         by_type = {
             kind: chosen
             for kind in PriceType
@@ -152,11 +160,19 @@ async def series(
     record = await repo.get(instrument_id)
     history = (await repo.rules([instrument_id])).get(instrument_id, [])
     rule = rule_at(history, till)
+    # Свечи графика — того же источника, что DEMA: скрипта или ISS (решение 155).
     bars = {
-        timeframe: await repo.bars(instrument_id, timeframe, ending_by=till, starting_from=since)
+        timeframe: await repo.bars(
+            instrument_id,
+            timeframe,
+            ending_by=till,
+            starting_from=since,
+            iss=await repo.prefers_iss_bars(instrument_id, timeframe, till),
+        )
         for timeframe in await repo.bar_timeframes(instrument_id)
     }
-    smoothed = [p for p in await _dema(repo, instrument_id, history, rule, till) if p.time >= since]
+    smoothed, _source = await _dema(repo, instrument_id, history, rule, till, since=since)
+    smoothed = [p for p in smoothed if p.time >= since]
     return SeriesView(
         instrument=record,
         quotes=await repo.quotes_between(instrument_id, since, till),
@@ -326,14 +342,40 @@ def rule_at(history: Sequence[RuleRecord], at: datetime) -> Rule:
 
 
 async def _dema(
-    repo: Repository, instrument_id: UUID, history: Sequence[RuleRecord], rule: Rule, at: datetime
-) -> list[DemaPoint]:
+    repo: Repository,
+    instrument_id: UUID,
+    history: Sequence[RuleRecord],
+    rule: Rule,
+    at: datetime,
+    *,
+    since: datetime | None = None,
+) -> tuple[list[DemaPoint], str]:
+    """DEMA бумаги к моменту ``at`` и источник её баров.
+
+    Таймфрейм и H — из правила оценки, а если в нём их нет, по умолчанию: часовые свечи
+    ISS, H = 240 минут (решение 154). Бары — скрипта или ISS, чьи свежее (решение 155),
+    за окно в 30 периодов полураспада; с ``since`` — все бары с этого момента и окно до него.
+    """
     if rule.dema_timeframe is None:
-        return []
-    half_lives = [
-        HalfLife(since=r.valid_from, minutes=r.rule.dema_half_life)
-        for r in history
-        if r.rule.dema_half_life is not None
-    ]
-    bars = await repo.bars(instrument_id, rule.dema_timeframe, ending_by=at)
-    return dema(bars, half_lives)
+        timeframe = DEFAULT_TIMEFRAME
+        half_lives = [
+            HalfLife(since=datetime.min.replace(tzinfo=MOSCOW), minutes=DEFAULT_HALF_LIFE)
+        ]
+    else:
+        timeframe = rule.dema_timeframe
+        half_lives = [
+            HalfLife(since=r.valid_from, minutes=r.rule.dema_half_life)
+            for r in history
+            if r.rule.dema_half_life is not None
+        ]
+    iss = await repo.prefers_iss_bars(instrument_id, timeframe, at)
+    count = window(timeframe, half_lives)
+    if since is None:
+        bars = await repo.bars(instrument_id, timeframe, ending_by=at, iss=iss, last=count)
+    else:
+        warmup = await repo.bars(instrument_id, timeframe, ending_by=since, iss=iss, last=count)
+        inside = await repo.bars(
+            instrument_id, timeframe, ending_by=at, starting_from=since, iss=iss
+        )
+        bars = warmup + inside
+    return dema(bars, half_lives), ISS_BARS if iss else BARS

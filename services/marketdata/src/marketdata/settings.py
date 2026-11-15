@@ -23,6 +23,9 @@ class MarketdataSettings(ServiceSettings):
     intraday_seconds: float = 300.0
     intraday_from: time = time(6, 50)
     intraday_till: time = time(23, 55)
+    # Часовые свечи — раз в 15 минут; по новой бумаге — за 30 дней (решение 153).
+    candles_seconds: float = 900.0
+    candles_backfill_days: int = 30
 
     # RUONIA — веб-сервис Банка России (решение 148). Ставку за день ЦБ публикует
     # на следующий рабочий день около 14:30 — ждём её с 15:00 по Москве. Пока её нет,
@@ -45,5 +48,6 @@ class MarketdataSettings(ServiceSettings):
     # Пакет от скрипта — не больше 5 МБ (спецификация docs/api/price-feed).
     feed_max_bytes: int = 5 * 1024 * 1024
 
-    # Фоновые задачи: список бумаг, история и данные дня ISS, RUONIA. Тесты запускают их сами.
+    # Фоновые задачи: список бумаг, история, данные дня и свечи ISS, RUONIA.
+    # Тесты запускают их сами.
     background_jobs: bool = True

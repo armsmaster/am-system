@@ -24,6 +24,7 @@ from sqlalchemy import (
     Text,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 
@@ -44,6 +45,7 @@ instrument = Table(
     Column("kind", Text, nullable=False),
     Column("short_name", Text, nullable=False),
     Column("board", Text),  # основной режим торгов — для запросов к ISS
+    Column("maturity_date", Date),  # облигация: дата погашения из справочника
     Column("seen_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     # История ISS загружена по эту дату; захват — чтобы её грузил один экземпляр.
     Column("history_till", Date),
@@ -88,9 +90,18 @@ bar = Table(
     Column("close", PRICE, nullable=False),
     Column("volume", Numeric(20, 4)),
     Column("received_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
-    Column("batch_id", Uuid, nullable=False),
+    Column("batch_id", Uuid),  # пакет скрипта; у свечей ISS — пусто
     CheckConstraint("timeframe BETWEEN 1 AND 240", name="bar_timeframe"),
     Index("bar_lookup", "instrument_id", "timeframe", "start_at"),
+    # Свеча ISS после закрытия не меняется — одна запись на свечу (решение 153).
+    Index(
+        "bar_iss_candle",
+        "instrument_id",
+        "timeframe",
+        "start_at",
+        unique=True,
+        postgresql_where=text("source = 'iss'"),
+    ),
 )
 
 
@@ -186,6 +197,16 @@ rate = Table(
 # Опрос ISS внутри дня: одна запись на 5-минутный слот — его выполняет один экземпляр.
 iss_poll = Table(
     "iss_poll",
+    metadata,
+    Column("slot", DateTime(timezone=True), primary_key=True),
+    Column("finished_at", DateTime(timezone=True)),
+    Column("polled", Integer, nullable=False, server_default="0"),
+    Column("failed", Integer, nullable=False, server_default="0"),
+)
+
+# Опрос часовых свечей ISS: одна запись на 15-минутный слот (решение 153).
+candle_poll = Table(
+    "candle_poll",
     metadata,
     Column("slot", DateTime(timezone=True), primary_key=True),
     Column("finished_at", DateTime(timezone=True)),

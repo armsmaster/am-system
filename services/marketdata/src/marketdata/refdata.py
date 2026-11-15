@@ -38,6 +38,7 @@ class RefInstrument:
     isin: str | None
     kind: str
     short_name: str
+    maturity_date: date | None = None  # облигация; у пая — нет
 
 
 class RefdataClient:
@@ -64,6 +65,7 @@ class RefdataClient:
                 isin=item["isin"],
                 kind=item["kind"],
                 short_name=item["short_name"],
+                maturity_date=_date(item.get("maturity_date")),
             )
             for item in payload
         ]
@@ -159,3 +161,8 @@ def refdata_client(resources: Resources) -> RefdataClient:
         )
     )
     return RefdataClient(resources.http, settings.refdata_url, token)
+
+
+def _date(value: object) -> date | None:
+    """Дата из ответа справочника: ГГГГ-ММ-ДД или пусто."""
+    return date.fromisoformat(value) if isinstance(value, str) else None

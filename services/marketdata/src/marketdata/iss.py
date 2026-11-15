@@ -1,9 +1,10 @@
-"""MOEX ISS для рыночных данных: итоги дня, данные дня и ставки (решения 60, 63, 72).
+"""MOEX ISS для рыночных данных: итоги дня, данные дня, свечи и ставки (решения 60, 63, 72, 153).
 
 Итоги дня — история торгов: закрытие, средневзвешенная, рыночная цена,
 признаваемая котировка, НКД и номинал на дату торгов. Данные дня —
 с задержкой 15 минут: bid, ask, последняя сделка, средневзвешенная,
-НКД и номинал на дату расчётов. Ставки — индексы KEYRATE и RUSFAR (вопрос 76).
+НКД и номинал на дату расчётов. Свечи — OHLC за час, тоже с задержкой.
+Ставки — индексы KEYRATE и RUSFAR (вопрос 76).
 """
 
 from __future__ import annotations
@@ -32,6 +33,8 @@ MARKETDATA_COLUMNS = (
 # Итог дня относится к концу дня по Москве: вечером он сменяет внутридневные цены.
 END_OF_DAY = time(23, 59, 59)
 BATCH = 10  # бумаг в одном запросе данных дня
+CANDLE_COLUMNS = "begin,open,high,low,close,volume"
+CANDLE_PAGE = 500  # ISS отдаёт свечи страницами по 500, без курсора
 TRADING = "T"
 
 _DAILY_PRICES = {
@@ -70,6 +73,18 @@ class Snapshot:
     settle_date: date | None = None
     accrued: Decimal | None = None
     face_value: Decimal | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Candle:
+    """Свеча ISS: OHLC за интервал, начало — по Москве."""
+
+    start: datetime
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: Decimal | None
 
 
 class IssClient:
@@ -121,6 +136,32 @@ class IssClient:
             start = int(cursor["INDEX"]) + int(cursor["PAGESIZE"])
             if start >= int(cursor["TOTAL"]):
                 return found
+
+    async def candles(
+        self, secid: str, kind: str, board: str, since: date, interval: int = 60
+    ) -> list[Candle]:
+        """Свечи режима торгов ``board`` с ``since`` по сегодня; интервал — в минутах."""
+        path = (
+            f"engines/stock/markets/{MARKETS[kind]}/boards/{board}/securities/{secid}/candles.json"
+        )
+        found: list[Candle] = []
+        start = 0
+        while True:
+            payload = await self._get(
+                path,
+                **{
+                    "from": since.isoformat(),
+                    "interval": str(interval),
+                    "start": str(start),
+                    "iss.only": "candles",
+                    "candles.columns": CANDLE_COLUMNS,
+                },
+            )
+            page = rows(payload, "candles")
+            found += [parse_candle(row) for row in page]
+            if len(page) < CANDLE_PAGE:
+                return found
+            start += len(page)
 
     async def snapshots(
         self, kind: str, instruments: Sequence[tuple[str, str | None]]
@@ -176,6 +217,21 @@ def parse_daily(row: Mapping[str, Any]) -> DailyRow:
         prices=prices,
         accrued=_decimal(row.get("ACCINT")),
         face_value=_price(row.get("FACEVALUE")),
+    )
+
+
+def parse_candle(row: Mapping[str, Any]) -> Candle:
+    prices = [_price(row.get(column)) for column in ("open", "high", "low", "close")]
+    if any(price is None for price in prices):
+        raise IssError(f"candle without prices: {row!r}")
+    open_, high, low, close = (price for price in prices if price is not None)
+    return Candle(
+        start=datetime.fromisoformat(row["begin"]).replace(tzinfo=MOSCOW),
+        open=open_,
+        high=high,
+        low=low,
+        close=close,
+        volume=_decimal(row.get("volume")),
     )
 
 

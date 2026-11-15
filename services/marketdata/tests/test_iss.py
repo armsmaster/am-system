@@ -12,7 +12,7 @@ import httpx2
 import pytest
 
 from am_common.clock import MOSCOW
-from marketdata.iss import IssClient, IssError, parse_daily, parse_snapshots, rows
+from marketdata.iss import IssClient, IssError, parse_candle, parse_daily, parse_snapshots, rows
 from marketdata.prices import PriceType
 
 FIXTURES = Path(__file__).parent / "fixtures" / "iss"
@@ -167,3 +167,52 @@ def test_broken_number() -> None:
 
     with pytest.raises(IssError, match="not a number"):
         parse_daily(rows(payload, "history")[0])
+
+
+async def test_candles_come_in_pages() -> None:
+    asked: list[httpx2.URL] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        asked.append(request.url)
+        start = int(request.url.params["start"])
+        # ISS отдаёт свечи страницами по 500, без курсора: страница короче — последняя.
+        data = [
+            [
+                f"2026-10-{1 + (start + i) // 24:02d} {(start + i) % 24:02d}:00:00",
+                51.7,
+                51.8,
+                51.6,
+                51.75,
+                100,
+            ]
+            for i in range(500 if start == 0 else 3)
+        ]
+        columns = ["begin", "open", "high", "low", "close", "volume"]
+        return httpx2.Response(200, json={"candles": {"columns": columns, "data": data}})
+
+    candles = await client(handler).candles("SU26238RMFS4", "bond", "TQOB", date(2026, 10, 1))
+
+    assert len(candles) == 503
+    first = candles[0]
+    assert (first.start, first.close, first.volume) == (
+        datetime(2026, 10, 1, 0, 0, tzinfo=MOSCOW),
+        Decimal("51.75"),
+        Decimal("100"),
+    )
+    assert (
+        asked[0].path
+        == "/iss/engines/stock/markets/bonds/boards/TQOB/securities/SU26238RMFS4/candles.json"
+    )
+    assert {k: asked[0].params[k] for k in ("from", "interval", "iss.only")} == {
+        "from": "2026-10-01",
+        "interval": "60",
+        "iss.only": "candles",
+    }
+    assert [url.params["start"] for url in asked] == ["0", "500"]
+
+
+def test_a_candle_without_a_price_is_refused() -> None:
+    with pytest.raises(IssError, match="candle without prices"):
+        parse_candle(
+            {"begin": "2026-10-27 10:00:00", "open": 51.7, "high": 51.8, "low": 51.6, "close": None}
+        )
