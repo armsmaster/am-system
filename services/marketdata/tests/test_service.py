@@ -375,6 +375,61 @@ def test_overview_flags_a_wide_spread(feed: Api, trader: Api) -> None:
     assert rows["LQDT"]["price"] is None
 
 
+def test_overview_compares_with_the_end_of_previous_days(feed: Api, trader: Api) -> None:
+    feed.ok(
+        "POST",
+        "/feed/v1/quotes",
+        {
+            "source": "quik",
+            "quotes": [
+                quote("SU26238RMFS4", moment(18, 0, day=20), vwap=51.6),
+                quote("SU26238RMFS4", moment(18, 0, day=26), vwap=51.75),
+                quote("SU26238RMFS4", moment(11, 0), vwap=51.8),
+                quote("LQDT", moment(11, 0), vwap=1.8),
+            ],
+        },
+    )
+
+    rows = {row["instrument"]["secid"]: row for row in trader.ok("GET", "/overview")}
+
+    # Вторник 27.10: прошлый торговый день — понедельник, неделей раньше — вторник 20.10.
+    ofz = rows["SU26238RMFS4"]
+    assert (ofz["day_ago"]["day"], ofz["day_ago"]["price"]["value"]) == ("2026-10-26", "51.750000")
+    assert (ofz["week_ago"]["day"], ofz["week_ago"]["price"]["value"]) == (
+        "2026-10-20",
+        "51.600000",
+    )
+    # Номинал и НКД — на дату расчётов T+1, те же, что в отметке для оценки позиций.
+    [mark] = trader.ok(
+        "GET", f"/instruments/{OFZ}/marks", None, **{"from": "2026-10-27", "till": "2026-10-27"}
+    )
+    assert ofz["settle_date"] == mark["settle_date"] == "2026-10-28"
+    assert (ofz["accrued"], ofz["face_value"]) == (mark["accrued"], mark["face_value"])
+    assert ofz["accrued"] is not None
+    # У пая номинала и НКД нет; цены неделю назад — тоже.
+    fund = rows["LQDT"]
+    assert (fund["accrued"], fund["face_value"], fund["week_ago"]["price"]) == (None, None, None)
+    # Карточка цены отдаёт то же, что строка обзора.
+    assert trader.ok("GET", f"/instruments/{OFZ}/price")["day_ago"] == ofz["day_ago"]
+
+
+def test_overview_skips_estimated_accrued_without_refdata(
+    feed: Api, trader: Api, world: World
+) -> None:
+    feed.ok(
+        "POST",
+        "/feed/v1/quotes",
+        {"source": "quik", "quotes": [quote("SU26238RMFS4", moment(11, 0), vwap=51.8)]},
+    )
+    world.refdata_down = True
+
+    [ofz] = [r for r in trader.ok("GET", "/overview") if r["instrument"]["id"] == str(OFZ)]
+
+    # Купонных периодов не взять — НКД не досчитать, но цены обзор показывает.
+    assert ofz["price"]["value"] == "51.800000"
+    assert ofz["accrued"] is None
+
+
 def test_series_with_manual_prices_and_quotes(feed: Api, trader: Api) -> None:
     feed.ok(
         "POST",

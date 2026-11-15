@@ -34,11 +34,12 @@ from marketdata.feed import (
 )
 from marketdata.prices import Choice, PriceType, Rule, RuleViolationError
 from marketdata.queries import (
-    PriceView,
+    Overview,
+    Reference,
     accrued_on_date,
     face_value_on_date,
     marks,
-    price_views,
+    overview_rows,
     series,
 )
 from marketdata.rates import RATE_LABELS, RateKind, RatePoint, rate_on
@@ -112,6 +113,13 @@ class RuleOut(BaseModel):
     spread_threshold_bp: int
 
 
+class ReferenceOut(BaseModel):
+    """Цена для оценки на конец торгового дня — с ней сравнивают текущую (решение 152)."""
+
+    day: date
+    price: ChoiceOut | None
+
+
 class PriceOut(BaseModel):
     instrument: InstrumentOut
     at: datetime
@@ -121,6 +129,11 @@ class PriceOut(BaseModel):
     rule: RuleOut
     spread_bp: Decimal | None
     wide_spread: bool
+    day_ago: ReferenceOut  # конец прошлого торгового дня
+    week_ago: ReferenceOut  # конец торгового дня неделей раньше
+    settle_date: date  # T+1 торгового дня момента
+    accrued: Decimal | None  # облигация: НКД на дату расчётов
+    face_value: Decimal | None  # облигация: номинал на дату расчётов
 
 
 class QuoteOut(BaseModel):
@@ -352,8 +365,9 @@ async def batches(
 async def overview(
     _user: Viewer, session: DbSession, refdata: Refdata, now: Now, at: At = None
 ) -> list[PriceOut]:
-    """Все бумаги: цена для оценки, цены всех типов и разброс между ними."""
-    return [_price_out(v) for v in await price_views(session, refdata, at or now)]
+    """Все бумаги: цена для оценки, цены всех типов и разброс между ними; изменение
+    за день и неделю, номинал и НКД на дату расчётов (решение 152)."""
+    return [_price_out(row) for row in await overview_rows(session, refdata, at or now)]
 
 
 @router.get("/instruments/{instrument_id}/price", tags=["prices"])
@@ -365,9 +379,9 @@ async def price(
     now: Now,
     at: At = None,
 ) -> PriceOut:
-    """Цена для оценки на момент и все цены-кандидаты."""
-    [view] = await price_views(session, refdata, at or now, [instrument_id])
-    return _price_out(view)
+    """Цена для оценки на момент и все цены-кандидаты — то же, что строка обзора."""
+    [row] = await overview_rows(session, refdata, at or now, [instrument_id])
+    return _price_out(row)
 
 
 @router.get("/instruments/{instrument_id}/series", tags=["prices"])
@@ -602,7 +616,8 @@ async def _resolve(
     return ids
 
 
-def _price_out(view: PriceView) -> PriceOut:
+def _price_out(row: Overview) -> PriceOut:
+    view = row.view
     return PriceOut(
         instrument=_instrument_out(view.instrument),
         at=view.at,
@@ -617,7 +632,16 @@ def _price_out(view: PriceView) -> PriceOut:
         rule=_rule_out(view.rule),
         spread_bp=view.spread_bp,
         wide_spread=view.wide_spread,
+        day_ago=_reference_out(row.day_ago),
+        week_ago=_reference_out(row.week_ago),
+        settle_date=row.settle_date,
+        accrued=None if row.accrued is None else row.accrued.value,
+        face_value=None if row.face is None else row.face.value,
     )
+
+
+def _reference_out(reference: Reference) -> ReferenceOut:
+    return ReferenceOut(day=reference.day, price=_choice_out(reference.price))
 
 
 def _choice_out(choice: Choice | None) -> ChoiceOut | None:

@@ -808,13 +808,6 @@ div.inline {
   font-variant-numeric: tabular-nums;
 }
 
-.chart {
-  height: 360px;
-  margin-bottom: 16px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
 
 .rule-types {
   margin: 0 0 10px;
@@ -2209,4 +2202,283 @@ table.data tr.cancelled .record-main {
 
 .issues li:last-child {
   border-bottom: none;
+}
+
+/* --- Цены: выбор момента, таблица обзора, карточка цены с графиком и калькулятором. --- */
+
+.moment-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+
+.moment-picker .filter-chips {
+  flex-wrap: wrap;
+}
+
+.moment-custom {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.moment-custom input[type='date'] {
+  margin-right: 6px;
+}
+
+.moment-custom select {
+  min-width: 84px;
+  font-variant-numeric: tabular-nums;
+}
+
+.moment-note {
+  margin: 0 0 10px;
+  font-size: 13px;
+}
+
+/* Изменение цены: рост — зелёный, падение — красный. */
+.up {
+  color: var(--ok-text);
+}
+
+.down {
+  color: var(--danger-text);
+}
+
+/* Пометка под ценой: устарела, широкий разброс. */
+.flag {
+  display: inline-block;
+  margin-top: 2px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--warning-bg);
+  color: var(--warning-text);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+td.num .flag {
+  display: table;
+  margin-left: auto;
+}
+
+.price-card .card-head {
+  margin-bottom: 4px;
+}
+
+/* Плитки цены растягиваются на всю ширину: их всего три-пять. */
+.tiles.price-tiles {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.price-tiles .tile dd {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+
+.tile-big {
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+}
+
+.tile dd .subline {
+  font-weight: 400;
+}
+
+.valuation-note {
+  margin: -6px 0 14px;
+  font-size: 13px;
+}
+
+.chart-card,
+.price-panel {
+  padding: 12px 16px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.chart-card {
+  margin-bottom: 14px;
+}
+
+.chart-card h3,
+.price-panel h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.chart-layers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.chart-layers button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chart-layers button[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.chart-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.chart-layers button[aria-pressed='false'] .chart-swatch {
+  opacity: 0.35;
+}
+
+.chart {
+  height: 380px;
+}
+
+/* Калькулятор и цены рядом: калькулятор шире. */
+.price-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.price-grid.single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.analytics-when {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.price-panel > .subline,
+.price-panel dl.kv {
+  margin-bottom: 6px;
+}
+
+.horizon {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.horizon-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 14px;
+}
+
+.horizon-head strong {
+  color: var(--accent);
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.horizon > .subline {
+  margin: 2px 0;
+}
+
+.price-panel form.what-if {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 10px 0 0;
+  border: none;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
+}
+
+.what-if label {
+  margin-bottom: 0;
+}
+
+.what-if input {
+  width: 110px;
+}
+
+.what-if .notice {
+  flex-basis: 100%;
+  margin: 4px 0 0;
+}
+
+table.data.compact th,
+table.data.compact td {
+  padding: 6px 8px;
+}
+
+.rule-summary {
+  margin-top: 10px;
+}
+
+.rule-summary details {
+  margin-top: 4px;
+  font-size: 13px;
+}
+
+.rule-summary summary {
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.rule-summary details table {
+  margin-top: 6px;
+}
+
+@media (max-width: 900px) {
+  .price-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  /* Вторая строка ячейки на телефоне — отдельной строкой, а не рядом с первой. */
+  div.show-sm {
+    display: block;
+  }
+
+  .tiles.price-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .price-tiles .tile:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .tile-big {
+    font-size: 18px;
+  }
+
+  .chart {
+    height: 260px;
+  }
+
+  .chart-card,
+  .price-panel {
+    padding: 10px 12px 12px;
+  }
 }

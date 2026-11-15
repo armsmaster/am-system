@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
@@ -13,30 +13,39 @@ import {
 } from '../test/fixtures';
 import { AnalyticsBlock } from './AnalyticsBlock';
 
+const TODAY = '2026-10-28';
+
 function renderBlock(api: FakeApi = fakeApi()) {
-  render(<AnalyticsBlock api={asApi(api)} id="i-ofz" />);
+  render(<AnalyticsBlock api={asApi(api)} id="i-ofz" today={TODAY} />);
   return api;
 }
 
-function rows(name: string): string[] {
-  const table = screen.getByRole('table', { name });
-  return within(table)
-    .getAllByRole('row')
-    .map((r) => r.textContent ?? '');
+/** Строки списка «подпись — значение». */
+function facts(name: string): string[] {
+  return within(screen.getByLabelText(name))
+    .getAllByRole('term')
+    .map((dt) => `${dt.textContent} ${dt.nextElementSibling?.textContent}`);
 }
 
 describe('AnalyticsBlock', () => {
-  it('shows the yield and risk of a fixed coupon bond', async () => {
+  it('shows the price of the calculation and the yield and risk of a fixed coupon bond', async () => {
     renderBlock();
 
     expect(await screen.findByRole('heading', { name: 'Доходность и риск' })).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        /Чистая цена 52,4930% \(цена для оценки: VWAP, quik\)\. Дата расчётов — 29\.10\.2026: номинал 1 000 ₽, НКД 28,79 ₽, грязная цена 553,72 ₽\./,
-      ),
-    ).toBeInTheDocument();
-    expect(rows('Доходность и метрики').slice(1)).toEqual([
-      'к погашению 15.05.204115,946,822 4915,890,326060,25',
+    expect(screen.getByText('Сейчас · расчёты 29.10.2026')).toBeInTheDocument();
+    expect(facts('Цена в расчёте')).toEqual([
+      'Чистая цена 52,4930% · VWAP, quik',
+      'Номинал 1 000,00 ₽',
+      'НКД 28,79 ₽',
+      'Грязная цена 553,72 ₽',
+    ]);
+    const maturity = screen.getByRole('region', { name: 'К погашению 15.05.2041' });
+    expect(within(maturity).getByText('15,94%')).toBeInTheDocument();
+    expect(within(maturity).getAllByRole('definition').map((dd) => dd.textContent)).toEqual([
+      '6,82 г · 2 491 дн.',
+      '5,89',
+      '0,3260 ₽',
+      '60,25',
     ]);
   });
 
@@ -57,8 +66,10 @@ describe('AnalyticsBlock', () => {
     );
     renderBlock(api);
 
-    expect(await screen.findByText('Купон 11.04.2028 не объявлен.')).toBeInTheDocument();
-    expect(rows('Доходность и метрики')[1]).toMatch(/^к оферте 14.10.2027/);
+    const maturityBlock = await screen.findByRole('region', { name: 'К погашению 15.05.2041' });
+    expect(within(maturityBlock).getByText('Купон 11.04.2028 не объявлен.')).toBeInTheDocument();
+    expect(within(maturityBlock).queryByRole('definition')).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'К оферте 14.10.2027' })).toHaveTextContent('15,94%');
   });
 
   it('breaks down the spread of a floater', async () => {
@@ -67,24 +78,24 @@ describe('AnalyticsBlock', () => {
     renderBlock(api);
 
     expect(await screen.findByRole('heading', { name: 'Спред над фондированием' })).toBeInTheDocument();
-    expect(screen.getByText('81,5 бп', { selector: 'p' })).toBeInTheDocument();
-    expect(screen.getByText(/КС \+ 130 бп, без капитализации; к погашению 12\.12\.2026/)).toBeInTheDocument();
-    expect(screen.getByText(/Доходность при плоском прогнозе ставки — 15,72%/)).toBeInTheDocument();
+    const horizon = screen.getByRole('region', { name: 'К погашению 12.12.2026' });
+    expect(within(horizon).getByText('81,5 бп')).toBeInTheDocument();
+    expect(screen.getByText(/КС \+ 130 бп, без капитализации\. Доходность при плоском прогнозе ставки — 15,72%/)).toBeInTheDocument();
     expect(
       screen.getByText(
         /Фондирование: RUONIA 13,90% на 28\.10\.2026, cbr → 14,91% эффективных годовых\. Индекс: Ключевая ставка 14,00% на 26\.10\.2026, MOEX ISS\./,
       ),
     ).toBeInTheDocument();
-    expect(rows('Разложение спреда')).toEqual([
-      'Базис ставки11,5 бп',
-      'Капитализация−8,9 бп',
-      'Маржа148,6 бп',
-      'Прочее−2,2 бп',
-      'Поправка на цену−67,5 бп',
-      'Спред81,5 бп',
+    expect(facts('Разложение спреда')).toEqual([
+      'Базис ставки 11,5 бп',
+      'Капитализация −8,9 бп',
+      'Маржа 148,6 бп',
+      'Прочее −2,2 бп',
+      'Поправка на цену −67,5 бп',
+      'Спред-дюрация 0,10 года',
+      'DV01 по спреду 0,0104 ₽',
     ]);
-    expect(screen.getByText(/Спред-дюрация 0,10 года, DV01 по спреду 0,0104 ₽/)).toBeInTheDocument();
-    expect(screen.getByText(/что если: введённая цена/)).toBeInTheDocument();
+    expect(facts('Цена в расчёте')[0]).toBe('Чистая цена 100,0700% · что если: введённая цена');
   });
 
   it('does not repeat RUONIA as the index of a RUONIA floater', async () => {
@@ -119,32 +130,52 @@ describe('AnalyticsBlock', () => {
 
     expect(await screen.findByText(/линкер: номинал растёт с RUONIA/)).toBeInTheDocument();
     expect(screen.getByText(/Фондирование: RUONIA — нет/)).toBeInTheDocument();
-    expect(rows('Разложение спреда')[2]).toBe('Купон148,6 бп');
+    expect(facts('Разложение спреда')[2]).toBe('Купон 148,6 бп');
+  });
+
+  it('computes on the end of a chosen day', async () => {
+    const api = renderBlock();
+    await screen.findByLabelText('Цена в расчёте');
+    expect(api.analytics).toHaveBeenLastCalledWith('i-ofz', {}, undefined);
+    api.analytics.mockResolvedValue(fixedAnalytics({ trading_day: '2026-09-30', settlement_date: '2026-10-01' }));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Вчера' }));
+    expect(api.analytics).toHaveBeenLastCalledWith('i-ofz', {}, '2026-10-27T23:59:59+03:00');
+    await userEvent.click(screen.getByRole('button', { name: 'Конец сентября' }));
+    expect(api.analytics).toHaveBeenLastCalledWith('i-ofz', {}, '2026-09-30T23:59:59+03:00');
+    expect(await screen.findByText('На конец 30.09.2026 · расчёты 01.10.2026')).toBeInTheDocument();
+    expect(screen.getByLabelText('Дата расчёта')).toHaveValue('2026-09-30');
+
+    fireEvent.change(screen.getByLabelText('Дата расчёта'), { target: { value: '2026-10-15' } });
+    expect(api.analytics).toHaveBeenLastCalledWith('i-ofz', {}, '2026-10-15T23:59:59+03:00');
+    // Стёртая дата ничего не меняет.
+    fireEvent.change(screen.getByLabelText('Дата расчёта'), { target: { value: '' } });
+    expect(api.analytics).toHaveBeenLastCalledWith('i-ofz', {}, '2026-10-15T23:59:59+03:00');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Сегодня' }));
+    expect(api.analytics).toHaveBeenLastCalledWith('i-ofz', {}, undefined);
   });
 
   it('recomputes for an entered yield and goes back to the valuation price', async () => {
     const user = userEvent.setup();
     const api = renderBlock();
-    await screen.findByRole('table', { name: 'Доходность и метрики' });
+    await screen.findByLabelText('Цена в расчёте');
 
     const form = within(screen.getByRole('form', { name: 'Что если' }));
-    expect(form.getAllByRole('option').map((o) => o.textContent)).toEqual([
-      'Чистая цена, %',
-      'Доходность, %',
-    ]);
+    expect(form.getAllByRole('option').map((o) => o.textContent)).toEqual(['Чистая цена, %', 'Доходность, %']);
     await user.selectOptions(form.getByRole('combobox'), 'yield');
     await user.type(form.getByRole('textbox'), '16,5');
     await user.click(form.getByRole('button', { name: 'Посчитать' }));
-    await waitFor(() => expect(api.analytics).toHaveBeenLastCalledWith('i-ofz', { yield: '16.5' }));
+    await waitFor(() => expect(api.analytics).toHaveBeenLastCalledWith('i-ofz', { yield: '16.5' }, undefined));
 
     await user.click(await form.findByRole('button', { name: 'Вернуть цену для оценки' }));
-    await waitFor(() => expect(api.analytics).toHaveBeenLastCalledWith('i-ofz', {}));
+    await waitFor(() => expect(api.analytics).toHaveBeenLastCalledWith('i-ofz', {}, undefined));
   });
 
   it('refuses something that is not a number', async () => {
     const user = userEvent.setup();
     const api = renderBlock();
-    await screen.findByRole('table', { name: 'Доходность и метрики' });
+    await screen.findByLabelText('Цена в расчёте');
 
     const form = within(screen.getByRole('form', { name: 'Что если' }));
     await user.type(form.getByRole('textbox'), 'сто');
@@ -161,12 +192,12 @@ describe('AnalyticsBlock', () => {
     renderBlock(api);
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Нет ставки ruonia');
-    expect(screen.getByRole('heading', { name: 'Расчёт по облигации' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Калькулятор доходности' })).toBeInTheDocument();
     const form = within(screen.getByRole('form', { name: 'Что если' }));
     expect(form.getAllByRole('option')).toHaveLength(3);
     await user.selectOptions(form.getByRole('combobox'), 'spread');
     await user.type(form.getByRole('textbox'), '-25');
     await user.click(form.getByRole('button', { name: 'Посчитать' }));
-    await waitFor(() => expect(api.analytics).toHaveBeenLastCalledWith('i-ofz', { spread: '-25' }));
+    await waitFor(() => expect(api.analytics).toHaveBeenLastCalledWith('i-ofz', { spread: '-25' }, undefined));
   });
 });

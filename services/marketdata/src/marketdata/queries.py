@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from am_common.calendar import add_trading_days, previous_trading_day
 from am_common.clock import MOSCOW
-from marketdata.accrual import OnDate, accrued_on, face_value_on
+from marketdata.accrual import CouponPeriod, OnDate, accrued_on, face_value_on
 from marketdata.db import accrued_interest, face_value
 from marketdata.dema import Bar, DemaPoint, HalfLife, dema
 from marketdata.prices import (
@@ -212,6 +212,88 @@ async def marks(
         found.append(Mark(day, view.price, settle, accrued, face))
         day += timedelta(days=1)
     return found
+
+
+@dataclass(frozen=True, slots=True)
+class Reference:
+    """Цена для оценки на конец торгового дня — с ней сравнивают текущую."""
+
+    day: date
+    price: Choice | None
+
+
+@dataclass(frozen=True, slots=True)
+class Overview:
+    """Строка обзора цен (решение 152): цена на момент, с чем её сравнить, номинал и НКД."""
+
+    view: PriceView
+    day_ago: Reference  # конец прошлого торгового дня
+    week_ago: Reference  # конец торгового дня неделей раньше
+    settle_date: date  # T+1 торгового дня момента
+    accrued: OnDate | None  # облигация: НКД на дату расчётов
+    face: OnDate | None  # облигация: номинал на дату расчётов
+
+
+async def overview_rows(
+    session: AsyncSession,
+    refdata: RefdataClient,
+    at: datetime,
+    instrument_ids: Sequence[UUID] | None = None,
+) -> list[Overview]:
+    """Цены на момент и всё, что к ним показывает обзор (решение 152).
+
+    Изменение считают к цене для оценки на 23:59:59 МСК прошлого торгового дня и торгового
+    дня неделей раньше. Номинал и НКД — на дату расчётов T+1 торгового дня момента, как в
+    отметках для оценки позиций (решения 102 и 149).
+    """
+    views = await price_views(session, refdata, at, instrument_ids)
+    if not views:
+        return []
+    day = views[0].trading_day
+    # Неделя назад может уйти в прошлый год, дата расчётов — в следующий.
+    exceptions = await calendar_around(refdata, day)
+    exceptions |= await calendar_around(refdata, day + timedelta(days=15))
+    previous = previous_trading_day(day - timedelta(days=1), exceptions)
+    week = previous_trading_day(day - timedelta(days=7), exceptions)
+    ids = [v.instrument.id for v in views]
+    day_ago = {
+        v.instrument.id: v.price
+        for v in await price_views(session, refdata, end_of_day(previous), ids)
+    }
+    week_ago = {
+        v.instrument.id: v.price for v in await price_views(session, refdata, end_of_day(week), ids)
+    }
+    settle = add_trading_days(day, 1, exceptions)
+    repo = Repository(session)
+    found: list[Overview] = []
+    for view in views:
+        record = view.instrument
+        accrued = face = None
+        if record.kind == "bond":
+            accrued_points = await repo.points(accrued_interest, record.id)
+            periods = [] if settle in accrued_points else await _periods(refdata, record.id, settle)
+            accrued = accrued_on(settle, accrued_points, periods)
+            face = face_value_on(settle, await repo.points(face_value, record.id))
+        found.append(
+            Overview(
+                view=view,
+                day_ago=Reference(previous, day_ago[record.id]),
+                week_ago=Reference(week, week_ago[record.id]),
+                settle_date=settle,
+                accrued=accrued,
+                face=face,
+            )
+        )
+    return found
+
+
+async def _periods(refdata: RefdataClient, instrument_id: UUID, day: date) -> list[CouponPeriod]:
+    """Купонные периоды для досчёта НКД; без справочника — без досчёта: обзор важнее."""
+    try:
+        return await refdata.coupon_periods(instrument_id, day)
+    except RefdataUnavailableError as exc:
+        logger.warning("refdata unavailable, accrued interest not estimated: %s", exc)
+        return []
 
 
 async def accrued_on_date(

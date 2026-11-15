@@ -24,6 +24,15 @@ export const OFZ = {
   short_name: 'ОФЗ 26238',
 };
 
+const PRICE = {
+  value: '51.823000',
+  type: 'vwap' as const,
+  source: 'quik',
+  time: '2026-10-27T08:00:00Z',
+  stale: false,
+  reason: 'по правилу: VWAP',
+};
+
 /** ОФЗ 26238 во вторник 27.10 в 11:05: VWAP скрипта, bid и ask, вчерашний итог ISS. */
 export function view(fields: Partial<PriceView> = {}): PriceView {
   return {
@@ -47,6 +56,12 @@ export function view(fields: Partial<PriceView> = {}): PriceView {
     rule: { price_types: ['vwap'], dema_timeframe: null, dema_half_life: null, spread_threshold_bp: 50 },
     spread_bp: '7.7',
     wide_spread: false,
+    // Понедельник 26.10 закрылся на 51,75; неделей раньше, 20.10, — 51,60.
+    day_ago: { day: '2026-10-26', price: { ...PRICE, value: '51.750000', time: '2026-10-26T15:00:00Z' } },
+    week_ago: { day: '2026-10-20', price: { ...PRICE, value: '51.600000', time: '2026-10-20T15:00:00Z' } },
+    settle_date: '2026-10-28',
+    accrued: '28.400000',
+    face_value: '1000.000000',
     ...fields,
   };
 }

@@ -30,7 +30,6 @@ export function ManualPriceForm({
 
   return (
     <form onSubmit={(e) => void submit(e)} aria-label="Ручная цена">
-      <h3>Ручная цена</h3>
       <p className="muted">
         Заменяет правило оценки до конца торгового дня. Ошиблись — введите новую цену: действует
         последняя.

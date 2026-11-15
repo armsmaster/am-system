@@ -2,16 +2,19 @@ import { act, fireEvent, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { asApi, fakeApi, OFZ, renderPage, view, type FakeApi } from '../test/fixtures';
+import { asApi, fakeApi, renderPage, view, type FakeApi } from '../test/fixtures';
 import { OverviewPage } from './OverviewPage';
 
+// Вторник 27.10.2026, 11:05 по Москве.
+const NOW = new Date('2026-10-27T08:05:00Z');
+
 function renderOverview(api: FakeApi = fakeApi()) {
-  renderPage(<OverviewPage api={asApi(api)} basePath="/marketdata" />);
+  renderPage(<OverviewPage api={asApi(api)} basePath="/marketdata" now={NOW} />);
   return api;
 }
 
 function cells() {
-  return screen
+  return within(screen.getByRole('table', { name: 'Цены' }))
     .getAllByRole('row')
     .slice(1)
     .map((row) => within(row).getAllByRole('cell').map((c) => c.textContent));
@@ -22,60 +25,78 @@ afterEach(() => {
 });
 
 describe('OverviewPage', () => {
-  it('shows the valuation price next to the other prices', async () => {
-    renderOverview();
+  it('shows the price, its kind, the change over a day and a week, face value and accrued interest', async () => {
+    const api = renderOverview();
 
-    await screen.findByRole('table');
+    await screen.findByRole('table', { name: 'Цены' });
+    expect(api.overview).toHaveBeenCalledWith(undefined);
+    expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).toEqual([
+      'Бумага',
+      'Цена',
+      'Тип',
+      'День',
+      'Неделя',
+      'Номинал',
+      'НКД',
+    ]);
+    // На телефоне тип и НКД — второй строкой; на компьютере эти строки скрыты.
     expect(cells()).toEqual([
       [
-        'SU26238RMFS4ОФЗ 26238',
-        '51,823 VWAP · quik, 27.10, 11:00',
-        '51,823',
-        '—',
-        '51,784',
-        '51,789',
-        '—',
-        '—',
-        '7,7',
+        'ОФЗ 26238SU26238RMFS4VWAP · quik',
+        '51,823НКД 28,40 ₽',
+        'VWAP · quik27.10, 11:00',
+        '+0,14%',
+        '+0,43%',
+        '1 000,00 ₽',
+        '28,40 ₽',
       ],
     ]);
-    // Самая свежая цена типа — из скрипта, вчерашний итог ISS — нет.
-    expect(screen.getAllByRole('cell')[2]).toHaveAttribute('title', 'quik, 27.10, 11:00');
-
-    await userEvent.click(screen.getByRole('link', { name: 'SU26238RMFS4' }));
-    expect(screen.getByText(`Открыта карточка ${OFZ.id}`)).toBeInTheDocument();
+    const [day, week] = screen.getAllByRole('cell').slice(3, 5);
+    expect(day).toHaveClass('up');
+    expect(day).toHaveAttribute('title', 'с 51,75 на конец 26.10.2026');
+    expect(week).toHaveAttribute('title', 'с 51,6 на конец 20.10.2026');
+    expect(
+      screen.getByText('Текущие цены, обновляются каждые 30 секунд. Номинал и НКД — на дату расчётов 28.10.2026.'),
+    ).toBeInTheDocument();
   });
 
-  it('highlights a wide spread, a stale price and no price at all', async () => {
+  it('puts a stale price and a wide spread under the price; no price — dashes', async () => {
     const api = fakeApi();
     api.overview.mockResolvedValue([
+      view({ price: { ...view().price!, value: '51.500000', stale: true }, wide_spread: true, spread_bp: '85.2' }),
       view({
-        wide_spread: true,
-        spread_bp: '193.1',
-        price: { ...view().price!, stale: true },
-        candidates: [
-          { type: 'vwap', source: 'iss', value: '51.782000', time: '2026-10-26T20:59:59Z', today: false },
-        ],
+        instrument: { id: 'i-fund', secid: 'LQDT', isin: null, kind: 'fund_share', short_name: 'LQDT ETF' },
+        price: null,
+        week_ago: { day: '2026-10-20', price: null },
+        accrued: null,
+        face_value: null,
       }),
-      view({ instrument: { ...OFZ, id: 'i-2', secid: 'LQDT' }, price: null, spread_bp: null, candidates: [] }),
     ]);
     renderOverview(api);
 
-    const rows = (await screen.findAllByRole('row')).slice(1);
-    expect(rows[0]).toHaveClass('wide');
-    expect(within(rows[0]!).getByText('устарела')).toBeInTheDocument();
-    expect(within(rows[0]!).getByText('51,782')).toHaveClass('muted');
-    expect(within(rows[1]!).getByText('нет цены')).toBeInTheDocument();
+    await screen.findByRole('table', { name: 'Цены' });
+    const [bond, fund] = cells();
+    expect(bond!.slice(1, 4)).toEqual(['51,5НКД 28,40 ₽устареларазброс 85,2 бп', 'VWAP · quik27.10, 11:00', '−0,48%']);
+    expect(screen.getAllByRole('row')[1]!.querySelectorAll('td')[3]).toHaveClass('down');
+    expect(fund).toEqual(['LQDT ETFLQDT', 'нет цены', '—', '—', '—', '—', '—']);
+    expect(screen.getAllByRole('row')[2]!.querySelectorAll('td')[4]).toHaveAttribute(
+      'title',
+      'нет цены на конец 20.10.2026',
+    );
   });
 
-  it('takes the freshest price of a type whatever the order', async () => {
-    const api = fakeApi();
-    const [older, newer] = view().candidates;
-    api.overview.mockResolvedValue([view({ candidates: [newer!, older!] })]);
-    renderOverview(api);
+  it('opens the price card by a click on the row or the name', async () => {
+    renderOverview();
 
-    await screen.findByRole('table');
-    expect(screen.getAllByRole('cell')[2]).toHaveTextContent('51,823');
+    await userEvent.click(await screen.findByText('1 000,00 ₽'));
+    expect(screen.getByText('Открыта карточка i-ofz')).toBeInTheDocument();
+  });
+
+  it('opens the price card by the link', async () => {
+    renderOverview();
+
+    await userEvent.click(await screen.findByRole('link', { name: 'ОФЗ 26238' }));
+    expect(screen.getByText('Открыта карточка i-ofz')).toBeInTheDocument();
   });
 
   it('says when there are no securities', async () => {
@@ -84,31 +105,50 @@ describe('OverviewPage', () => {
     renderOverview(api);
 
     expect(await screen.findByText(/Бумаг пока нет/)).toBeInTheDocument();
+    expect(screen.getByText('Текущие цены, обновляются каждые 30 секунд.')).toBeInTheDocument();
   });
 
-  it('shows prices at a chosen moment and returns to now', async () => {
+  it('chooses the moment: yesterday, the end of last month, or a date and time by 15 minutes', async () => {
     const api = renderOverview();
-    await screen.findByRole('table');
+    await screen.findByRole('table', { name: 'Цены' });
 
-    fireEvent.change(screen.getByLabelText('Момент, МСК'), { target: { value: '2026-10-26T18:00' } });
-    // Enter в поле момента не перезагружает страницу.
-    fireEvent.submit(screen.getByRole('form', { name: 'Момент' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Вчера' }));
+    expect(api.overview).toHaveBeenLastCalledWith('2026-10-26T23:59:59+03:00');
+    expect(await screen.findByText(/^Цены на 26\.10, 23:59 МСК — как их видела система тогда\./)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Конец сентября' }));
+    expect(api.overview).toHaveBeenLastCalledWith('2026-09-30T23:59:59+03:00');
 
-    expect(await screen.findByText(/как их видела система тогда/)).toBeInTheDocument();
-    expect(api.overview).toHaveBeenLastCalledWith('2026-10-26T18:00:00+03:00');
+    await userEvent.click(screen.getByRole('button', { name: 'Другой момент' }));
+    expect(api.overview).toHaveBeenLastCalledWith('2026-10-27T11:00:00+03:00');
+    await userEvent.click(screen.getByRole('button', { name: 'На 15 минут раньше' }));
+    expect(api.overview).toHaveBeenLastCalledWith('2026-10-27T10:45:00+03:00');
+    await userEvent.click(screen.getByRole('button', { name: 'На 15 минут позже' }));
+    await userEvent.click(screen.getByRole('button', { name: 'На 15 минут позже' }));
+    expect(screen.getByLabelText('Время, МСК')).toHaveValue('11:15');
+    await userEvent.selectOptions(screen.getByLabelText('Время, МСК'), '23:59');
+    expect(api.overview).toHaveBeenLastCalledWith('2026-10-27T23:59:59+03:00');
+    fireEvent.change(screen.getByLabelText('Дата'), { target: { value: '2026-10-20' } });
+    expect(api.overview).toHaveBeenLastCalledWith('2026-10-20T23:59:59+03:00');
+    // Стёртая дата ничего не меняет.
+    fireEvent.change(screen.getByLabelText('Дата'), { target: { value: '' } });
+    expect(screen.getByLabelText('Дата')).toHaveValue('2026-10-20');
 
     await userEvent.click(screen.getByRole('button', { name: 'Сейчас' }));
     expect(api.overview).toHaveBeenLastCalledWith(undefined);
+    expect(screen.queryByLabelText('Время, МСК')).not.toBeInTheDocument();
   });
 
-  it('refreshes current prices every 30 seconds', async () => {
+  it('refreshes current prices every 30 seconds, but not a past moment', async () => {
     vi.useFakeTimers();
     const api = renderOverview();
     await act(() => vi.advanceTimersByTimeAsync(0));
     expect(api.overview).toHaveBeenCalledTimes(1);
 
     await act(() => vi.advanceTimersByTimeAsync(30_000));
-
     expect(api.overview).toHaveBeenCalledTimes(2);
+
+    act(() => screen.getByRole('button', { name: 'Вчера' }).click());
+    await act(() => vi.advanceTimersByTimeAsync(60_000));
+    expect(api.overview).toHaveBeenCalledTimes(3);
   });
 });

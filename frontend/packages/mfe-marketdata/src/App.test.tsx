@@ -46,7 +46,7 @@ describe('MarketdataApp', () => {
     const fetchMock = stubService();
     renderInShell(['operations']);
 
-    expect(await screen.findByRole('link', { name: 'SU26238RMFS4' })).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: 'ОФЗ 26238' })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith('/api/marketdata/overview', expect.anything());
 
     await userEvent.click(screen.getByRole('link', { name: 'Лента скрипта' }));
@@ -60,7 +60,7 @@ describe('MarketdataApp', () => {
     stubService();
     renderInShell([...roles], '/marketdata/instruments/i-ofz');
 
-    expect(await screen.findByRole('heading', { name: 'SU26238RMFS4 — ОФЗ 26238' })).toBeInTheDocument();
-    expect(screen.queryByRole('form', { name: 'Ручная цена' }) !== null).toBe(canEdit);
+    expect(await screen.findByRole('article', { name: 'ОФЗ 26238' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Ручная цена' }) !== null).toBe(canEdit);
   });
 });

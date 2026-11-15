@@ -64,6 +64,12 @@ export interface RuleRecord extends Rule {
   readonly comment: string;
 }
 
+/** Цена для оценки на конец торгового дня — с ней сравнивают текущую (решение 152). */
+export interface Reference {
+  readonly day: string;
+  readonly price: Choice | null;
+}
+
 export interface PriceView {
   readonly instrument: Instrument;
   readonly at: string;
@@ -73,6 +79,15 @@ export interface PriceView {
   readonly rule: Rule;
   readonly spread_bp: Decimal | null;
   readonly wide_spread: boolean;
+  /** Конец прошлого торгового дня. */
+  readonly day_ago: Reference;
+  /** Конец торгового дня неделей раньше. */
+  readonly week_ago: Reference;
+  /** Дата расчётов T+1 торгового дня момента. */
+  readonly settle_date: string;
+  /** Облигация: НКД и номинал на дату расчётов; у пая — null. */
+  readonly accrued: Decimal | null;
+  readonly face_value: Decimal | null;
 }
 
 export interface Quote {
@@ -221,8 +236,8 @@ export function marketdataApi(client: ApiClient) {
     manualPrice: (id: string, body: { value: string; comment: string }) =>
       client.post<ManualPrice>(`${BASE}/instruments/${id}/manual-prices`, body),
     batches: () => client.get<Batch[]>(`${BASE}/feed/batches`),
-    analytics: (id: string, whatIf: WhatIf = {}) =>
-      client.get<Analytics>(`${BASE}/instruments/${id}/analytics${query({ ...whatIf })}`),
+    analytics: (id: string, whatIf: WhatIf = {}, at?: string) =>
+      client.get<Analytics>(`${BASE}/instruments/${id}/analytics${query({ ...whatIf, at })}`),
     rates: (date?: string) => client.get<Rate[]>(`${BASE}/rates${query({ date })}`),
   };
 }
