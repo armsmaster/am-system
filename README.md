@@ -123,6 +123,18 @@ Desktop под Windows события изменения файлов до ко�
 docker compose exec -T postgres pg_dumpall -U postgres | gzip > backup-$(date +%F).sql.gz
 ```
 
+**Срок входа (решение 162).** На странице входа — «Запомнить меня»: с ней сессия
+живёт неделю с последней активности, но не больше 30 дней; без неё — 30 минут
+без запросов, не больше 10 часов. Keycloak читает realm только при первом
+запуске, поэтому на уже работающей машине настройку включает команда:
+
+```bash
+docker compose exec keycloak sh -c '/opt/keycloak/bin/kcadm.sh config credentials --server http://localhost:8080/auth --realm master --user "$KC_BOOTSTRAP_ADMIN_USERNAME" --password "$KC_BOOTSTRAP_ADMIN_PASSWORD" && /opt/keycloak/bin/kcadm.sh update realms/am -s rememberMe=true -s ssoSessionIdleTimeoutRememberMe=604800 -s ssoSessionMaxLifespanRememberMe=2592000'
+```
+
+То же вручную — в консоли Keycloak: «Realm settings → Login → Remember me» и
+«Realm settings → Sessions → SSO Session Idle / Max Remember Me».
+
 Чего режим ВМ не делает: не закрывает консоль Keycloak `/auth/admin` от
 интернета и не включает OTP — это решения о доступе пользователей (вопрос 54
 в [open-questions.md](docs/open-questions.md)). Управляемый PostgreSQL

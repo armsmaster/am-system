@@ -93,6 +93,12 @@ def test_env_and_realm_for_the_machine(root: Path) -> None:
     assert (people[0]["email"], people[0]["emailVerified"]) == ("ops@example.ru", True)
     assert people[0]["requiredActions"] == ["UPDATE_PASSWORD"]
     assert realm["sslRequired"] == "external"
+    # «Запомнить меня» (решение 162): неделя с последней активности, не больше 30 дней.
+    assert (
+        realm["rememberMe"],
+        realm["ssoSessionIdleTimeoutRememberMe"],
+        realm["ssoSessionMaxLifespanRememberMe"],
+    ) == (True, 7 * 24 * 3600, 30 * 24 * 3600)
     assert "admin-dev" not in json.dumps(realm)
 
 

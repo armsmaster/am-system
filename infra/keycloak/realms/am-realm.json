@@ -5,7 +5,7 @@
   "sslRequired": "external",
   "registrationAllowed": false,
   "resetPasswordAllowed": false,
-  "rememberMe": false,
+  "rememberMe": true,
   "loginWithEmailAllowed": false,
   "duplicateEmailsAllowed": false,
   "bruteForceProtected": true,
@@ -13,6 +13,8 @@
   "accessTokenLifespan": 300,
   "ssoSessionIdleTimeout": 1800,
   "ssoSessionMaxLifespan": 36000,
+  "ssoSessionIdleTimeoutRememberMe": 604800,
+  "ssoSessionMaxLifespanRememberMe": 2592000,
   "internationalizationEnabled": true,
   "supportedLocales": [
     "ru",
