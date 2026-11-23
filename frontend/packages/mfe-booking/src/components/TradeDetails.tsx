@@ -1,10 +1,8 @@
 import { ErrorNote, LoadedView, useAction, useLoad } from '@am/ui';
 import { useCallback, useState, type FormEvent } from 'react';
-import { Link } from 'react-router';
 
 import type { Context } from '../App';
 import type { Trade } from '../api';
-import { TradeForm } from '../components/TradeForm';
 import {
   decimalInput,
   FIELD_LABELS,
@@ -17,21 +15,30 @@ import {
   tradeLabel,
   VENUE_LABELS,
 } from '../format';
+import { TradeForm } from './TradeForm';
 
-/** Карточка сделки: поля действующей версии, история версий, подтверждение, правка, отмена. */
-export function TradePage({ id, context }: { readonly id: string; readonly context: Context }) {
+/**
+ * Сделка в панели справа (решение 161): поля действующей версии, история версий,
+ * подтверждение, правка, отмена. ``onChanged`` — список за панелью обновится.
+ */
+export function TradeDetails({
+  id,
+  context,
+  onChanged,
+}: {
+  readonly id: string;
+  readonly context: Context;
+  readonly onChanged: () => void;
+}) {
   const load = useCallback(() => context.api.trade(id), [context.api, id]);
   const [state, reload] = useLoad(load);
+  const changed = useCallback(() => {
+    reload();
+    onChanged();
+  }, [reload, onChanged]);
 
   return (
-    <>
-      <p>
-        <Link to={context.basePath}>← Сделки за день</Link>
-      </p>
-      <LoadedView state={state}>
-        {(trade) => <TradeCard trade={trade} context={context} onChanged={reload} />}
-      </LoadedView>
-    </>
+    <LoadedView state={state}>{(trade) => <TradeCard trade={trade} context={context} onChanged={changed} />}</LoadedView>
   );
 }
 
@@ -57,14 +64,20 @@ function TradeCard({
   };
 
   return (
-    <article>
-      <h2>
-        {tradeLabel(trade)} <span className="code">{trade.secid}</span> — {trade.short_name}
-      </h2>
-      <p>
-        <span className="badge">{STATUS_LABELS[trade.status]}</span> версия {trade.number}
+    <article className="trade-details">
+      <p className="trade-badges">
+        <span className={`pill side-${trade.kind === 'repo' ? 'repo' : trade.side}`}>{tradeLabel(trade)}</span>
+        <span className={`pill status-${trade.status}`}>{STATUS_LABELS[trade.status]}</span>
+        <span className="muted">
+          версия {trade.number}
+          {trade.external_id && ` · № ${trade.external_id}`}
+        </span>
       </p>
       <dl className="facts">
+        <dt>Бумага</dt>
+        <dd>
+          {trade.short_name} <span className="mono">{trade.secid}</span>
+        </dd>
         <dt>Портфель</dt>
         <dd>{trade.portfolio_code}</dd>
         {trade.instrument_kind !== 'ksu' && (
@@ -109,8 +122,6 @@ function TradeCard({
           {VENUE_LABELS[trade.venue]}
           {trade.counterparty && `, ${trade.counterparty}`}
         </dd>
-        <dt>Номер сделки у брокера</dt>
-        <dd>{trade.external_id ?? '—'}</dd>
       </dl>
       {closed && (
         <p className="notice">
@@ -118,7 +129,7 @@ function TradeCard({
           подтвердить сделку можно после повторного открытия дня — его открывает администратор.
         </p>
       )}
-      <p>
+      <p className="trade-actions">
         {context.isOperations && trade.status === 'entered' && !closed && (
           <button
             type="button"

@@ -78,7 +78,7 @@ export interface Trade {
   readonly trade_at: string;
   readonly trade_date: string;
   readonly settle_date: string;
-  readonly venue: 'exchange' | 'otc';
+  readonly venue: 'exchange' | 'negotiated' | 'otc';
   readonly counterparty: string | null;
   readonly external_id: string | null;
   readonly kind: TradeKind;
@@ -107,7 +107,7 @@ export interface TradeInput {
   readonly face_value: string | null;
   readonly accrued: string | null;
   readonly fee: string;
-  readonly venue: 'exchange' | 'otc';
+  readonly venue: 'exchange' | 'negotiated' | 'otc';
   readonly counterparty: string | null;
   readonly external_id: string | null;
   readonly comment: string | null;
@@ -501,6 +501,8 @@ export interface LadderDay {
 export interface Ladder {
   readonly account_id: string;
   readonly portfolios: readonly { readonly id: string; readonly code: string; readonly name: string }[];
+  /** Дни раньше — факт, с сегодня — план. */
+  readonly today: string;
   /** Последний расчёт, от которого идёт прогноз. */
   readonly as_of: string | null;
   readonly waiting_since: string | null;
@@ -547,10 +549,11 @@ export interface ImportReport {
 
 // --- загрузка из отчёта QUIK (решение 151) ---------------------------------------------
 
-/** Тариф брокера на счёт: купля-продажа — % от оборота без НКД, РЕПО — % годовых. */
+/** Тариф брокера на счёт: купля-продажа и РПС — % от оборота без НКД, РЕПО — % годовых. */
 export interface Tariff {
   readonly outright_rate: Decimal;
   readonly repo_rate: Decimal;
+  readonly rps_rate: Decimal;
   readonly valid_from: string;
   readonly comment: string | null;
   readonly author: string;
@@ -561,7 +564,8 @@ export interface Tariff {
 export interface QuikLine {
   readonly line: number;
   readonly external_id: string;
-  readonly kind: 'outright' | 'repo';
+  /** rps — переговорная сделка (решение 159). */
+  readonly kind: 'outright' | 'rps' | 'repo';
   readonly code: string;
   readonly name: string;
   /** null — строку отчёта не разобрать. У РЕПО: buy — обратное, sell — прямое. */
@@ -600,6 +604,7 @@ export interface QuikUpload {
   /** Ставки на эту загрузку; null — по тарифу счёта на день сделки. */
   readonly outright_rate: Decimal | null;
   readonly repo_rate: Decimal | null;
+  readonly rps_rate: Decimal | null;
   /** false — только проверка, ничего не записывается. */
   readonly apply: boolean;
 }
@@ -656,8 +661,9 @@ export function bookingApi(client: ApiClient) {
       client.get<Defaults>(
         `${BASE}/trade-defaults${query({ instrument_id: instrumentId, trade_date: tradeDate })}`,
       ),
-    trades: (portfolioId: string, date: string) =>
-      client.get<Trade[]>(`${BASE}/trades${query({ portfolio_id: portfolioId, date })}`),
+    /** Сделки за период с ``from`` по ``till`` включительно (решение 161). */
+    trades: (portfolioId: string, from: string, till: string) =>
+      client.get<Trade[]>(`${BASE}/trades${query({ portfolio_id: portfolioId, from, till })}`),
     trade: (id: string) => client.get<Trade>(`${BASE}/trades/${id}`),
     enter: (body: TradeInput) => client.post<Trade>(`${BASE}/trades`, body),
     amend: (id: string, body: TradeInput) => client.post<Trade>(`${BASE}/trades/${id}/versions`, body),
@@ -684,13 +690,16 @@ export function bookingApi(client: ApiClient) {
     /** Пакет — как в файле: форму проверяет сервис по спецификации. */
     importTrades: (batch: unknown) => client.post<ImportReport>(`${BASE}/feed/v1/trades`, batch),
     importQuik: (body: QuikUpload) => client.post<QuikReport>(`${BASE}/imports/quik`, body),
-    ladder: (accountId: string) => client.get<Ladder>(`${BASE}/ladder${query({ account_id: accountId })}`),
+    /** План по расчётам с даты ``from``; без неё — с сегодня (решение 161). */
+    ladder: (accountId: string, from?: string) =>
+      client.get<Ladder>(`${BASE}/ladder${query({ account_id: accountId, from })}`),
     limitsCheck: (trade: LimitsTrade) => client.post<WhatIf>('/api/limits/check', trade),
   };
 }
 
 export type BookingApi = ReturnType<typeof bookingApi>;
 
-function query(params: Record<string, string>): string {
-  return `?${new URLSearchParams(params).toString()}`;
+function query(params: Record<string, string | undefined>): string {
+  const given = Object.entries(params).filter((entry): entry is [string, string] => entry[1] !== undefined);
+  return `?${new URLSearchParams(given).toString()}`;
 }

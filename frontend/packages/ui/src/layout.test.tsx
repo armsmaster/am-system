@@ -72,6 +72,16 @@ describe('Drawer', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it('is wider for tables', () => {
+    render(
+      <Drawer title="Импорт" open wide onClose={vi.fn()}>
+        <p>Таблица</p>
+      </Drawer>,
+    );
+
+    expect(screen.getByRole('dialog', { name: 'Импорт' })).toHaveClass('drawer', 'drawer-wide');
+  });
+
   it('closes on the button, on Escape and on a click outside', async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();

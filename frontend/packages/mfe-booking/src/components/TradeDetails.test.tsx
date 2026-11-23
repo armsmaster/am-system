@@ -10,7 +10,14 @@ function facts(): Record<string, string> {
   return Object.fromEntries(terms.map((t) => [t.textContent, t.nextElementSibling?.textContent ?? '']));
 }
 
-describe('TradePage', () => {
+/** Сделка открылась в панели справа: её поля загружены. */
+async function opened(): Promise<HTMLElement> {
+  const panel = await screen.findByRole('dialog', { name: 'Сделка' });
+  await within(panel).findByText('Портфель');
+  return panel;
+}
+
+describe('TradeDetails', () => {
   it('shows the trade and its versions', async () => {
     const api = fakeApi();
     api.trade.mockResolvedValue(
@@ -34,9 +41,13 @@ describe('TradePage', () => {
     );
     renderBooking(api, '/booking/trades/t-1');
 
-    expect(await screen.findByRole('heading', { name: 'покупка SU26238RMFS4 — ОФЗ 26238' })).toBeInTheDocument();
+    const panel = await opened();
     expect(api.trade).toHaveBeenCalledWith('t-1');
+    expect(within(panel).getByText('покупка')).toHaveClass('pill', 'side-buy');
+    expect(within(panel).getAllByText('введена')[0]).toHaveClass('pill', 'status-entered');
+    expect(within(panel).getByText('версия 2 · № B-17')).toBeInTheDocument();
     expect(facts()).toMatchObject({
+      Бумага: 'ОФЗ 26238 SU26238RMFS4',
       Портфель: 'OPIF1-BONDS',
       Количество: '50 000 шт.',
       Цена: '52,5% от номинала',
@@ -45,7 +56,6 @@ describe('TradePage', () => {
       Сумма: '28 000 500,00 ₽',
       Расчёты: '30.11.2026',
       Место: 'внебиржевая, Брокер',
-      'Номер сделки у брокера': 'B-17',
     });
     const versions = within(screen.getByRole('table', { name: 'Версии сделки' })).getAllByRole('row');
     expect(versions[1]).toHaveTextContent('количество, НКД, mystery');
@@ -60,19 +70,42 @@ describe('TradePage', () => {
     );
     renderBooking(api, '/booking/trades/t-1');
 
-    await screen.findByRole('heading', { name: /SU26238RMFS4/ });
+    await opened();
     expect(facts()['Цена']).toBe('1,5 ₽ за пай');
     expect(facts()).not.toHaveProperty('НКД на бумагу');
   });
 
-  it('lets operations confirm a trade', async () => {
+  it('shows a negotiated trade with its counterparty', async () => {
+    const api = fakeApi();
+    api.trade.mockResolvedValue(trade({ venue: 'negotiated', counterparty: 'Банк Пример' }));
+    renderBooking(api, '/booking/trades/t-1');
+
+    await opened();
+    expect(facts()['Место']).toBe('биржа, РПС, Банк Пример');
+  });
+
+  it('lets operations confirm a trade and refreshes the list behind', async () => {
     const user = userEvent.setup();
     const api = renderBooking(fakeApi(), '/booking/trades/t-1', true);
 
     await user.click(await screen.findByRole('button', { name: 'Подтвердить' }));
 
     await waitFor(() => expect(api.confirm).toHaveBeenCalledWith('t-1', ''));
-    expect(api.trade).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(api.trade).toHaveBeenCalledTimes(2));
+    expect(api.trades).toHaveBeenCalledTimes(2);
+  });
+
+  it('closes the panel back to the list with the same filter', async () => {
+    const user = userEvent.setup();
+    renderBooking(fakeApi(), '/booking/trades/t-1?portfolio=p-bonds&from=2026-11-23&till=2026-11-27');
+
+    await opened();
+    await user.click(screen.getByRole('button', { name: 'Закрыть' }));
+
+    expect(screen.queryByRole('dialog', { name: 'Сделка' })).not.toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Адрес' })).toHaveTextContent(
+      '/booking?portfolio=p-bonds&from=2026-11-23&till=2026-11-27',
+    );
   });
 
   it('keeps a trade of a closed day as it is', async () => {
@@ -158,7 +191,7 @@ describe('TradePage', () => {
     api.trade.mockResolvedValue(trade({ status }));
     renderBooking(api, '/booking/trades/t-1', isOperations);
 
-    await screen.findByRole('heading', { name: /SU26238RMFS4/ });
+    await opened();
     expect(screen.queryByRole('button', { name: 'Исправить' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Подтвердить' })).not.toBeInTheDocument();
   });

@@ -1,4 +1,4 @@
-"""Загрузка сделок из отчёта QUIK (решение 151): разбор, комиссии по тарифу, проверка и запись.
+"""Загрузка сделок из отчёта QUIK (решения 151, 159): разбор, комиссии по тарифу, проверка и запись.
 
 Отчёт в fixtures/quik — синтетический: разметка как у настоящего отчёта QUIK
 (незакрытые ячейки, x:num, строки итогов без </TR>), сделки выдуманы.
@@ -113,6 +113,9 @@ CHECKED = [
     ("18100000301", "bond_repo", None),
     ("18100000401", "bad_repo", None),
     ("18100000402", "bad_repo", None),
+    # РПС: 2 138 234,96 × 0,02% (ставка РПС по умолчанию) = 427,646992 → 427,65.
+    ("18100000501", "created", "427.65"),
+    ("18100000601", "deal_type_unsupported", None),
 ]
 
 
@@ -150,6 +153,17 @@ async def test_check_then_load(admin: Api, trader: Api, resources: Resources, wo
         "1078071.85",
         "0.012500",
     )
+    rps = next(line for line in checked["lines"] if line["external_id"] == "18100000501")
+    assert (rps["kind"], rps["code"], rps["amount"], rps["fee_rate"]) == (
+        "rps",
+        "RU000A10F504",
+        "2157214.96",
+        "0.020000",
+    )
+    other = next(line for line in checked["lines"] if line["external_id"] == "18100000601")
+    assert other["message"] == (
+        "Тип сделки «Адресная» загрузка из отчёта QUIK не знает — введите сделку вручную."
+    )
     mismatch = next(line for line in checked["lines"] if line["error"] == "amount_mismatch")
     assert mismatch["message"] == (
         "Сумма по расчёту системы 1680.03 ₽ не сходится с отчётом 1680.04 ₽ (объём и НКД) "
@@ -181,6 +195,15 @@ async def test_check_then_load(admin: Api, trader: Api, resources: Resources, wo
         found["second_amount"],
         found["fee"],
     ) == ("repo", "buy", "30000000.00", "14.200000", "2026-11-30", "30035013.70", "1232.88")
+    # РПС — биржевая купля-продажа в режиме переговорных сделок с контрагентом из отчёта.
+    negotiated = next(line for line in loaded["lines"] if line["external_id"] == "18100000501")
+    found = trader.ok("GET", f"/trades/{negotiated['trade_id']}")
+    assert (found["venue"], found["counterparty"], found["settle_date"], found["fee"]) == (
+        "negotiated",
+        "Банк Пример",
+        "2026-11-30",
+        "427.65",
+    )
 
     # Тот же отчёт ещё раз — без изменений.
     again = trader.ok("POST", "/imports/quik", upload(apply=True))
@@ -194,6 +217,10 @@ async def test_check_then_load(admin: Api, trader: Api, resources: Resources, wo
         ("18100000003", "amended", "3.60"),
     ]
     assert outcome(custom)[6][1] == "unchanged"  # ставка РЕПО — из тарифа, как была
+    assert outcome(custom)[11][1] == "unchanged"  # и ставка РПС
+    # Своя ставка РПС на загрузку — новая версия РПС.
+    rps_rate = trader.ok("POST", "/imports/quik", upload(apply=True, rps_rate="0.01"))
+    assert outcome(rps_rate)[11] == ("18100000501", "amended", "213.82")
 
 
 async def test_confirmed_trade_and_closed_day(
@@ -240,7 +267,12 @@ async def test_rates_without_a_tariff(trader: Api, world: World) -> None:
     )
     assert outcome(checked)[6][1] == "no_tariff"
     # Ставки на загрузку — и без тарифа.
-    custom = trader.ok("POST", "/imports/quik", upload(outright_rate="0.0125", repo_rate="0.5"))
+    assert outcome(checked)[11][1] == "no_tariff"  # РПС — тоже по тарифу
+    custom = trader.ok(
+        "POST",
+        "/imports/quik",
+        upload(outright_rate="0.0125", repo_rate="0.5", rps_rate="0.02"),
+    )
     assert outcome(custom) == CHECKED
 
 
@@ -270,21 +302,24 @@ def test_files_that_are_not_a_report(trader: Api) -> None:
 def test_report_encodings_and_quirks() -> None:
     # Отчёт в UTF-8 с меткой порядка байтов и незнакомая кодировка в заголовке.
     text = REPORT.decode("windows-1251")
-    assert len(parse_report(b"\xef\xbb\xbf" + text.encode("utf-8")).deals) == 5
+    assert len(parse_report(b"\xef\xbb\xbf" + text.encode("utf-8")).deals) == 6
     unknown = text.replace("charset=windows-1251", "charset=x-nothing")
-    assert len(parse_report(unknown.encode("windows-1251")).deals) == 5
+    assert len(parse_report(unknown.encode("windows-1251")).deals) == 6
     # Количество не целое, цена не больше нуля, не число — строка не разбирается.
     report = parse_report(
         REPORT.replace(b'x:num="100">100', b'x:num="1.5">1.5')
         .replace(b'x:num="18000.00"', b'x:num="abc"')
         .replace(b'x:num="99.75"', b'x:num="0"')
+        .replace(b'x:num="2000">2 000', b'x:num="1.5">1.5')
     )
     assert {p.number: p.message for p in report.problems if p.code == "bad_row"} == {
         "18100000001": "Строку не разобрать: количество 1.5 — не целое число бумаг.",
         "18100000002": "Строку не разобрать: цена 0 не больше нуля.",
         "18100000003": "Строку не разобрать: в колонке «Объём» не число: 'abc'.",
         "18100000006": "Строку не разобрать: направление «Обмен» — не купля и не продажа.",
+        "18100000501": "РПС не разобрать: количество 1.5 — не целое число бумаг.",
     }
+    assert {p.number: p.kind for p in report.problems}["18100000501"] == "rps"
     with pytest.raises(QuikFormatError):
         parse_report(b"")
 
@@ -316,9 +351,11 @@ async def test_tariffs(admin: Api, trader: Api, resources: Resources) -> None:
     found = admin.ok(
         "POST", f"/accounts/{ACCOUNT}/tariffs", TARIFF | {"comment": "Тариф брокера с ноября"}
     )
-    assert [(t["valid_from"], t["outright_rate"], t["repo_rate"], t["author"]) for t in found] == [
-        ("2026-11-01", "0.012500", "0.500000", "admin"),
-        ("2026-12-01", "0.012500", "0.500000", "admin"),
+    rates = [(t["valid_from"], t["outright_rate"], t["repo_rate"], t["rps_rate"]) for t in found]
+    # Ставка РПС не задана — 0,02% по умолчанию (решение 159).
+    assert rates == [
+        ("2026-11-01", "0.012500", "0.500000", "0.020000"),
+        ("2026-12-01", "0.012500", "0.500000", "0.020000"),
     ]
     assert trader.ok("GET", f"/accounts/{ACCOUNT}/tariffs") == found
     unknown = f"/accounts/{UUID(int=999)}/tariffs"
@@ -330,7 +367,12 @@ async def test_tariffs(admin: Api, trader: Api, resources: Resources) -> None:
     tariff_events = [e for e in events if e["type"] == "broker_tariff.set"]
     assert tariff_events[-1]["data"] == {
         "portfolios": ["OPIF1-BONDS"],
-        "after": {"outright_fee": "0.0125", "repo_fee": "0.5", "valid_from": "2026-11-01"},
+        "after": {
+            "outright_fee": "0.0125",
+            "repo_fee": "0.5",
+            "rps_fee": "0.02",
+            "valid_from": "2026-11-01",
+        },
     }
 
 

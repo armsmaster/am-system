@@ -22,7 +22,7 @@ interface Draft {
   face_value: string;
   accrued: string;
   fee: string;
-  venue: 'exchange' | 'otc';
+  venue: 'exchange' | 'negotiated' | 'otc';
   counterparty: string;
   external_id: string;
   comment: string;
@@ -325,6 +325,7 @@ export function TradeForm({
               Место
               <select value={draft.venue} onChange={(e) => set('venue', e.target.value as Draft['venue'])}>
                 <option value="exchange">биржа</option>
+                <option value="negotiated">биржа, РПС</option>
                 <option value="otc">внебиржевая</option>
               </select>
             </label>

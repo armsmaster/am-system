@@ -4,7 +4,7 @@ import { Link } from 'react-router';
 
 import type { Context } from '../App';
 import type { ImportReport, ImportResult } from '../api';
-import { QuikImport } from '../components/QuikImport';
+import { QuikImport } from './QuikImport';
 
 const RESULT_LABELS: Readonly<Record<ImportResult, string>> = {
   created: 'новая сделка',
@@ -40,8 +40,12 @@ function schemaErrors(error: unknown): string[] {
 
 type Source = 'quik' | 'json';
 
-/** Импорт сделок из файла: отчёт QUIK (решение 151) или пакет JSON (docs/api/trade-import). */
-export function ImportPage({ context }: { readonly context: Context }) {
+/**
+ * Импорт сделок из файла — в панели справа раздела «Сделки» (решение 161): отчёт QUIK
+ * (решения 151, 159) или пакет JSON (docs/api/trade-import). ``onImported`` — после
+ * записи: список сделок за панелью обновится.
+ */
+export function ImportPanel({ context, onImported }: { readonly context: Context; readonly onImported: () => void }) {
   const [source, setSource] = useState<Source>('quik');
   const tab = (value: Source, label: string) => (
     <button type="button" role="tab" aria-selected={source === value} onClick={() => setSource(value)}>
@@ -54,7 +58,11 @@ export function ImportPage({ context }: { readonly context: Context }) {
         {tab('quik', 'Отчёт QUIK')}
         {tab('json', 'Пакет JSON')}
       </div>
-      {source === 'quik' ? <QuikImport context={context} /> : <JsonImport context={context} />}
+      {source === 'quik' ? (
+        <QuikImport context={context} onLoaded={onImported} />
+      ) : (
+        <JsonImport context={context} onImported={onImported} />
+      )}
     </>
   );
 }
@@ -63,7 +71,7 @@ export function ImportPage({ context }: { readonly context: Context }) {
  * Импорт сделок из файла по спецификации docs/api/trade-import — тот же пакет,
  * что присылает внешняя система. Ответ: что принято, что отклонено и почему.
  */
-function JsonImport({ context }: { readonly context: Context }) {
+function JsonImport({ context, onImported }: { readonly context: Context; readonly onImported: () => void }) {
   const [state, setState] = useState<State>({ status: 'idle' });
 
   async function upload(event: ChangeEvent<HTMLInputElement>) {
@@ -83,6 +91,7 @@ function JsonImport({ context }: { readonly context: Context }) {
     try {
       const report = await context.api.importTrades(body);
       setState({ status: 'done', file: file.name, report });
+      onImported();
     } catch (failure) {
       const details = schemaErrors(failure);
       setState({

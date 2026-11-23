@@ -89,11 +89,14 @@ export function Drawer({
   open,
   onClose,
   children,
+  wide = false,
 }: {
   readonly title: string;
   readonly open: boolean;
   readonly onClose: () => void;
   readonly children: ReactNode;
+  /** Шире обычной — для таблиц внутри панели, например результата импорта. */
+  readonly wide?: boolean;
 }) {
   useEffect(() => {
     if (!open) {
@@ -114,7 +117,7 @@ export function Drawer({
   return (
     <>
       <div className="drawer-scrim" aria-hidden="true" onClick={onClose} />
-      <aside className="drawer" role="dialog" aria-modal="true" aria-label={title}>
+      <aside className={wide ? 'drawer drawer-wide' : 'drawer'} role="dialog" aria-modal="true" aria-label={title}>
         <div className="drawer-head">
           <h2>{title}</h2>
           <button type="button" className="drawer-close" aria-label="Закрыть" onClick={onClose}>

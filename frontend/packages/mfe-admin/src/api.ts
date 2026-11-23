@@ -52,6 +52,8 @@ export interface Tariff {
   readonly outright_rate: string;
   /** % годовых от суммы первой части РЕПО. */
   readonly repo_rate: string;
+  /** Переговорная сделка (РПС): % от оборота без НКД (решение 159). */
+  readonly rps_rate: string;
   readonly valid_from: string;
   readonly comment: string | null;
   readonly author: string;
@@ -61,6 +63,7 @@ export interface Tariff {
 export interface NewTariff {
   readonly outright_rate: string;
   readonly repo_rate: string;
+  readonly rps_rate: string;
   readonly valid_from: string;
   readonly comment: string | null;
 }

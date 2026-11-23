@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
@@ -148,8 +148,48 @@ describe('PositionsPage', () => {
     expect(details).toHaveTextContent('спред-дюрация0,41');
     expect(details).toHaveTextContent(
       'оценкацена не за этот день; сумма купона к получению не объявлена; сумма погашения к получению не объявлена; ' +
-        'купон или погашение линкера к получению — оценка по номиналу ISS',
+        'купон или погашение линкера посчитаны по условиям выпуска — ISS подтвердит сумму в день выплаты',
     );
+  });
+
+  it('notes a linker coupon by the issue terms calmly, apart from an incomplete valuation', async () => {
+    const api = fakeApi();
+    const [line] = positions().lines;
+    api.positions.mockResolvedValue(
+      positions({
+        result: dayResult({ flags: ['due_estimated'] }),
+        lines: [{ ...line!, flags: ['due_estimated'] }],
+      }),
+    );
+    const user = userEvent.setup();
+    renderBooking(api, '/booking/positions?portfolio=p-bonds&date=2026-11-18');
+
+    expect(
+      await screen.findByText(
+        'Купон или погашение линкера к получению посчитаны по условиям выпуска — ISS подтвердит сумму в день выплаты.',
+      ),
+    ).toHaveClass('muted');
+    expect(screen.queryByText(/Оценка неполная/)).not.toBeInTheDocument();
+    await user.click(screen.getByText('Подробнее и лоты FIFO: 1'));
+    const note = within(screen.getByLabelText('Оценка SU26238RMFS4')).getByText(/по условиям выпуска/);
+    expect(note).toHaveClass('muted');
+  });
+
+  it('keeps the portfolio and the day in the address', async () => {
+    const user = userEvent.setup();
+    const api = renderBooking(fakeApi(), '/booking/positions');
+    await screen.findByRole('table', { name: 'Позиции' });
+
+    const form = within(screen.getByRole('form', { name: 'Портфель и дата' }));
+    await user.selectOptions(form.getByRole('combobox'), 'p-bonds');
+    await waitFor(() => expect(api.positions).toHaveBeenLastCalledWith('p-bonds', expect.any(String)));
+    fireEvent.change(form.getByLabelText('Дата'), { target: { value: '2026-11-30' } });
+    await waitFor(() => expect(api.positions).toHaveBeenLastCalledWith('p-bonds', '2026-11-30'));
+    // Стёртая дата ничего не меняет; Enter в поле не перезагружает страницу.
+    fireEvent.change(form.getByLabelText('Дата'), { target: { value: '' } });
+    expect(api.positions).toHaveBeenLastCalledWith('p-bonds', '2026-11-30');
+    expect(fireEvent.submit(screen.getByRole('form', { name: 'Портфель и дата' }))).toBe(false);
+    expect(screen.getByRole('status', { name: 'Адрес' })).toHaveTextContent('portfolio=p-bonds&date=2026-11-30');
   });
 
   it('shows units and settlements with unit holders of the treasury portfolio', async () => {

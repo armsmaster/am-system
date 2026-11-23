@@ -99,10 +99,11 @@ class Repository:
         self,
         *,
         portfolio_ids: Iterable[UUID],
-        trade_date: date | None = None,
+        period: tuple[date, date] | None = None,
         include_cancelled: bool = True,
     ) -> list[Row[Any]]:
-        """Действующие (последние) версии сделок портфелей."""
+        """Действующие (последние) версии сделок портфелей; ``period`` — даты заключения
+        с первой по последнюю включительно."""
         ids = set(portfolio_ids)
         rows = await self._latest(trade_version, "trade_id", trade_version.c.portfolio_id.in_(ids))
         return sorted(
@@ -110,7 +111,7 @@ class Repository:
                 r
                 for r in rows
                 if r.portfolio_id in ids
-                and (trade_date is None or r.trade_date == trade_date)
+                and (period is None or period[0] <= r.trade_date <= period[1])
                 and (include_cancelled or r.status != CANCELLED)
             ),
             key=lambda r: (r.trade_at, str(r.trade_id)),

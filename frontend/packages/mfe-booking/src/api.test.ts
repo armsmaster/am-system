@@ -36,7 +36,12 @@ describe('bookingApi', () => {
       'get',
       ['/api/booking/trade-defaults?instrument_id=i-1&trade_date=2026-11-27'],
     ],
-    ['trades', () => api.trades('p-1', '2026-11-27'), 'get', ['/api/booking/trades?portfolio_id=p-1&date=2026-11-27']],
+    [
+      'trades for a period',
+      () => api.trades('p-1', '2026-11-23', '2026-11-27'),
+      'get',
+      ['/api/booking/trades?portfolio_id=p-1&from=2026-11-23&till=2026-11-27'],
+    ],
     ['trade', () => api.trade('t-1'), 'get', ['/api/booking/trades/t-1']],
     ['enter', () => api.enter(body), 'post', ['/api/booking/trades', body]],
     ['amend', () => api.amend('t-1', body), 'post', ['/api/booking/trades/t-1/versions', body]],
@@ -65,6 +70,7 @@ describe('bookingApi', () => {
       ['/api/booking/operations/o-1/cancel', { comment: 'ошибка' }],
     ],
     ['ladder', () => api.ladder('a-1'), 'get', ['/api/booking/ladder?account_id=a-1']],
+    ['ladder from a date', () => api.ladder('a-1', '2026-11-23'), 'get', ['/api/booking/ladder?account_id=a-1&from=2026-11-23']],
     ['limitsCheck', () => api.limitsCheck(LIMITS_TRADE), 'post', ['/api/limits/check', LIMITS_TRADE]],
     ['nav', () => api.nav('f-1', '2026-11-01', '2026-11-30'), 'get', ['/api/booking/nav?fund_id=f-1&from=2026-11-01&till=2026-11-30']],
     ['feeRates', () => api.feeRates('f-1'), 'get', ['/api/booking/funds/f-1/fee-rates']],
@@ -76,7 +82,7 @@ describe('bookingApi', () => {
       ['/api/booking/results?portfolio_id=p-1&from=2026-11-01&till=2026-11-30'],
     ],
     ['importTrades', () => api.importTrades({ source: 'x' }), 'post', ['/api/booking/feed/v1/trades', { source: 'x' }]],
-    ['importQuik', () => api.importQuik({ file: 'eA==', portfolio_id: 'p1', outright_rate: null, repo_rate: null, apply: false }), 'post', ['/api/booking/imports/quik', { file: 'eA==', portfolio_id: 'p1', outright_rate: null, repo_rate: null, apply: false }]],
+    ['importQuik', () => api.importQuik({ file: 'eA==', portfolio_id: 'p1', outright_rate: null, repo_rate: null, rps_rate: null, apply: false }), 'post', ['/api/booking/imports/quik', { file: 'eA==', portfolio_id: 'p1', outright_rate: null, repo_rate: null, rps_rate: null, apply: false }]],
   ] as const)('%s', async (_name, call, method, args) => {
     await call();
     expect(client[method]).toHaveBeenLastCalledWith(...args);

@@ -35,10 +35,10 @@ describe('REPO on the trade pages (design/07)', () => {
     api.enter.mockResolvedValue(repoTrade({ quantity: 0, secid: 'КСУ' }));
     renderBooking(api, '/booking?portfolio=p-bonds&date=2026-11-30');
 
-    const [, row, ksu] = within(await screen.findByRole('table', { name: 'Сделки за день' })).getAllByRole('row');
-    expect(row).toHaveTextContent('прямое РЕПО10 00052,6');
-    expect(ksu).toHaveTextContent('КСУобратное РЕПО———5 610 100,00');
-    expect(row).toHaveTextContent('30.11.2026 → 03.12.2026');
+    const [, row, ksu] = within(await screen.findByRole('table', { name: 'Сделки' })).getAllByRole('row');
+    expect(row).toHaveTextContent('прямое РЕПО14,5% · до 03.12.202610 000 шт.52,6%');
+    expect(ksu).toHaveTextContent('обратное РЕПО14,5% · до 03.12.2026—5 610 100,00');
+    expect(row).toHaveTextContent('30.11.2026→ 03.12.2026');
 
     await user.click(screen.getByRole('button', { name: 'Новая сделка' }));
     const form = within(screen.getByRole('form', { name: 'Новая сделка' }));
@@ -57,7 +57,8 @@ describe('REPO on the trade pages (design/07)', () => {
     api.trade.mockResolvedValue(repoTrade());
     renderBooking(api, '/booking/trades/t-repo', true);
 
-    expect(await screen.findByRole('heading', { name: /прямое РЕПО/ })).toBeInTheDocument();
+    const panel = await screen.findByRole('dialog', { name: 'Сделка' });
+    expect(await within(panel).findByText('прямое РЕПО')).toHaveClass('pill', 'side-repo');
     const facts = document.querySelector<HTMLElement>('dl.facts')!;
     expect(facts).toHaveTextContent('Сумма первой части5 610 100,00 ₽Ставка РЕПО14,5% годовых');
     expect(facts).toHaveTextContent('Вторая часть03.12.2026, 5 616 786,01 ₽');
@@ -160,7 +161,8 @@ describe('REPO in positions, ladder, NAV and operations (design/07)', () => {
       }),
     );
     renderBooking(api, '/booking/ladder?account=a-broker');
-    expect(await screen.findByText(/OPIF1-BONDS: РЕПО: вторая часть SU26238RMFS4 \+10 000 шт\. −5 616 786,01 ₽/)).toBeInTheDocument();
+    expect(await screen.findByText('OPIF1-BONDS: РЕПО: вторая часть SU26238RMFS4 −5 616 786,01 ₽')).toBeInTheDocument();
+    expect(screen.getByText('SU26238RMFS4 +10 000 → 50 000 шт.')).toHaveClass('mv-security');
 
     const fund = fakeApi();
     const [first] = nav().days;

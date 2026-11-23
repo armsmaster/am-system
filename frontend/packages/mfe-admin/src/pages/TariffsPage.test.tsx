@@ -12,8 +12,8 @@ describe('TariffsPage', () => {
 
     const rows = within(await screen.findByRole('table', { name: 'Тарифы счёта' })).getAllByRole('row');
     expect(rows.slice(1).map((r) => r.textContent)).toEqual([
-      '01.11.20260,01251adminНовый тариф брокера',
-      '01.01.20260,0150,5admin—',
+      '01.11.20260,01250,0251adminНовый тариф брокера',
+      '01.01.20260,0150,020,5admin—',
     ]);
     expect(api.tariffs).toHaveBeenCalledWith('id-A1');
     // Банковский счёт — не брокерский: его в списке нет.
@@ -33,12 +33,15 @@ describe('TariffsPage', () => {
     const form = within(screen.getByRole('form', { name: 'Новый тариф' }));
     await user.type(form.getByLabelText('Купля-продажа, % от оборота без НКД'), ' 0,0125');
     await user.type(form.getByLabelText('РЕПО, % годовых'), '0,5');
+    // РПС — 0,02% по умолчанию (решение 159).
+    expect(form.getByLabelText('РПС, % от оборота без НКД')).toHaveValue('0,02');
     await user.type(form.getByLabelText('Действует с'), '2026-11-01');
     await user.click(form.getByRole('button', { name: 'Сохранить тариф' }));
 
     expect(api.setTariff).toHaveBeenCalledWith('id-A1', {
       outright_rate: '0.0125',
       repo_rate: '0.5',
+      rps_rate: '0.02',
       valid_from: '2026-11-01',
       comment: null,
     });
@@ -49,6 +52,11 @@ describe('TariffsPage', () => {
     await user.click(form.getByRole('button', { name: 'Сохранить тариф' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Счёта нет');
     expect(api.setTariff).toHaveBeenLastCalledWith('id-A1', expect.objectContaining({ comment: 'Тариф с ноября' }));
+
+    await user.clear(form.getByLabelText('РПС, % от оборота без НКД'));
+    await user.type(form.getByLabelText('РПС, % от оборота без НКД'), '0,03');
+    await user.click(form.getByRole('button', { name: 'Сохранить тариф' }));
+    expect(api.setTariff).toHaveBeenLastCalledWith('id-A1', expect.objectContaining({ rps_rate: '0.03' }));
   });
 
   it('explains when there are no broker accounts', async () => {
@@ -60,12 +68,20 @@ describe('TariffsPage', () => {
   it('keeps whole percentages as they are', async () => {
     const api = fakeApi({
       tariffs: [
-        { outright_rate: '1', repo_rate: '10.000000', valid_from: '2026-11-01', comment: null, author: 'admin', created_at: 'x' },
+        {
+          outright_rate: '1',
+          repo_rate: '10.000000',
+          rps_rate: '0.020000',
+          valid_from: '2026-11-01',
+          comment: null,
+          author: 'admin',
+          created_at: 'x',
+        },
       ],
     });
     render(<TariffsPage api={asApi(api)} />);
 
     const rows = within(await screen.findByRole('table', { name: 'Тарифы счёта' })).getAllByRole('row');
-    expect(rows[1]).toHaveTextContent('01.11.2026110admin');
+    expect(rows[1]).toHaveTextContent('01.11.202610,0210admin');
   });
 });

@@ -1,6 +1,7 @@
 """Тарифы брокера на счёт (решение 151): ставки комиссии для загрузки из отчёта QUIK.
 
-Купля-продажа — % от оборота без НКД, РЕПО — % годовых от суммы первой части.
+Купля-продажа — % от оборота без НКД, РЕПО — % годовых от суммы первой части,
+переговорная сделка (РПС) — % от оборота без НКД по своей ставке (решение 159).
 Тариф задаёт администратор с датой начала; прежние остаются в истории. Тариф
 на день — последний с датой начала не позже дня. Уже загруженные сделки новый
 тариф не меняет: комиссия записана в сделку при загрузке.
@@ -55,6 +56,7 @@ class TariffDesk:
         *,
         outright_rate: Decimal,
         repo_rate: Decimal,
+        rps_rate: Decimal,
         valid_from: date,
         comment: str | None,
     ) -> list[Row[Any]]:
@@ -66,6 +68,7 @@ class TariffDesk:
                     "account_id": account_id,
                     "outright_rate": outright_rate,
                     "repo_rate": repo_rate,
+                    "rps_rate": rps_rate,
                     "valid_from": valid_from,
                     "comment": comment,
                     "author": self._actor.username,
@@ -86,6 +89,7 @@ class TariffDesk:
                         "after": {
                             "outright_fee": str(outright_rate),
                             "repo_fee": str(repo_rate),
+                            "rps_fee": str(rps_rate),
                             "valid_from": valid_from.isoformat(),
                         },
                     },

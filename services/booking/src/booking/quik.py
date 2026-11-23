@@ -1,13 +1,15 @@
 """Загрузка сделок из отчёта QUIK «Отчёт по всем сделкам клиента» (решение 151).
 
 Отчёт — HTML-таблица с расширением .xls в windows-1251: так QUIK выгружает отчёт
-для Excel. В нём два раздела: обычные сделки и РЕПО с ЦК. Каждое РЕПО — три
-строки с одним номером заявки: сама сделка (в цене — ставка) и две части.
+для Excel. В нём два раздела: обычные сделки и сделки с типом — РЕПО с ЦК и
+переговорные (РПС). Каждое РЕПО — три строки с одним номером заявки: сама сделка
+(в цене — ставка) и две части. РПС — одна строка: купля-продажа на бирже в режиме
+переговорных сделок с названным контрагентом (решение 159).
 
 Комиссии в отчёте нет — её считает система по тарифу брокера на счёт портфеля или
-по ставкам, которые пользователь задал на эту загрузку: купля-продажа — % от
-оборота без НКД, РЕПО — % годовых от суммы первой части за срок РЕПО, до копейки
-по каждой сделке. Дальше — тот же импорт сделок, что у пакета JSON
+по ставкам, которые пользователь задал на эту загрузку: купля-продажа и РПС — % от
+оборота без НКД, каждая по своей ставке, РЕПО — % годовых от суммы первой части
+за срок РЕПО, до копейки по каждой сделке. Дальше — тот же импорт сделок, что у пакета JSON
 (docs/api/trade-import): источник ``quik``, ключ — номер сделки.
 """
 
@@ -62,6 +64,11 @@ REPO_COLUMNS = (
     "Ставка РЕПО",
     "Дата расчётов",
 )
+# Типы сделок второго раздела: РЕПО с ЦК — три строки, РПС — одна (решение 159).
+REPO_TYPE = "РЕПО с ЦК"
+NEGOTIATED_TYPE = "РПС"
+DEAL_TYPE = "Тип сделки"
+PARTNER_COLUMNS = ("Организация партнёра", "Партнёр")
 MOMENT = re.compile(r"\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2}")
 PERIOD = re.compile(r"Отчётный период:\s*(\d{2}\.\d{2}\.\d{4})\s*-\s*(\d{2}\.\d{2}\.\d{4})")
 CLIENT = "Код клиента:"
@@ -164,6 +171,8 @@ class Deal:
     volume: Decimal  # чистая сумма: от неё — комиссия
     accrued: Decimal
     settle: date
+    negotiated: bool = False  # РПС: биржа, режим переговорных сделок
+    counterparty: str | None = None  # РПС: организация партнёра
 
     @property
     def turnover(self) -> Decimal:
@@ -203,6 +212,7 @@ class Problem:
     number: str
     code: str
     message: str
+    kind: str = "outright"  # outright | rps | repo
 
 
 @dataclass(slots=True)
@@ -271,7 +281,7 @@ def parse_report(content: bytes) -> Report:
         index += 1
         line = _Line(index, dict(zip(columns, row, strict=False)))
         if "Сумма РЕПО" in columns:
-            repo_lines.append(line)
+            _typed(line, report, repo_lines)
             continue
         try:
             report.deals.append(_deal(line))
@@ -292,18 +302,43 @@ def _date(text: str) -> date:
     return datetime.strptime(text, "%d.%m.%Y").date()
 
 
-def _deal(line: _Line) -> Deal:
+def _typed(line: _Line, report: Report, repo_lines: list[_Line]) -> None:
+    """Строка второго раздела по типу сделки; без колонки типа — РЕПО, как в старых отчётах."""
+    kind = line.text(DEAL_TYPE) if DEAL_TYPE in line.values else REPO_TYPE
+    number = line.text("Номер сделки")
+    if kind == REPO_TYPE:
+        repo_lines.append(line)
+    elif kind == NEGOTIATED_TYPE:
+        try:
+            report.deals.append(_deal(line, negotiated=True))
+        except ValueError as exc:
+            report.problems.append(
+                Problem(line.index, number, "bad_row", f"РПС не разобрать: {exc}.", "rps")
+            )
+    else:
+        report.problems.append(
+            Problem(
+                line.index,
+                number,
+                "deal_type_unsupported",
+                f"Тип сделки «{kind}» загрузка из отчёта QUIK не знает — введите сделку вручную.",
+            )
+        )
+
+
+def _deal(line: _Line, *, negotiated: bool = False) -> Deal:
     quantity = line.number("Кол-во")
     if quantity <= 0 or quantity != quantity.to_integral_value():
         raise ValueError(f"количество {quantity} — не целое число бумаг")
     price = line.number("Цена")
     if price <= 0:
         raise ValueError(f"цена {price} не больше нуля")
+    partner = next((line.text(c) for c in PARTNER_COLUMNS if line.text(c)), None)
     return Deal(
         line=line.index,
         number=line.text("Номер сделки"),
         trade_at=line.moment(),
-        code=line.text("Код инструмента"),
+        code=line.text("Код бумаги" if negotiated else "Код инструмента"),
         name=line.text("Краткое наименование инструмента"),
         side=line.side(),
         quantity=int(quantity),
@@ -311,6 +346,8 @@ def _deal(line: _Line) -> Deal:
         volume=line.number("Объём"),
         accrued=line.number("НКД"),
         settle=line.day("Дата расчётов"),
+        negotiated=negotiated,
+        counterparty=partner if negotiated else None,
     )
 
 
@@ -326,7 +363,7 @@ def _repos(lines: Sequence[_Line], report: Report) -> None:
             report.repos.append(_repo(group))
         except ValueError as exc:
             report.problems += [
-                Problem(item.index, item.text("Номер сделки"), "bad_repo", f"РЕПО: {exc}.")
+                Problem(item.index, item.text("Номер сделки"), "bad_repo", f"РЕПО: {exc}.", "repo")
                 for item in group
             ]
 
@@ -366,10 +403,11 @@ def _repo(group: Sequence[_Line]) -> RepoDeal:
 
 @dataclass(frozen=True, slots=True)
 class Rates:
-    """Ставки комиссии: купля-продажа — % от оборота без НКД, РЕПО — % годовых."""
+    """Ставки комиссии: купля-продажа и РПС — % от оборота без НКД, РЕПО — % годовых."""
 
     outright: Decimal | None = None
     repo: Decimal | None = None
+    rps: Decimal | None = None
 
 
 def tariff_on(tariffs: Sequence[Row[Any]], day: date) -> Row[Any] | None:
@@ -401,7 +439,7 @@ class QuikLine:
 
     line: int
     external_id: str
-    kind: str  # outright | repo
+    kind: str  # outright | rps | repo
     code: str = ""
     name: str = ""
     side: Side | None = None  # None — строку не разобрать
@@ -496,7 +534,7 @@ class QuikImport:
             QuikLine(
                 line=p.line,
                 external_id=p.number,
-                kind="repo" if p.code == "bad_repo" else "outright",
+                kind=p.kind,
                 error=p.code,
                 message=p.message,
             )
@@ -513,7 +551,7 @@ class QuikImport:
         line = QuikLine(
             line=deal.line,
             external_id=deal.number,
-            kind="outright",
+            kind="rps" if deal.negotiated else "outright",
             code=deal.code,
             name=deal.name,
             side=deal.side,
@@ -522,7 +560,12 @@ class QuikImport:
             price=deal.price,
             amount=deal.turnover,
         )
-        rate = _rate(target.rates.outright, target.tariffs, deal.trade_at.date(), "outright_rate")
+        chosen, column = (
+            (target.rates.rps, "rps_rate")
+            if deal.negotiated
+            else (target.rates.outright, "outright_rate")
+        )
+        rate = _rate(chosen, target.tariffs, deal.trade_at.date(), column)
         if rate is None:
             return _no_tariff(line, deal.trade_at.date()), None
         fee = deal_fee(deal, rate)
@@ -555,6 +598,8 @@ class QuikImport:
             face_value=face,
             fee=fee,
             comment=target.comment,
+            venue="negotiated" if deal.negotiated else "exchange",
+            counterparty=deal.counterparty,
         )
         return line, item
 

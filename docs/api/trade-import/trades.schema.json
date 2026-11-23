@@ -93,8 +93,8 @@
           "description": "Комиссия брокера и биржи по сделке, рубли. Нет — 0."
         },
         "venue": {
-          "description": "exchange — биржа (по умолчанию), otc — внебиржевая сделка.",
-          "enum": ["exchange", "otc"]
+          "description": "exchange — биржа (по умолчанию), negotiated — биржа, режим переговорных сделок (РПС), otc — внебиржевая сделка.",
+          "enum": ["exchange", "negotiated", "otc"]
         },
         "counterparty": {
           "$ref": "#/$defs/text",

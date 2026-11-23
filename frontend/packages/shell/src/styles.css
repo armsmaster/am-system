@@ -2502,3 +2502,276 @@ table.data.compact td {
     padding: 10px 12px 12px;
   }
 }
+
+/* --- Сделки и план по расчётам (решение 161) ------------------------------------ */
+
+.trades-toolbar select {
+  max-width: 280px;
+}
+
+.period-dates {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.trade-totals {
+  margin: 0 0 12px;
+}
+
+/* Направление и статус сделки — пилюлями: покупка зелёная, продажа красная, РЕПО фиолетовое. */
+.pill {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.pill.side-buy {
+  background: var(--ok-bg);
+  color: var(--ok-text);
+}
+
+.pill.side-sell {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+.pill.side-repo {
+  background: var(--accent-alt-soft);
+  color: var(--accent-alt);
+}
+
+.pill.status-entered {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+}
+
+.pill.status-confirmed {
+  background: var(--ok-bg);
+  color: var(--ok-text);
+}
+
+/* Количество и цена — в одной ячейке: количество основным текстом, цена мельче и серее. */
+/* Сумма — одной строкой, когда ширины хватает; на узком экране переносится. */
+@media (min-width: 900px) {
+  .trades-table td.num {
+    white-space: nowrap;
+  }
+}
+
+.trades-table .qty {
+  font-variant-numeric: tabular-nums;
+}
+
+.trades-table .unit-price {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+table.data tr.day-row td {
+  padding-top: 10px;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+table.data tr.link-row:focus-visible td {
+  background: var(--hover);
+  outline: none;
+}
+
+.trade-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 12px;
+}
+
+.trade-details .facts {
+  margin-bottom: 14px;
+}
+
+.trade-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.drawer.drawer-wide {
+  width: min(780px, 100vw);
+}
+
+
+/* Движение дня в плане — меткой: приход зелёным краем, расход — красным. */
+.mv {
+  display: inline-block;
+  margin: 0 4px 4px 0;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: 0;
+  font-size: 12px;
+}
+
+.mv.mv-in {
+  border-left-color: var(--ok);
+}
+
+.mv.mv-out {
+  border-left-color: var(--danger-text);
+}
+
+/* Бумаги дня: сколько пришло или ушло и сколько стало; не хватает — красной меткой. */
+.mv.mv-security {
+  background: var(--hover);
+}
+
+.mv.mv-short {
+  border-left-color: var(--danger-text);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+.plan-subhead {
+  margin: 20px 0 8px;
+  font-size: 15px;
+}
+
+.plan-securities .tag {
+  margin-bottom: 2px;
+}
+
+table.data tr.quiet-row td {
+  padding: 6px 12px;
+}
+
+/* Отменённая сделка: бледно-красная строка, всё серое, количество и сумма зачёркнуты. */
+table.data tr.cancelled td,
+table.data tbody tr.cancelled:hover td {
+  background: var(--danger-bg);
+  color: var(--muted);
+}
+
+tr.cancelled .tag,
+tr.cancelled .pill.side-buy,
+tr.cancelled .pill.side-sell,
+tr.cancelled .pill.side-repo {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+}
+
+tr.cancelled .qty,
+tr.cancelled .unit-price,
+tr.cancelled td.t-sum {
+  text-decoration: line-through;
+}
+
+.pill.status-cancelled {
+  border: 1px solid var(--danger-text);
+  background: transparent;
+  color: var(--danger-text);
+}
+
+.pill.status-cancelled::before {
+  content: '× ';
+}
+
+table.data tr.deficit td {
+  background: var(--danger-bg);
+}
+
+.plan-table td:first-child {
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  /* Телефон: строка сделки — карточка. Сверху бумага и сумма, снизу сделка и количество с ценой. */
+  .trades-table,
+  .trades-table tbody,
+  .trades-table tr.day-row,
+  .trades-table tr.day-row td {
+    display: block;
+  }
+
+  .trades-table thead {
+    display: none;
+  }
+
+  .trades-table tr.link-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'paper sum'
+      'deal qty';
+    gap: 4px 12px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .trades-table tr.link-row td {
+    display: block;
+    padding: 0;
+    border: none;
+  }
+
+  .trades-table tr.link-row td.t-time,
+  .trades-table tr.link-row td.hide-sm {
+    display: none;
+  }
+
+  .trades-table td.t-paper {
+    grid-area: paper;
+  }
+
+  .trades-table td.t-sum {
+    grid-area: sum;
+  }
+
+  .trades-table td.t-deal {
+    grid-area: deal;
+  }
+
+  .trades-table td.t-qty {
+    grid-area: qty;
+  }
+
+  .trades-table td.t-deal::after {
+    content: ' · ' attr(data-time);
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .trades-table tr.link-row:last-child {
+    border-bottom: none;
+  }
+
+  /* Отменённая — фоном всей карточки, а не каждой ячейки. */
+  .trades-table tr.link-row.cancelled {
+    background: var(--danger-bg);
+  }
+
+  table.data.trades-table tr.cancelled td,
+  table.data.trades-table tbody tr.cancelled:hover td {
+    background: transparent;
+  }
+
+  .trades-toolbar select {
+    max-width: none;
+    width: 100%;
+  }
+
+  .trades-toolbar .toolbar-end {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .trades-toolbar .toolbar-end button {
+    flex: 1;
+  }
+}

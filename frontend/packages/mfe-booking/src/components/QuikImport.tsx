@@ -39,12 +39,13 @@ function percent(value: string): string {
  * загрузка. Комиссию система считает по тарифу брокера на счёт портфеля или по
  * ставкам, заданным на эту загрузку.
  */
-export function QuikImport({ context }: { readonly context: Context }) {
+export function QuikImport({ context, onLoaded }: { readonly context: Context; readonly onLoaded: () => void }) {
   const portfolios = context.portfolios.filter((p) => p.kind === 'physical');
   const [portfolioId, setPortfolioId] = useState(portfolios[0]?.id ?? '');
   const [file, setFile] = useState<{ readonly name: string; readonly data: string } | null>(null);
   const [outright, setOutright] = useState('');
   const [repo, setRepo] = useState('');
+  const [rps, setRps] = useState('');
   const [state, setState] = useState<State>({ status: 'idle' });
 
   // Изменили файл, портфель или ставки — прежняя проверка уже не про них.
@@ -71,9 +72,13 @@ export function QuikImport({ context }: { readonly context: Context }) {
         portfolio_id: portfolioId,
         outright_rate: outright.trim() ? decimalInput(outright) : null,
         repo_rate: repo.trim() ? decimalInput(repo) : null,
+        rps_rate: rps.trim() ? decimalInput(rps) : null,
         apply,
       });
       setState({ status: 'done', report });
+      if (report.applied) {
+        onLoaded();
+      }
     } catch (failure) {
       setState({ status: 'failed', message: errorMessage(failure) });
     }
@@ -94,10 +99,10 @@ export function QuikImport({ context }: { readonly context: Context }) {
   return (
     <>
       <p>
-        Выгрузите в QUIK «Отчёт по всем сделкам клиента» в формате Excel и загрузите его сюда. Комиссии в отчёте
-        нет — система посчитает её по тарифу брокера на счёт портфеля: купля-продажа — % от оборота без НКД, РЕПО —
-        % годовых от суммы первой части. Чтобы взять другие ставки, задайте их на эту загрузку. Повторная загрузка
-        безопасна: ключ — номер сделки.
+        Выгрузите в QUIK «Отчёт по всем сделкам клиента» в формате Excel. Комиссии в отчёте нет — система посчитает
+        её по тарифу брокера на счёт портфеля: купля-продажа и РПС — % от оборота без НКД, РЕПО — % годовых от суммы
+        первой части. Другие ставки на эту загрузку — в полях ниже. Повторная загрузка безопасна: ключ — номер
+        сделки.
       </p>
       <form onSubmit={check} aria-label="Загрузка из отчёта QUIK">
         <div className="fields">
@@ -122,6 +127,15 @@ export function QuikImport({ context }: { readonly context: Context }) {
               inputMode="decimal"
               placeholder="по тарифу счёта"
               onChange={(e) => changed(setOutright)(e.target.value)}
+            />
+          </label>
+          <label>
+            РПС, % от оборота без НКД
+            <input
+              value={rps}
+              inputMode="decimal"
+              placeholder="по тарифу счёта"
+              onChange={(e) => changed(setRps)(e.target.value)}
             />
           </label>
           <label>
@@ -200,7 +214,7 @@ function Summary({ report }: { readonly report: QuikReport }) {
       <p className="muted">
         {tariff
           ? `Тариф счёта с ${formatDate(tariff.valid_from)}: купля-продажа — ${percent(tariff.outright_rate)} ` +
-            `от оборота без НКД, РЕПО — ${percent(tariff.repo_rate)} годовых.`
+            `и РПС — ${percent(tariff.rps_rate)} от оборота без НКД, РЕПО — ${percent(tariff.repo_rate)} годовых.`
           : 'Тарифа брокера у счёта нет — задайте ставки на загрузку или попросите администратора завести тариф.'}
       </p>
     </>
@@ -211,7 +225,7 @@ function deal(line: QuikLine): string {
   if (line.kind === 'repo') {
     return line.side === 'sell' ? 'прямое РЕПО' : 'обратное РЕПО';
   }
-  return line.side === 'sell' ? 'продажа' : 'покупка';
+  return `${line.side === 'sell' ? 'продажа' : 'покупка'}${line.kind === 'rps' ? ', РПС' : ''}`;
 }
 
 function Lines({ report, basePath }: { readonly report: QuikReport; readonly basePath: string }) {
@@ -219,40 +233,46 @@ function Lines({ report, basePath }: { readonly report: QuikReport; readonly bas
     <table className="data" aria-label="Сделки отчёта">
       <thead>
         <tr>
-          <th className="num">Строка</th>
-          <th>Номер сделки</th>
-          <th>Заключена</th>
-          <th>Бумага</th>
           <th>Сделка</th>
-          <th className="num">Кол-во</th>
-          <th className="num">Цена</th>
+          <th>Бумага</th>
+          <th className="num">Кол-во · цена</th>
           <th className="num">Сумма, ₽</th>
-          <th className="num">Комиссия, ₽</th>
           <th>{report.applied ? 'Результат' : 'Что будет'}</th>
         </tr>
       </thead>
       <tbody>
         {report.lines.map((line) => (
           <tr key={`${line.line}-${line.external_id}`}>
-            <td className="num">{line.line}</td>
-            <td className="code">
-              {line.trade_id && report.applied ? (
-                <Link to={`${basePath}/trades/${line.trade_id}`}>{line.external_id}</Link>
-              ) : (
-                line.external_id
-              )}
-            </td>
-            <td>{line.trade_at ? formatTime(line.trade_at) : '—'}</td>
             <td>
-              {line.code && <span className="code">{line.code}</span>} {line.name}
+              <span className="code">
+                {line.trade_id && report.applied ? (
+                  <Link to={`${basePath}/trades/${line.trade_id}`}>{line.external_id}</Link>
+                ) : (
+                  line.external_id
+                )}
+              </span>
+              <div className="subline">
+                строка {line.line}
+                {line.trade_at && ` · ${formatTime(line.trade_at)}`}
+                {line.side && ` · ${deal(line)}`}
+              </div>
             </td>
-            <td>{line.side ? deal(line) : '—'}</td>
-            <td className="num">{line.quantity === null ? '—' : formatQuantity(line.quantity)}</td>
-            <td className="num">{formatPrice(line.price)}</td>
-            <td className="num">{formatMoney(line.amount)}</td>
+            <td>
+              {line.name || '—'}
+              {line.code && <div className="subline code">{line.code}</div>}
+            </td>
             <td className="num">
-              {formatMoney(line.fee)}
-              {line.fee_rate && <span className="muted"> ({percent(line.fee_rate)})</span>}
+              {line.quantity === null ? '—' : formatQuantity(line.quantity)}
+              {line.price !== null && <div className="subline">{formatPrice(line.price)}</div>}
+            </td>
+            <td className="num">
+              {formatMoney(line.amount)}
+              {line.fee !== null && (
+                <div className="subline">
+                  комиссия {formatMoney(line.fee)}
+                  {line.fee_rate && ` (${percent(line.fee_rate)})`}
+                </div>
+              )}
             </td>
             <td className={line.error ? 'danger' : undefined}>
               {line.result ? RESULT_LABELS[line.result] : line.message}

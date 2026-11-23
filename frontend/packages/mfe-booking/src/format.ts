@@ -31,7 +31,15 @@ export const STATUS_LABELS: Readonly<Record<Status, string>> = {
   cancelled: 'отменена',
 };
 
-export const VENUE_LABELS = { exchange: 'биржа', otc: 'внебиржевая' } as const;
+/** Где заключена сделка; negotiated — биржа, режим переговорных сделок (решение 159). */
+export const VENUE_LABELS = { exchange: 'биржа', negotiated: 'биржа, РПС', otc: 'внебиржевая' } as const;
+
+/** Вид бумаги сделки — подпись в ячейке «Бумага». */
+export const INSTRUMENT_KIND_LABELS: Readonly<Record<Trade['instrument_kind'], string>> = {
+  bond: 'облигация',
+  fund_share: 'пай',
+  ksu: 'РЕПО с КСУ',
+};
 
 export const MOVEMENT_LABELS: Readonly<Record<MovementKind, string>> = {
   settlement: 'расчёты по сделке',
@@ -136,8 +144,16 @@ export const FLAG_LABELS: Readonly<Record<ValuationFlag, string>> = {
   no_face: 'нет номинала на дату расчётов — номинал лотов',
   coupon_unknown: 'сумма купона к получению не объявлена',
   principal_unknown: 'сумма погашения к получению не объявлена',
-  due_estimated: 'купон или погашение линкера к получению — оценка по номиналу ISS',
+  due_estimated: 'купон или погашение линкера посчитаны по условиям выпуска — ISS подтвердит сумму в день выплаты',
 };
+
+/**
+ * Что делает оценку неполной. Купон линкера по условиям выпуска — не неполнота, а
+ * пометка до подтверждения ISS: её показываем отдельно и спокойно (решение 160).
+ */
+export function incompleteFlags(flags: readonly ValuationFlag[]): ValuationFlag[] {
+  return flags.filter((flag) => flag !== 'due_estimated');
+}
 
 const NO_VALUE = '—';
 
@@ -213,6 +229,64 @@ export function fromMoscowInput(value: string): string {
 /** Дата по Москве для поля date: 2026-12-03. */
 export function moscowToday(date: Date = new Date()): string {
   return moscowInput(date).slice(0, 10);
+}
+
+/** 2026-11-30 ± дни → дата ISO. */
+export function shiftDay(iso: string, days: number): string {
+  const day = new Date(`${iso}T12:00:00Z`);
+  day.setUTCDate(day.getUTCDate() + days);
+  return day.toISOString().slice(0, 10);
+}
+
+/** 2026-12-01 → 2026-12-01; 2026-11-30 → 2026-11-01: первое число месяца. */
+export function monthStart(iso: string): string {
+  return `${iso.slice(0, 8)}01`;
+}
+
+/** 2026-11-20 → «пт, 20 ноября». */
+export function dayTitle(iso: string): string {
+  return new Date(`${iso}T12:00:00Z`).toLocaleDateString('ru-RU', {
+    timeZone: 'UTC',
+    weekday: 'short',
+    day: 'numeric',
+    month: 'long',
+  });
+}
+
+/** 2026-11-20 → «пт». */
+export function weekday(iso: string): string {
+  return new Date(`${iso}T12:00:00Z`).toLocaleDateString('ru-RU', { timeZone: 'UTC', weekday: 'short' });
+}
+
+/** Время сделки по Москве: 11:42. */
+export function clockTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString('ru-RU', {
+    timeZone: 'Europe/Moscow',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+/** Число со словом в нужной форме: 1 бумага, 2 бумаги, 5 бумаг. */
+export function plural(count: number, one: string, few: string, many: string): string {
+  const tens = count % 100;
+  const ones = count % 10;
+  const word = tens >= 11 && tens <= 14 ? many : ones === 1 ? one : ones >= 2 && ones <= 4 ? few : many;
+  return `${formatQuantity(count)} ${word}`;
+}
+
+/** «1 сделка», «2 сделки», «5 сделок». */
+export function tradesCount(count: number): string {
+  return plural(count, 'сделка', 'сделки', 'сделок');
+}
+
+/** 28000500.00 → «28,0 млн ₽»; меньше миллиона — до рубля. */
+export function shortMoney(value: Decimal): string {
+  const amount = Number(value);
+  if (Math.abs(amount) >= 1_000_000) {
+    return `${(amount / 1_000_000).toLocaleString('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} млн ₽`.replace('-', '−');
+  }
+  return `${formatQuantity(Math.round(amount))} ₽`;
 }
 
 /**

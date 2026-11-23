@@ -4,7 +4,8 @@ import { Link, useSearchParams } from 'react-router';
 
 import type { Context } from '../App';
 import type { ResultDay, Results } from '../api';
-import { FLAG_LABELS, formatDate, formatMoney, moscowToday, sumMoney } from '../format';
+import { FlagNotes } from '../components/FlagNotes';
+import { formatDate, formatMoney, incompleteFlags, moscowToday, sumMoney } from '../format';
 
 const PARTS = [
   ['revaluation', 'Переоценка'],
@@ -84,11 +85,7 @@ function ResultsView({ results, trades }: { readonly results: Results; readonly 
         <p className="muted">Расчёта за период нет.</p>
       ) : (
         <>
-          {incomplete.length > 0 && (
-            <p className="notice notice-warning">
-              Оценка неполная в днях со звёздочкой: {incomplete.map((f) => FLAG_LABELS[f]).join('; ')}.
-            </p>
-          )}
+          <FlagNotes flags={incomplete} lead="Оценка неполная в днях со звёздочкой" />
           <table className="data" aria-label="Результат по дням">
             <thead>
               <tr>
@@ -167,7 +164,7 @@ function DayRow({ day, trades }: { readonly day: ResultDay; readonly trades: str
         <Link to={`${trades}${day.date}`} title="Сделки дня">
           {formatDate(day.date)}
         </Link>
-        {day.flags.length > 0 && <span className="danger"> *</span>}
+        {incompleteFlags(day.flags).length > 0 && <span className="danger"> *</span>}
       </td>
       <td className="num">{formatMoney(day.value)}</td>
       <td className="num">{formatMoney(day.flows)}</td>

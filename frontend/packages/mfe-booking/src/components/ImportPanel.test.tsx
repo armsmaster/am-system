@@ -19,7 +19,31 @@ async function upload(content: string, api = fakeApi()) {
   return api;
 }
 
-describe('ImportPage', () => {
+describe('ImportPanel', () => {
+  it('opens from the trades page and refreshes the list after a load', async () => {
+    const user = userEvent.setup();
+    const api = renderBooking(fakeApi(), '/booking?portfolio=p-bonds');
+    await screen.findByRole('table', { name: 'Сделки' });
+
+    await user.click(screen.getByRole('button', { name: 'Импорт' }));
+    await user.click(await screen.findByRole('tab', { name: 'Пакет JSON' }));
+    await user.upload(screen.getByLabelText('Файл со сделками'), file(JSON.stringify(BATCH)));
+
+    await screen.findByText(/новых сделок — 1/);
+    expect(api.trades).toHaveBeenCalledTimes(2);
+    await user.click(screen.getByRole('button', { name: 'Закрыть' }));
+    expect(screen.queryByRole('dialog', { name: 'Импорт сделок' })).not.toBeInTheDocument();
+  });
+
+  it('closes the old import address back to the trades', async () => {
+    const user = userEvent.setup();
+    renderBooking(fakeApi(), '/booking/import');
+
+    await user.click(await screen.findByRole('button', { name: 'Закрыть' }));
+
+    expect(screen.getByRole('status', { name: 'Адрес' })).toHaveTextContent(/^\/booking$/);
+  });
+
   it('sends the batch and shows what was accepted and what was rejected', async () => {
     const api = await upload(JSON.stringify(BATCH));
 
@@ -46,7 +70,7 @@ describe('ImportPage', () => {
     await upload(JSON.stringify(BATCH), api);
 
     expect(await screen.findByText(/новых сделок — 0/)).toBeInTheDocument();
-    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    expect(within(screen.getByRole('dialog', { name: 'Импорт сделок' })).queryByRole('table')).not.toBeInTheDocument();
   });
 
   it('explains a file that is not JSON', async () => {

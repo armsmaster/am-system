@@ -4,10 +4,10 @@ import { useSearchParams } from 'react-router';
 
 import type { Context } from '../App';
 import type { FeeKind, FeeRate, Nav, NavDay } from '../api';
+import { FlagNotes } from '../components/FlagNotes';
 import {
   decimalInput,
   FEE_LABELS,
-  FLAG_LABELS,
   formatDate,
   formatMoney,
   formatPrice,
@@ -83,11 +83,7 @@ function NavView({ nav }: { readonly nav: Nav }) {
         <p className="muted">Расчёта за период нет.</p>
       ) : (
         <>
-          {flags.length > 0 && (
-            <p className="notice notice-warning">
-              Оценка неполная: {flags.map((f) => FLAG_LABELS[f]).join('; ')}.
-            </p>
-          )}
+          <FlagNotes flags={flags} />
           <table className="data" aria-label="СЧА по дням">
             <thead>
               <tr>

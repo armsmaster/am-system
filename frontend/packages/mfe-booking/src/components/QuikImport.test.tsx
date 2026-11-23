@@ -3,7 +3,7 @@ import { fireEvent, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
-import { fakeApi, quikLine, quikReport, renderBooking } from '../test/fixtures';
+import { fakeApi, PORTFOLIOS, quikLine, quikReport, renderBooking } from '../test/fixtures';
 
 const CONTENT = '<HTML>Отчёт по всем сделкам клиента</HTML>';
 
@@ -38,6 +38,7 @@ describe('QuikImport', () => {
       portfolio_id: 'p-bonds',
       outright_rate: null,
       repo_rate: null,
+      rps_rate: null,
       apply: false,
     });
     expect(
@@ -47,17 +48,19 @@ describe('QuikImport', () => {
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText('Тариф счёта с 01.11.2026: купля-продажа — 0,0125% от оборота без НКД, РЕПО — 0,5% годовых.'),
+      screen.getByText(
+        'Тариф счёта с 01.11.2026: купля-продажа — 0,0125% и РПС — 0,02% от оборота без НКД, РЕПО — 0,5% годовых.',
+      ),
     ).toBeInTheDocument();
     const rows = within(screen.getByRole('table', { name: 'Сделки отчёта' })).getAllByRole('row');
     expect(rows[0]).toHaveTextContent('Что будет');
-    expect(rows[1]).toHaveTextContent('118100000001');
-    expect(rows[1]).toHaveTextContent('RU000A1038V6 ОФЗ 26238покупка10052,556 001,006,56 (0,0125%)новая сделка');
+    expect(rows[1]).toHaveTextContent(/^18100000001строка 1 · .+ · покупка/);
+    expect(rows[1]).toHaveTextContent('ОФЗ 26238RU000A1038V610052,556 001,00комиссия 6,56 (0,0125%)новая сделка');
     expect(rows[2]).toHaveTextContent('продажа');
     expect(rows[2]).toHaveTextContent('без изменений Продажа больше позиции.');
     expect(rows[3]).toHaveTextContent('Бумаги RU000A10FV69 нет в справочнике.');
-    expect(rows[4]).toHaveTextContent('618100000006— —————Строку не разобрать.');
-    expect(rows[5]).toHaveTextContent('обратное РЕПО——30 000 000,001 232,88 (0,5%)новая сделка');
+    expect(rows[4]).toHaveTextContent('18100000006строка 6———Строку не разобрать.');
+    expect(rows[5]).toHaveTextContent(/обратное РЕПО.*—30 000 000,00комиссия 1 232,88 \(0,5%\)новая сделка/);
     expect(rows[6]).toHaveTextContent('прямое РЕПО');
 
     api.importQuik.mockResolvedValueOnce(
@@ -81,14 +84,29 @@ describe('QuikImport', () => {
     await user.upload(form.getByLabelText('Отчёт QUIK'), report());
     await user.type(form.getByLabelText('Купля-продажа, % от оборота без НКД'), '0,02');
     await user.type(form.getByLabelText('РЕПО, % годовых'), ' 0,6 ');
+    await user.type(form.getByLabelText('РПС, % от оборота без НКД'), '0,03');
     await user.click(form.getByRole('button', { name: 'Проверить' }));
 
-    expect(api.importQuik).toHaveBeenCalledWith(expect.objectContaining({ outright_rate: '0.02', repo_rate: '0.6' }));
+    expect(api.importQuik).toHaveBeenCalledWith(
+      expect.objectContaining({ outright_rate: '0.02', repo_rate: '0.6', rps_rate: '0.03' }),
+    );
     expect(await screen.findByRole('button', { name: 'Загрузить' })).toBeInTheDocument();
 
     // Поменяли ставку — прежняя проверка уже не про эти ставки.
     await user.clear(form.getByLabelText('РЕПО, % годовых'));
     expect(screen.queryByRole('button', { name: 'Загрузить' })).not.toBeInTheDocument();
+  });
+
+  it('names a negotiated trade', async () => {
+    const api = fakeApi();
+    api.importQuik.mockResolvedValue(quikReport({ lines: [quikLine({ kind: 'rps', fee_rate: '0.020000' })] }));
+    const { user, form } = await open(api);
+    await user.upload(form.getByLabelText('Отчёт QUIK'), report());
+    await user.click(form.getByRole('button', { name: 'Проверить' }));
+
+    const rows = within(await screen.findByRole('table', { name: 'Сделки отчёта' })).getAllByRole('row');
+    expect(rows[1]).toHaveTextContent('покупка, РПС');
+    expect(rows[1]).toHaveTextContent('(0,02%)');
   });
 
   it('has nothing to load when every trade is already there', async () => {
@@ -150,7 +168,8 @@ describe('QuikImport', () => {
 
   it('says when there is no portfolio to load into', async () => {
     const api = fakeApi();
-    api.portfolios.mockResolvedValue([]);
+    // Только фонд — compound: сделки брокер заводит в physical-портфели.
+    api.portfolios.mockResolvedValue(PORTFOLIOS.filter((p) => p.kind === 'compound'));
     renderBooking(api, '/booking/import');
 
     expect(await screen.findByText(/загружать отчёт некуда/)).toBeInTheDocument();

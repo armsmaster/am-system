@@ -940,7 +940,7 @@ def linker_days(plan: Terms, *announced: Terms, start: date = date(2026, 11, 16)
     return states
 
 
-def test_linker_coupon_is_estimated_until_announced() -> None:
+def test_linker_coupon_before_it_is_announced() -> None:
     plan = Terms((LINKER_COUPON,), face=Decimal(1000), indexed=True)
     paid = Terms(
         (replace(LINKER_COUPON, coupon=Decimal("10.24")),), face=Decimal(1000), indexed=True
@@ -948,13 +948,14 @@ def test_linker_coupon_is_estimated_until_announced() -> None:
     before, record, payday = linker_days(plan, paid)
 
     assert before.valuations[LINKER].accrued_value == Decimal("202600.00")
-    # Вечер 18.11: НКД на 19.11 — уже по новому периоду, а купон — к получению по оценке
-    # ISS: 1 074,95 × 1,85% × 188 / 365 = 10,24 ₽ на бумагу. Провала в стоимости нет.
+    # Вечер 18.11: НКД на 19.11 — уже по новому периоду, а купон — к получению по условиям
+    # выпуска: 1 074,95 × 1,85% × 188 / 365 = 10,24 ₽ на бумагу. Провала в стоимости нет.
+    # T+1 — сам день выплаты: номинал тот же, что у ISS, это не оценка (решение 160).
     valuation = record.valuations[LINKER]
     assert (valuation.accrued_value, valuation.coupon_due, valuation.flags) == (
         Decimal(0),
         Decimal("204800.00"),
-        (Flag.DUE_ESTIMATED,),
+        (),
     )
     # 19.11 справочник узнал сумму — купон пришёл деньгами, требование закрылось.
     assert (payday.valuations[LINKER].coupon_due, payday.valuations[LINKER].flags) == (
@@ -973,6 +974,8 @@ def test_linker_coupon_with_an_earlier_record_date() -> None:
     estimate = Decimal("10.24")  # 1 074,54 × 1,85% × 188 / 365
     assert valuation.accrued == Decimal("10.13") - estimate
     assert valuation.coupon_due == 20_000 * estimate
+    # Номинал — на 18.11, раньше выплаты: это оценка, ISS подтвердит сумму 19.11.
+    assert valuation.flags == (Flag.DUE_ESTIMATED,)
 
 
 def test_floater_coupon_is_not_estimated() -> None:
@@ -992,10 +995,15 @@ def test_linker_redemption_is_estimated_until_announced() -> None:
                        final=True)  # fmt: skip
     plan = Terms((maturity,), face=Decimal(1000), indexed=True)
     [_, record] = linker_days(plan)
-    # После даты фиксации погашения бумага — 0, к получению — номинал на 19.11 из ISS.
+    # После даты фиксации погашения бумага — 0, к получению — номинал на 19.11 из ISS:
+    # это день выплаты, сумма точная (решение 160).
     valuation = record.valuations[LINKER]
     assert (valuation.clean, valuation.principal_due, valuation.flags) == (
         Decimal(0),
         Decimal("21499000.00"),
-        (Flag.DUE_ESTIMATED,),
+        (),
     )
+    # Фиксация раньше: номинал на 18.11 — оценка.
+    early = Terms((replace(maturity, record_date=date(2026, 11, 17)),), face=Decimal(1000),
+                  indexed=True)  # fmt: skip
+    assert linker_days(early)[0].valuations[LINKER].flags == (Flag.DUE_ESTIMATED,)

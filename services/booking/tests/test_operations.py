@@ -25,6 +25,12 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.integration
 
+
+def starting(day: str) -> dict[str, Any]:
+    """Параметр ``from`` — в Python это слово занято."""
+    return {"from": day}
+
+
 FUND = UUID("00000000-0000-0000-0000-00000000f001")
 TREASURY = UUID("00000000-0000-0000-0000-00000000a001")
 BONDS = UUID("00000000-0000-0000-0000-00000000b001")
@@ -389,3 +395,12 @@ async def test_ladder_from_the_methodology(
         "-28000500.00",
     )
     assert monday.problem("GET", "/ladder", account_id=str(UUID(int=9))) == (404, "not_found")
+    assert ladder["today"] == "2026-11-30"
+
+    # С прошлой даты (решение 161): прошлые дни — тот же ролл, будущие — те же, что от сегодня.
+    past = monday.ok("GET", "/ladder", account_id=str(BONDS_ACCOUNT), **starting("2026-11-27"))
+    assert [d["date"] for d in past["days"][:2]] == ["2026-11-27", "2026-11-30"]
+    assert past["days"][1:] == ladder["days"]
+    for since in ("2026-12-01", "2026-08-01"):
+        refused = monday.problem("GET", "/ladder", account_id=str(BONDS_ACCOUNT), **starting(since))
+        assert refused == (422, "bad_period")

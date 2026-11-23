@@ -118,6 +118,7 @@ export const TARIFFS: readonly Tariff[] = [
   {
     outright_rate: '0.015000',
     repo_rate: '0.500000',
+    rps_rate: '0.020000',
     valid_from: '2026-01-01',
     comment: null,
     author: 'admin',
@@ -126,6 +127,7 @@ export const TARIFFS: readonly Tariff[] = [
   {
     outright_rate: '0.012500',
     repo_rate: '1.000000',
+    rps_rate: '0.025000',
     valid_from: '2026-11-01',
     comment: 'Новый тариф брокера',
     author: 'admin',

@@ -3,10 +3,14 @@ import { ErrorNote, LoadedView, useAction, useLoad } from '@am/ui';
 
 import type { Account, PortfolioApi, Tariff } from '../api';
 
+/** Ставка РПС по умолчанию (решение 159). */
+const DEFAULT_RPS = '0,02';
+
 /**
- * Тарифы брокера на счёт (решение 151): по ним загрузка из отчёта QUIK считает
- * комиссию. Купля-продажа — % от оборота без НКД, РЕПО — % годовых от суммы первой
- * части. Новый тариф действует с даты начала; загруженные сделки он не меняет.
+ * Тарифы брокера на счёт (решения 151, 159): по ним загрузка из отчёта QUIK считает
+ * комиссию. Купля-продажа и переговорные сделки (РПС) — % от оборота без НКД, каждая
+ * по своей ставке, РЕПО — % годовых от суммы первой части. Новый тариф действует
+ * с даты начала; загруженные сделки он не меняет.
  */
 export function TariffsPage({ api }: { readonly api: PortfolioApi }) {
   const load = useCallback(() => api.accounts(), [api]);
@@ -24,8 +28,9 @@ export function TariffsPage({ api }: { readonly api: PortfolioApi }) {
         return (
           <>
             <p className="muted">
-              Комиссию сделок из отчёта QUIK система считает по тарифу счёта на день сделки: купля-продажа — %
-              от оборота без НКД, РЕПО — % годовых от суммы первой части за срок РЕПО.
+              Комиссию сделок из отчёта QUIK система считает по тарифу счёта на день сделки: купля-продажа
+              и переговорные сделки (РПС) — % от оборота без НКД, РЕПО — % годовых от суммы первой части за
+              срок РЕПО.
             </p>
             <form className="inline" aria-label="Счёт">
               <label>
@@ -69,6 +74,7 @@ function TariffHistory({ tariffs }: { readonly tariffs: readonly Tariff[] }) {
         <tr>
           <th>С даты</th>
           <th className="num">Купля-продажа, % от оборота</th>
+          <th className="num">РПС, % от оборота</th>
           <th className="num">РЕПО, % годовых</th>
           <th>Кто задал</th>
           <th>Комментарий</th>
@@ -79,6 +85,7 @@ function TariffHistory({ tariffs }: { readonly tariffs: readonly Tariff[] }) {
           <tr key={`${t.valid_from}-${t.created_at}`}>
             <td>{formatDay(t.valid_from)}</td>
             <td className="num">{percent(t.outright_rate)}</td>
+            <td className="num">{percent(t.rps_rate)}</td>
             <td className="num">{percent(t.repo_rate)}</td>
             <td>{t.author}</td>
             <td>{t.comment ?? '—'}</td>
@@ -100,6 +107,7 @@ function NewTariffForm({
 }) {
   const [outright, setOutright] = useState('');
   const [repo, setRepo] = useState('');
+  const [rps, setRps] = useState(DEFAULT_RPS);
   const [validFrom, setValidFrom] = useState('');
   const [comment, setComment] = useState('');
   const { run, error, busy } = useAction(onDone);
@@ -110,6 +118,7 @@ function NewTariffForm({
       api.setTariff(account.id, {
         outright_rate: decimal(outright),
         repo_rate: decimal(repo),
+        rps_rate: decimal(rps),
         valid_from: validFrom,
         comment: comment.trim() || null,
       }),
@@ -123,6 +132,10 @@ function NewTariffForm({
         <label>
           Купля-продажа, % от оборота без НКД
           <input value={outright} required inputMode="decimal" onChange={(e) => setOutright(e.target.value)} />
+        </label>
+        <label>
+          РПС, % от оборота без НКД
+          <input value={rps} required inputMode="decimal" onChange={(e) => setRps(e.target.value)} />
         </label>
         <label>
           РЕПО, % годовых

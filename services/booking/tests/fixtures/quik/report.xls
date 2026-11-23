@@ -447,6 +447,56 @@
 <TD>
 <TD>10001</TD></TR>
 <TR>
+<TD>30.11.2026 16:00:00</TD>
+<TD>18100000501</TD>
+<TD>86400000501</TD>
+<TD>РПС</TD>
+<TD>RU000A10F504</TD>
+<TD>ВЭБ2Р-58</TD>
+<TD>
+<TD>Купля</TD>
+<TD x:num="2000">2 000</TD>
+<TD x:num="99.80"><NOBR>99.80</NOBR></TD>
+<TD x:num="2138234.96"><NOBR>2 138 234.96</NOBR></TD>
+<TD x:num="18980.00">18 980.00</TD>
+<TD x:num="15.10"><NOBR>15.10</NOBR></TD>
+<TD>Y0</TD>
+<TD>0.00</TD>
+<TD>0</TD>
+<TD>0.00</TD>
+<TD>MC0000000001</TD>
+<TD>Банк Пример</TD>
+<TD x:num="0.00">0.00</TD>
+<TD>30.11.2026</TD>
+<TD>
+<TD>
+<TD>10001</TD></TR>
+<TR>
+<TD>30.11.2026 16:10:00</TD>
+<TD>18100000601</TD>
+<TD>86400000601</TD>
+<TD>Адресная</TD>
+<TD>RU000A10F504</TD>
+<TD>ВЭБ2Р-58</TD>
+<TD>
+<TD>Продажа</TD>
+<TD x:num="10">10</TD>
+<TD x:num="99.80"><NOBR>99.80</NOBR></TD>
+<TD x:num="10691.17"><NOBR>10 691.17</NOBR></TD>
+<TD x:num="94.90">94.90</TD>
+<TD x:num="15.10"><NOBR>15.10</NOBR></TD>
+<TD>Y0</TD>
+<TD>0.00</TD>
+<TD>0</TD>
+<TD>0.00</TD>
+<TD>MC0000000001</TD>
+<TD>Банк Пример</TD>
+<TD x:num="0.00">0.00</TD>
+<TD>30.11.2026</TD>
+<TD>
+<TD>
+<TD>10001</TD></TR>
+<TR>
 <TD colSpan=10 align=right>ИТОГО НА ПРОДАЖУ</TD>
 <TD x:num="0.00"><NOBR>0.00</NOBR></TD>
 <TD x:num="0.00"><NOBR>0.00</NOBR></TD>

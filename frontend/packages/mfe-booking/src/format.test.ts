@@ -11,7 +11,58 @@ import {
   moscowInput,
   moscowToday,
   sumMoney,
+  clockTime,
+  dayTitle,
+  incompleteFlags,
+  monthStart,
+  plural,
+  shiftDay,
+  shortMoney,
+  tradesCount,
+  weekday,
 } from './format';
+
+describe('dates and counts of the trades page', () => {
+  it('names days and periods', () => {
+    expect(shiftDay('2026-12-01', -1)).toBe('2026-11-30');
+    expect(shiftDay('2026-11-30', 29)).toBe('2026-12-29');
+    expect(monthStart('2026-11-30')).toBe('2026-11-01');
+    expect(dayTitle('2026-11-20')).toBe('пт, 20 ноября');
+    expect(weekday('2026-11-23')).toBe('пн');
+    expect(clockTime('2026-11-20T14:12:00Z')).toBe('17:12');
+  });
+
+  it.each([
+    [1, '1 сделка'],
+    [2, '2 сделки'],
+    [4, '4 сделки'],
+    [5, '5 сделок'],
+    [11, '11 сделок'],
+    [14, '14 сделок'],
+    [21, '21 сделка'],
+    [22, '22 сделки'],
+    [112, '112 сделок'],
+  ])('counts %i trades', (count, text) => {
+    expect(tradesCount(count)).toBe(text);
+  });
+
+  it('agrees a word with a number', () => {
+    expect(plural(1, 'бумага', 'бумаги', 'бумаг')).toBe('1 бумага');
+    expect(plural(3, 'бумага', 'бумаги', 'бумаг')).toBe('3 бумаги');
+    expect(plural(1012, 'бумага', 'бумаги', 'бумаг')).toBe('1 012 бумаг');
+  });
+
+  it('shortens big money to millions', () => {
+    expect(shortMoney('28000500.00')).toBe('28,0 млн ₽');
+    expect(shortMoney('-1596099.00')).toBe('−1,6 млн ₽');
+    expect(shortMoney('2041.20')).toBe('2 041 ₽');
+    expect(shortMoney('-2000.00')).toBe('−2 000 ₽');
+  });
+
+  it('keeps a linker coupon by the issue terms out of an incomplete valuation', () => {
+    expect(incompleteFlags(['due_estimated', 'stale_price'])).toEqual(['stale_price']);
+  });
+});
 
 describe('format', () => {
   it.each([

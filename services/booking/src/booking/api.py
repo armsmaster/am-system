@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Callable, Mapping
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated, Any, Literal, cast
 from uuid import UUID
@@ -36,7 +36,7 @@ from booking.clients import (
 )
 from booking.closing import ClosingDesk, ClosingState
 from booking.imports import ImportItem, Result, TradeImport
-from booking.ladder import Ladder, ladder
+from booking.ladder import MAX_PAST_DAYS, Ladder, ladder
 from booking.operations import OperationDesk, OperationInput, OperationView
 from booking.queries import (
     NavDay,
@@ -177,7 +177,7 @@ class TradeIn(BaseModel):
     face_value: Price | None = None
     accrued: Kopecks | None = None
     fee: Kopecks = Decimal(0)
-    venue: Literal["exchange", "otc"] = "exchange"
+    venue: Literal["exchange", "negotiated", "otc"] = "exchange"
     counterparty: Text | None = None
     external_id: Text | None = None
     comment: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] | None = None
@@ -604,7 +604,7 @@ class ImportTradeIn(BaseModel):
     accrued: Kopecks | None = None
     face_value: Price | None = None
     fee: Kopecks = Decimal(0)
-    venue: Literal["exchange", "otc"] = "exchange"
+    venue: Literal["exchange", "negotiated", "otc"] = "exchange"
     counterparty: Text | None = None
     comment: OptionalComment = None
     cancelled: bool = False
@@ -640,6 +640,10 @@ class ImportRejectedOut(BaseModel):
 class TariffIn(BaseModel):
     outright_rate: Annotated[Decimal, Field(ge=0, le=10, max_digits=9, decimal_places=6)]
     repo_rate: Annotated[Decimal, Field(ge=0, le=100, max_digits=9, decimal_places=6)]
+    # РПС — по умолчанию 0,02% (решение 159).
+    rps_rate: Annotated[Decimal, Field(ge=0, le=10, max_digits=9, decimal_places=6)] = Decimal(
+        "0.02"
+    )
     valid_from: date
     comment: OptionalComment = None
 
@@ -647,11 +651,15 @@ class TariffIn(BaseModel):
 class TariffOut(BaseModel):
     outright_rate: Decimal  # % от оборота без НКД
     repo_rate: Decimal  # % годовых от суммы первой части
+    rps_rate: Decimal  # РПС: % от оборота без НКД
     valid_from: date
     comment: str | None
     author: str
     created_at: datetime
 
+
+# Сделки за период — не больше года (решение 161).
+MAX_TRADE_DAYS = 366
 
 # Отчёт QUIK — в base64: файл в несколько десятков килобайт, multipart не нужен.
 QUIK_MAX_BYTES = 5 * 1024 * 1024
@@ -667,6 +675,7 @@ class QuikIn(BaseModel):
         None
     )
     repo_rate: Annotated[Decimal | None, Field(ge=0, le=100, max_digits=9, decimal_places=6)] = None
+    rps_rate: Annotated[Decimal | None, Field(ge=0, le=10, max_digits=9, decimal_places=6)] = None
     apply: bool = False  # false — только проверка: ничего не записывается
 
 
@@ -759,6 +768,7 @@ class ForecastOut(BaseModel):
 class LadderOut(BaseModel):
     account_id: UUID
     portfolios: list[LadderPortfolioOut]
+    today: date  # дни раньше — факт, с сегодня — план
     as_of: date | None
     waiting_since: date | None
     instruments: list[InstrumentOut]
@@ -901,13 +911,22 @@ async def list_trades(
     now: Now,
     portfolio_id: UUID,
     day: Annotated[date | None, Query(alias="date")] = None,
+    first: Annotated[date | None, Query(alias="from")] = None,
+    last: Annotated[date | None, Query(alias="till")] = None,
 ) -> list[TradeOut]:
-    """Сделки за день по портфелю; compound — по всем его physical-портфелям."""
+    """Сделки по портфелю за день ``date`` или за период ``from``–``till`` (решение 161);
+    ничего — за сегодня. Compound — по всем его physical-портфелям."""
+    today = now.astimezone(MOSCOW).date()
+    since = day or first or today
+    till = day or last or since
+    if till < since or (till - since).days >= MAX_TRADE_DAYS:
+        raise RuleViolationError(
+            "bad_period",
+            f"Период — от одного дня до {MAX_TRADE_DAYS} дней, конец не раньше начала.",
+        )
     visible = await services.portfolios.visible(authorization)
     physical = {p.id: p for p in physical_under(portfolio_id, visible)}
-    rows = await Repository(session).current(
-        portfolio_ids=physical, trade_date=day or now.astimezone(MOSCOW).date()
-    )
+    rows = await Repository(session).current(portfolio_ids=physical, period=(since, till))
     return [_version_out(row, physical[row.portfolio_id].code) for row in rows]
 
 
@@ -1023,7 +1042,7 @@ async def import_quik(
             "file_too_large", "Отчёт больше 5 МБ — выгрузите период короче.", 413
         )
     trades = desk(session, user, authorization, services, now)
-    rates = Rates(outright=body.outright_rate, repo=body.repo_rate)
+    rates = Rates(outright=body.outright_rate, repo=body.repo_rate, rps=body.rps_rate)
     try:
         result = await QuikImport(session, trades, services.refdata).run(
             content, body.portfolio_id, rates, apply=body.apply
@@ -1088,6 +1107,7 @@ async def set_tariff(
         account_id,
         outright_rate=body.outright_rate,
         repo_rate=body.repo_rate,
+        rps_rate=body.rps_rate,
         valid_from=body.valid_from,
         comment=body.comment,
     )
@@ -1366,16 +1386,25 @@ async def get_ladder(
     services: Services,
     now: Now,
     account_id: UUID,
+    since: Annotated[date | None, Query(alias="from")] = None,
 ) -> LadderOut:
-    """Деньги и бумаги на счёте на каждую дату расчётов от сегодня, дефициты."""
+    """План по расчётам: деньги и бумаги на счёте на каждую дату расчётов с ``from``
+    (по умолчанию — с сегодня), дефициты; прошлые дни — факт (решение 161)."""
+    today = now.astimezone(MOSCOW).date()
+    if since is not None and not today - timedelta(days=MAX_PAST_DAYS) <= since <= today:
+        raise RuleViolationError(
+            "bad_period",
+            f"План по расчётам — с сегодня или с даты не раньше чем за {MAX_PAST_DAYS} дня.",
+        )
     visible = await services.portfolios.visible(authorization)
     found = await ladder(
         session,
         services.refdata,
         visible,
         account_id,
-        now.astimezone(MOSCOW).date(),
+        today,
         marketdata=services.marketdata,
+        since=since,
     )
     if found is None:
         raise NotFoundError("account", account_id)
@@ -1757,6 +1786,7 @@ def _ladder_out(found: Ladder) -> LadderOut:
         portfolios=[
             LadderPortfolioOut(id=p.id, code=p.code, name=p.name) for p in found.portfolios
         ],
+        today=found.today,
         as_of=found.as_of,
         waiting_since=found.waiting_since,
         instruments=sorted(

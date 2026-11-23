@@ -372,6 +372,7 @@ export function ladder(fields: Partial<Ladder> = {}): Ladder {
   return {
     account_id: 'a-broker',
     portfolios: [{ id: 'p-bonds', code: 'OPIF1-BONDS', name: 'Облигации' }],
+    today: '2026-11-30',
     as_of: '2026-11-29',
     waiting_since: null,
     instruments: [{ instrument_id: 'i-ofz', secid: 'SU26238RMFS4', short_name: 'ОФЗ 26238' }],
@@ -493,6 +494,7 @@ export function quikReport(fields: Partial<QuikReport> = {}): QuikReport {
     tariff: {
       outright_rate: '0.012500',
       repo_rate: '0.500000',
+      rps_rate: '0.020000',
       valid_from: '2026-11-01',
       comment: null,
       author: 'admin',

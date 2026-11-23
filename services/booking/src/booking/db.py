@@ -104,7 +104,8 @@ trade_version = Table(
     PrimaryKeyConstraint("trade_id", "number", name="trade_version_pk"),
     CheckConstraint("status IN ('entered', 'confirmed', 'cancelled')", name="trade_version_status"),
     CheckConstraint("side IN ('buy', 'sell')", name="trade_version_side"),
-    CheckConstraint("venue IN ('exchange', 'otc')", name="trade_version_venue"),
+    # negotiated — биржа, режим переговорных сделок (РПС, решение 159).
+    CheckConstraint("venue IN ('exchange', 'negotiated', 'otc')", name="trade_version_venue"),
     CheckConstraint(
         "instrument_kind IN ('bond', 'fund_share', 'ksu')", name="trade_version_instrument_kind"
     ),
@@ -209,11 +210,14 @@ broker_tariff = Table(
     Column("account_id", Uuid, nullable=False),
     Column("outright_rate", Numeric(9, 6), nullable=False),  # % от оборота без НКД
     Column("repo_rate", Numeric(9, 6), nullable=False),  # % годовых от суммы первой части
+    Column("rps_rate", Numeric(9, 6), nullable=False),  # РПС: % от оборота без НКД (решение 159)
     Column("valid_from", Date, nullable=False),
     Column("comment", Text),
     Column("author", Text, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
-    CheckConstraint("outright_rate >= 0 AND repo_rate >= 0", name="broker_tariff_not_negative"),
+    CheckConstraint(
+        "outright_rate >= 0 AND repo_rate >= 0 AND rps_rate >= 0", name="broker_tariff_not_negative"
+    ),
     Index("broker_tariff_account", "account_id", "valid_from"),
 )
 

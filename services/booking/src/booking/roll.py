@@ -364,7 +364,8 @@ class Flag(StrEnum):
     NO_FACE = "no_face"  # нет номинала на дату расчётов — номинал лотов
     COUPON_UNKNOWN = "coupon_unknown"  # купон к получению, сумма не объявлена
     PRINCIPAL_UNKNOWN = "principal_unknown"  # погашение к получению, сумма не объявлена
-    DUE_ESTIMATED = "due_estimated"  # линкер: к получению — оценка по номиналу ISS
+    # Линкер: к получению — по номиналу ISS на дату раньше выплаты (решения 150, 160).
+    DUE_ESTIMATED = "due_estimated"
 
 
 @dataclass(frozen=True, slots=True)
@@ -937,10 +938,10 @@ def _value(
         else:
             accrued = mark.accrued - _coupon_after_record(terms, day, mark)
     accrued_value = _kopecks(quantity * accrued)
-    coupon_due, unknown, coupon_estimated = _coupon_due(entitled, terms, mark.face)
+    coupon_due, unknown, coupon_estimated = _coupon_due(entitled, terms, mark)
     if unknown:
         flags.append(Flag.COUPON_UNKNOWN)
-    principal_due, unknown, principal_estimated = _principal_due(entitled, terms, mark.face)
+    principal_due, unknown, principal_estimated = _principal_due(entitled, terms, mark)
     if unknown:
         flags.append(Flag.PRINCIPAL_UNKNOWN)
     if coupon_estimated or principal_estimated:
@@ -1009,34 +1010,32 @@ def _face(terms: Terms, mark: Mark, day: date) -> Decimal | None:
     return face - sum((p.principal or ZERO for p in fixed if p.pay_date > settle), ZERO)
 
 
-def _coupon_amount(
-    payment: Payment, terms: Terms, face: Decimal | None
-) -> tuple[Decimal | None, bool]:
-    """Купон на бумагу и оценка ли это (решение 150).
+def _coupon_amount(payment: Payment, terms: Terms, mark: Mark) -> tuple[Decimal | None, bool]:
+    """Купон на бумагу и оценка ли это (решения 150, 160).
 
     Сумму купона линкера справочник знает только в день выплаты: она зависит от
-    номинала в этот день. До объявления — оценка, как её считает ISS: номинал на T+1
-    из ряда ISS × ставка купона × дни купонного периода / 365, до копейки. Флоатер
-    так не оцениваем: его ставка неизвестна (решение 14).
+    номинала в этот день. До объявления — как её считает ISS: номинал на T+1 из ряда
+    ISS × ставка купона × дни купонного периода / 365, до копейки. Если T+1 — сам день
+    выплаты, номинал тот же, что у ISS, и это не оценка. Флоатер так не оцениваем:
+    его ставка неизвестна (решение 14).
     """
     if payment.coupon is not None:
         return payment.coupon, False
+    face = mark.face
     if not terms.indexed or face is None or payment.rate is None or payment.start is None:
         return None, False
     days = Decimal((payment.pay_date - payment.start).days)
-    return _kopecks(face * payment.rate / HUNDRED * days / YEAR), True
+    return _kopecks(face * payment.rate / HUNDRED * days / YEAR), mark.settle != payment.pay_date
 
 
-def _principal_amount(
-    payment: Payment, terms: Terms, face: Decimal | None
-) -> tuple[Decimal | None, bool]:
-    """Погашение на бумагу и оценка ли это (решение 150): окончательное погашение
-    линкера до объявления — номинал на T+1 из ряда ISS."""
+def _principal_amount(payment: Payment, terms: Terms, mark: Mark) -> tuple[Decimal | None, bool]:
+    """Погашение на бумагу и оценка ли это (решения 150, 160): окончательное погашение
+    линкера до объявления — номинал на T+1 из ряда ISS; на день выплаты — не оценка."""
     if payment.principal is not None:
         return payment.principal, False
-    if not terms.indexed or face is None or not payment.final:
+    if not terms.indexed or mark.face is None or not payment.final:
         return None, False
-    return face, True
+    return mark.face, mark.settle != payment.pay_date
 
 
 def _coupon_after_record(terms: Terms, day: date, mark: Mark) -> Decimal:
@@ -1048,14 +1047,14 @@ def _coupon_after_record(terms: Terms, day: date, mark: Mark) -> Decimal:
             amount
             for p in terms.payments
             if p.record_date <= day < p.pay_date and settle is not None and settle < p.pay_date
-            if (amount := _coupon_amount(p, terms, mark.face)[0]) is not None
+            if (amount := _coupon_amount(p, terms, mark)[0]) is not None
         ),
         ZERO,
     )
 
 
 def _coupon_due(
-    entitled: Iterable[Entitlement], terms: Terms, face: Decimal | None
+    entitled: Iterable[Entitlement], terms: Terms, mark: Mark
 ) -> tuple[Decimal, bool, bool]:
     """Купоны к получению по правам на выплату; второе — есть купон с необъявленной
     суммой, третье — есть оценка купона линкера."""
@@ -1065,7 +1064,7 @@ def _coupon_due(
         payment = terms.paid_on(entitlement.pay_date)
         if payment is None or not payment.has_coupon:
             continue
-        amount, guess = _coupon_amount(payment, terms, face)
+        amount, guess = _coupon_amount(payment, terms, mark)
         if amount is None:
             unknown = True
             continue
@@ -1075,7 +1074,7 @@ def _coupon_due(
 
 
 def _principal_due(
-    entitled: Iterable[Entitlement], terms: Terms, face: Decimal | None
+    entitled: Iterable[Entitlement], terms: Terms, mark: Mark
 ) -> tuple[Decimal, bool, bool]:
     """Погашения номинала к получению по правам на выплату — по номиналу, как вернёт
     эмитент; второе — есть погашение с необъявленной суммой, третье — есть оценка."""
@@ -1085,7 +1084,7 @@ def _principal_due(
         payment = terms.paid_on(entitlement.pay_date)
         if payment is None:
             continue
-        amount, guess = _principal_amount(payment, terms, face)
+        amount, guess = _principal_amount(payment, terms, mark)
         if amount is None:
             unknown = True
             continue

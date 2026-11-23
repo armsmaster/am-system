@@ -29,6 +29,12 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.integration
 
+
+def starting(day: str) -> dict[str, Any]:
+    """Параметр ``from`` — в Python это слово занято."""
+    return {"from": day}
+
+
 FUND = UUID("00000000-0000-0000-0000-00000000f001")
 TREASURY = UUID("00000000-0000-0000-0000-00000000a001")
 BONDS = UUID("00000000-0000-0000-0000-00000000b001")
@@ -261,6 +267,17 @@ async def test_compound_sums_its_physical_portfolios(trader: Api, resources: Res
     # Список сделок фонда за день — по обоим портфелям.
     blotter = trader.ok("GET", "/trades", portfolio_id=str(FUND), date="2026-11-27")
     assert [t["portfolio_code"] for t in blotter] == ["OPIF1-BONDS", "OPIF1-TREASURY"]
+    # За период (решение 161): неделя — те же сделки; по умолчанию — сегодня, 03.12.
+    week = trader.ok("GET", "/trades", portfolio_id=str(FUND), **starting("2026-11-23"),
+                     till="2026-11-29")  # fmt: skip
+    assert week == blotter
+    assert trader.ok("GET", "/trades", portfolio_id=str(FUND), **starting("2026-11-28")) == []
+    assert trader.ok("GET", "/trades", portfolio_id=str(FUND)) == []
+    for since, till in (("2026-11-30", "2026-11-27"), ("2025-11-01", "2026-11-30")):
+        refused = trader.problem(
+            "GET", "/trades", portfolio_id=str(FUND), **starting(since), till=till
+        )
+        assert refused == (422, "bad_period")
     # До расчёта — пусто; невидимый портфель — 404.
     assert positions(trader, FUND, "2026-11-26")["portfolios"][0]["as_of"] is None
     assert trader.problem("GET", "/positions", portfolio_id=str(OTHER_BONDS)) == (404, "not_found")

@@ -21,11 +21,11 @@ describe('portfolioApi', () => {
     ['tariffs', () => api.tariffs('a1'), 'get', ['/api/booking/accounts/a1/tariffs']],
     [
       'setTariff',
-      () => api.setTariff('a1', { outright_rate: '0.0125', repo_rate: '0.5', valid_from: '2026-11-01', comment: null }),
+      () => api.setTariff('a1', { outright_rate: '0.0125', repo_rate: '0.5', rps_rate: '0.02', valid_from: '2026-11-01', comment: null }),
       'post',
       [
         '/api/booking/accounts/a1/tariffs',
-        { outright_rate: '0.0125', repo_rate: '0.5', valid_from: '2026-11-01', comment: null },
+        { outright_rate: '0.0125', repo_rate: '0.5', rps_rate: '0.02', valid_from: '2026-11-01', comment: null },
       ],
     ],
     [

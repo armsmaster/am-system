@@ -1,4 +1,4 @@
-"""Лестница расчётов по счёту (design/05, «Лестница расчётов»).
+"""План по расчётам по счёту (design/05, решение 161; раньше — «Лестница расчётов»).
 
 Прогноз — тот же ролл фонда от последнего снапшота до горизонта. Отличий
 два: расчёт по паям, который ещё не отмечен, проходит в плановую дату
@@ -40,6 +40,8 @@ from booking.roll import (
 
 # Горизонт — не меньше 10 торговых дней (вопрос 93).
 HORIZON_TRADING_DAYS = 10
+# Прошлые дни плана — не дальше квартала назад (решение 161).
+MAX_PAST_DAYS = 93
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +72,7 @@ class CouponForecast:
 class Ladder:
     account_id: UUID
     portfolios: list[PortfolioRef]
+    today: date  # дни раньше — факт, с сегодня — план
     as_of: date | None  # последний снапшот, от которого идёт прогноз
     waiting_since: date | None
     days: list[LadderDay]
@@ -98,6 +101,7 @@ def project(
     first_day: date,
     today: date,
     *,
+    since: date | None = None,
     account: Collection[UUID],
     trades: Mapping[UUID, Sequence[Trade]],
     operations: Sequence[Operation],
@@ -105,7 +109,9 @@ def project(
     exceptions: Mapping[date, bool],
     repos: Mapping[UUID, Sequence[Repo]] | None = None,
 ) -> list[LadderDay]:
-    """Дни лестницы с сегодняшнего: торговые и те, где есть движения по счёту."""
+    """Дни плана с ``since`` (по умолчанию — с сегодня): торговые и те, где есть
+    движения по счёту. Прошлые дни — тот же ролл, что в позициях: факт."""
+    since = today if since is None else since
     planned = [
         replace(o, planned=today)
         if o.settled is None and o.planned is not None and o.planned < today
@@ -132,7 +138,7 @@ def project(
     unknown: set[tuple[UUID, UUID | None]] = set()
     for offset, states in enumerate(days):
         day = first_day + timedelta(days=offset)
-        if day < today:
+        if day < since:
             continue
         mine = sorted(
             ((p, s) for p, s in states.items() if p in account), key=lambda item: str(item[0])
@@ -174,9 +180,12 @@ async def ladder(
     today: date,
     *,
     marketdata: MarketdataClient,
+    since: date | None = None,
 ) -> Ladder | None:
-    """Лестница счёта; None — у пользователя нет портфелей на этом счёте.
-    Купоны флоатеров без объявленной суммы — по прогнозу из текущих ставок индексов."""
+    """План по расчётам счёта с ``since`` (по умолчанию — с сегодня); None — у
+    пользователя нет портфелей на этом счёте. Купоны флоатеров без объявленной
+    суммы — по прогнозу из текущих ставок индексов."""
+    start = today if since is None else min(since, today)
     portfolios = sorted(
         (p for p in visible.values() if p.account_id == account_id and p.kind == "physical"),
         key=lambda p: p.code,
@@ -186,9 +195,9 @@ async def ladder(
     # Счёт принадлежит одному фонду, у physical фонд есть всегда.
     fund_id = cast(UUID, portfolios[0].fund_id)
     repo = Repository(session)
-    inputs = await load_inputs(repo, fund_id, today, today)
+    inputs = await load_inputs(repo, fund_id, start, today)
     waiting = await repo.waiting([fund_id])
-    first_day = min(inputs.first_day, today)
+    first_day = min(inputs.first_day, start)
     inputs = replace(inputs, first_day=first_day)
     latest = max(
         [today]
@@ -207,6 +216,7 @@ async def ladder(
         terms_on=book,
         exceptions=exceptions,
         repos=inputs.repos,
+        since=start,
     )
     instruments = {i for d in days for i in d.securities} | {
         m.instrument_id for d in days for _, m in d.movements if m.instrument_id is not None
@@ -214,6 +224,7 @@ async def ladder(
     return Ladder(
         account_id=account_id,
         portfolios=portfolios,
+        today=today,
         as_of=inputs.previous[0].day if inputs.previous else None,
         waiting_since=waiting.get(fund_id),
         days=days,

@@ -3,9 +3,11 @@ import { Fragment, useCallback } from 'react';
 
 import type { Context } from '../App';
 import type { DayResult, Instrument, Line, Positions, PortfolioState, RepoLine } from '../api';
+import { FlagNotes } from '../components/FlagNotes';
 import { SelectionForm, useSelection } from '../components/Selection';
 import {
   FLAG_LABELS,
+  incompleteFlags,
   formatDate,
   formatMoney,
   formatPrice,
@@ -186,11 +188,7 @@ function ResultNote({ result }: { readonly result: DayResult }) {
           </>
         )}
       </dl>
-      {result.flags.length > 0 && (
-        <p className="notice notice-warning">
-          Оценка неполная: {result.flags.map((f) => FLAG_LABELS[f]).join('; ')}.
-        </p>
-      )}
+      <FlagNotes flags={result.flags} />
     </>
   );
 }
@@ -300,7 +298,9 @@ function LineRows({ line }: { readonly line: Line }) {
               {line.flags.length > 0 && (
                 <>
                   <dt>оценка</dt>
-                  <dd className="danger">{line.flags.map((f) => FLAG_LABELS[f]).join('; ')}</dd>
+                  <dd className={incompleteFlags(line.flags).length ? 'danger' : 'muted'}>
+                    {line.flags.map((f) => FLAG_LABELS[f]).join('; ')}
+                  </dd>
                 </>
               )}
             </dl>
