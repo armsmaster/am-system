@@ -72,6 +72,8 @@ describe('bookingApi', () => {
     ['ladder', () => api.ladder('a-1'), 'get', ['/api/booking/ladder?account_id=a-1']],
     ['ladder from a date', () => api.ladder('a-1', '2026-11-23'), 'get', ['/api/booking/ladder?account_id=a-1&from=2026-11-23']],
     ['limitsCheck', () => api.limitsCheck(LIMITS_TRADE), 'post', ['/api/limits/check', LIMITS_TRADE]],
+    ['attributes', () => api.attributes('2026-12-02'), 'get', ['/api/refdata/attributes?date=2026-12-02']],
+    ['ratingScale', () => api.ratingScale(), 'get', ['/api/refdata/ratings/scale']],
     ['nav', () => api.nav('f-1', '2026-11-01', '2026-11-30'), 'get', ['/api/booking/nav?fund_id=f-1&from=2026-11-01&till=2026-11-30']],
     ['feeRates', () => api.feeRates('f-1'), 'get', ['/api/booking/funds/f-1/fee-rates']],
     ['setFeeRate', () => api.setFeeRate('f-1', rate), 'post', ['/api/booking/funds/f-1/fee-rates', rate]],

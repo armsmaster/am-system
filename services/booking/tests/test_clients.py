@@ -191,6 +191,70 @@ async def test_marks_for_valuation() -> None:
     assert await marketdata.marks(UUID(int=9), date(2026, 11, 27), date(2026, 11, 28)) == {}
 
 
+async def test_metrics_with_yields_and_spreads() -> None:
+    fixed = {
+        "type": "fixed",
+        "spread": None,
+        "yields": [
+            {
+                "dv01": "0.326",
+                "modified_duration": "5.89",
+                "yield_percent": "15.935227",
+                "horizon": {"kind": "maturity", "date": "2041-05-15"},
+                "continuous": {
+                    "yield_percent": "14.786146",
+                    "modified_duration": "6.82",
+                    "dv01": "0.3779",
+                },
+            }
+        ],
+    }
+    floater = {
+        "type": "floater",
+        "spread": {
+            "spread_dv01": "0.0104",
+            "spread_duration": "0.10",
+            "spread_bp": "81.51",
+            "horizon": {"kind": "offer", "date": "2027-10-14"},
+            "continuous": {
+                "spread_bp": "70.68",
+                "spread_duration": "0.12",
+                "spread_dv01": "0.0120",
+            },
+        },
+        "yields": [],
+    }
+    found = []
+    for answer in (fixed, floater):
+        client = marketdata_with(lambda _r, a=answer: httpx2.Response(200, json=a))
+        found.append(await client.metrics(BOND, datetime(2026, 11, 30, tzinfo=UTC)))
+    yields, spread = found
+    assert yields is not None
+    assert spread is not None
+    assert (yields.bond_type, yields.yield_percent, yields.yield_continuous) == (
+        "fixed",
+        Decimal("15.935227"),
+        Decimal("14.786146"),
+    )
+    assert (yields.horizon_kind, yields.horizon_date, yields.dv01_continuous) == (
+        "maturity",
+        date(2041, 5, 15),
+        Decimal("0.3779"),
+    )
+    assert (
+        spread.bond_type,
+        spread.spread_bp,
+        spread.spread_continuous_bp,
+        spread.horizon_kind,
+    ) == (
+        "floater",
+        Decimal("81.51"),
+        Decimal("70.68"),
+        "offer",
+    )
+    assert (spread.duration_continuous, spread.yield_percent) == (Decimal("0.12"), None)
+
+
 @pytest.mark.parametrize(
     ("answer", "expected"),
     [

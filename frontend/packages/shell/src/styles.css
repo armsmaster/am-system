@@ -2775,3 +2775,499 @@ table.data tr.deficit td {
     flex: 1;
   }
 }
+
+/* --- Позиции (решение 164): блоки, колонки на выбор, размер шрифта, меню строки ---------- */
+
+.positions-toolbar select {
+  max-width: 280px;
+}
+
+.day-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Соседний торговый день: подпись кнопки и мелко — какая это дата. */
+.day-step {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 2px 10px;
+  line-height: 1.15;
+}
+
+.day-step small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.positions-tiles {
+  margin: 4px 0 12px;
+}
+
+.positions-tiles dd .subline {
+  font-weight: 400;
+}
+
+.result-parts {
+  margin: 0 0 8px;
+}
+
+.result-parts summary {
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.result-parts .facts {
+  margin: 8px 0 4px;
+}
+
+.positions-block h2 {
+  margin: 18px 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.positions-block h2 .subline {
+  margin-left: 6px;
+  font-weight: 400;
+}
+
+/* Широкая таблица прокручивается вбок; бумага остаётся на месте. */
+.positions-scroll {
+  margin-bottom: 16px;
+  overflow-x: auto;
+}
+
+.positions-scroll table.data {
+  margin-bottom: 0;
+}
+
+/* Внутри прокрутки шапка прилипает к своей таблице, а не к верху страницы. */
+.positions-scroll table.data th {
+  top: 0;
+}
+
+.positions-table th,
+.positions-table td.num {
+  white-space: nowrap;
+}
+
+.positions-table td.p-paper,
+.positions-table thead th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--surface);
+}
+
+.positions-table thead th:first-child {
+  z-index: 2;
+  background: var(--bg);
+}
+
+.positions-table tbody tr:hover td.p-paper {
+  background: var(--hover);
+}
+
+.th-kicker,
+.th-note {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+table.data tr.group-row td {
+  background: var(--bg);
+  font-weight: 500;
+}
+
+/* Подпись группы и «Проданные в периоде» остаются на месте при прокрутке вбок, как бумага. */
+table.data tr.group-row td:first-child,
+table.data tr.closed-row td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+}
+
+table.data tr.closed-row td {
+  background: var(--bg);
+}
+
+.positions-table td.p-actions {
+  width: 1%;
+  padding: 4px 6px;
+}
+
+.row-menu-button {
+  width: 28px;
+  height: 26px;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.menu-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+}
+
+/* Место — у кнопки, координаты окна задаёт страница. */
+.row-menu-list {
+  position: fixed;
+  z-index: 31;
+  min-width: 180px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+
+.row-menu-list button {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.row-menu-list button:hover {
+  background: var(--hover);
+}
+
+/* Размер шрифта таблиц: A− / A / A+. */
+.positions.size-small .positions-table {
+  font-size: 12px;
+}
+
+.positions.size-small .positions-table td {
+  padding: 4px 8px;
+}
+
+.positions.size-normal .positions-table {
+  font-size: 13.5px;
+}
+
+.positions.size-large .positions-table {
+  font-size: 15px;
+}
+
+/* Панель «Колонки таблицы»: наборы, переключатели, матрица периодов, порядок. */
+.columns-panel h3 {
+  margin: 18px 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.columns-panel h3:first-child {
+  margin-top: 0;
+}
+
+.toggle-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.toggle-pill {
+  padding: 3px 10px;
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.toggle-pill[aria-pressed='true'] {
+  border-color: transparent;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.toggle-pill[aria-pressed='true']::before {
+  content: '✓ ';
+}
+
+.period-matrix {
+  margin-left: -4px;
+  border-collapse: separate;
+  border-spacing: 4px;
+}
+
+.period-matrix th {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  text-align: center;
+}
+
+.period-matrix th[scope='row'] {
+  padding-right: 6px;
+  text-align: left;
+}
+
+.matrix-cell {
+  width: 54px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.matrix-cell[aria-pressed='true'] {
+  border-color: transparent;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.column-order {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.column-order li {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.column-order li span {
+  flex: 1;
+}
+
+.column-order .icon-button {
+  width: 28px;
+  height: 28px;
+}
+
+.column-order .icon-button:disabled {
+  opacity: 0.35;
+}
+
+.lots-panel h3 {
+  margin: 18px 0 8px;
+  font-size: 14px;
+}
+
+/* Подписи переносятся, суммы — по правому краю одной строкой. */
+.lots-panel .facts {
+  grid-template-columns: minmax(0, 1fr) max-content;
+  margin-top: 10px;
+}
+
+.lots-panel .facts dd {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.lots-panel .facts dt.fact-part {
+  padding-left: 14px;
+  font-size: 13px;
+}
+
+@media (max-width: 640px) {
+  .positions-toolbar .toolbar-end {
+    margin-left: 0;
+  }
+
+  /* Телефон: колонка бумаги узкая, остальное прокручивается под ней. */
+  .positions-table td.p-paper,
+  .positions-table tr.group-row td:first-child,
+  .positions-table tr.closed-row td:first-child {
+    width: 150px;
+    min-width: 130px;
+  }
+
+  .positions-table td.p-paper .tag {
+    white-space: normal;
+  }
+
+  .period-matrix th[scope='row'] {
+    padding-right: 2px;
+    font-size: 11px;
+  }
+
+  .matrix-cell {
+    width: 34px;
+  }
+}
+
+/* --- Структура MV (решение 165): ранжированные столбики одного цвета ------------------ */
+
+.structure > .subline {
+  margin: 0 0 10px;
+}
+
+.structure-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.structure-card {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.structure-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin-bottom: 8px;
+}
+
+.structure-card h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.structure-head select {
+  padding: 2px 6px;
+  font-size: 13px;
+}
+
+.bars {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Строка — кнопка: подпись, столбик, сумма и доля; щелчок — таблица этой группы. */
+.bar-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 30%) minmax(0, 1fr) 72px 42px;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  font-size: 13px;
+  text-align: left;
+  position: relative;
+}
+
+.bar-row:hover,
+.bar-row:focus-visible {
+  background: var(--hover);
+}
+
+.bar-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-missing .bar-label,
+.bar-rest .bar-label {
+  color: var(--muted);
+}
+
+.bar-track {
+  position: relative;
+  height: 14px;
+}
+
+.bar-zero {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  background: var(--border);
+}
+
+.bar-fill {
+  position: absolute;
+  top: 2px;
+  height: 10px;
+  min-width: 2px;
+  border-radius: 0 4px 4px 0;
+  background: var(--accent);
+}
+
+/* «Прочие» и «нет признака» — той же краской, но светлее: не группа, а остаток. */
+.bar-rest .bar-fill,
+.bar-missing .bar-fill {
+  background: color-mix(in srgb, var(--accent) 45%, var(--surface));
+}
+
+/* Короткая позиция — влево от нуля, серым. */
+.bar-fill.bar-negative {
+  border-radius: 4px 0 0 4px;
+  background: var(--muted);
+}
+
+.bar-value,
+.bar-share {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.bar-share {
+  color: var(--muted);
+}
+
+/* Подсказка — над строкой, в её ширину: не уходит за край экрана. */
+.bar-tip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 2px);
+  left: 0;
+  z-index: 3;
+  width: max-content;
+  max-width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  color: var(--text);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.bar-row:hover .bar-tip,
+.bar-row:focus-visible .bar-tip {
+  display: block;
+}
+
+.filter-note .link-button {
+  margin-left: 8px;
+}
+
+@media (max-width: 860px) {
+  .structure-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .bar-row {
+    grid-template-columns: minmax(80px, 34%) minmax(0, 1fr) 64px 36px;
+    gap: 6px;
+    font-size: 12px;
+  }
+}

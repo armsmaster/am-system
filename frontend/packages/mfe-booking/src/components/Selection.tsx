@@ -5,7 +5,7 @@ import { moscowToday } from '../format';
 
 /**
  * Портфель и дата — в адресе страницы: их видно в ссылке, и они общие
- * для списка сделок и позиций. По умолчанию — первый фонд и сегодня.
+ * для позиций и операций фонда. По умолчанию — первый фонд и сегодня.
  */
 export function useSelection(portfolios: readonly Portfolio[]) {
   const [params, setParams] = useSearchParams();
@@ -18,40 +18,4 @@ export function useSelection(portfolios: readonly Portfolio[]) {
   }
 
   return { portfolioId, date, update };
-}
-
-export function SelectionForm({
-  portfolios,
-  portfolioId,
-  date,
-  onChange,
-}: {
-  readonly portfolios: readonly Portfolio[];
-  readonly portfolioId: string;
-  readonly date: string;
-  readonly onChange: (changes: { portfolio?: string; date?: string }) => void;
-}) {
-  return (
-    <form className="inline" aria-label="Портфель и дата" onSubmit={(e) => e.preventDefault()}>
-      <label>
-        Портфель
-        <select value={portfolioId} onChange={(e) => onChange({ portfolio: e.target.value })}>
-          {portfolios.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.code} — {p.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label>
-        Дата
-        <input
-          type="date"
-          value={date}
-          required
-          onChange={(e) => e.target.value && onChange({ date: e.target.value })}
-        />
-      </label>
-    </form>
-  );
 }

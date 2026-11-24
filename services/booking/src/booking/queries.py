@@ -6,15 +6,17 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from am_common.calendar import is_trading_day
 from am_common.clock import MOSCOW
 from booking.clients import MarketdataClient, Metrics, PortfolioRef, physical_under
 from booking.repository import Repository, Snapshot
@@ -32,6 +34,33 @@ from booking.roll import (
     from_json,
     remark,
 )
+
+# Периоды результата по бумагам (решение 164): неделя и 30 дней — скользящие, месяц,
+# квартал и год — с начала.
+PERIODS = ("week", "days30", "month", "quarter", "year")
+
+
+def period_starts(day: date) -> dict[str, date]:
+    """Первый день каждого периода, который заканчивается ``day``."""
+    return {
+        "week": day - timedelta(days=6),
+        "days30": day - timedelta(days=29),
+        "month": day.replace(day=1),
+        "quarter": date(day.year, 3 * ((day.month - 1) // 3) + 1, 1),
+        "year": date(day.year, 1, 1),
+    }
+
+
+@dataclass(slots=True)
+class PeriodTotal:
+    """Результат бумаги за период и реализованная часть, ₽."""
+
+    result: Decimal = ZERO
+    realized: Decimal = ZERO
+
+
+def _no_periods() -> dict[str, PeriodTotal]:
+    return {name: PeriodTotal() for name in PERIODS}
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +97,7 @@ class PositionLine:
     lots: list[tuple[str, Lot]] = field(default_factory=list)  # код портфеля, лот
     valuations: list[Valuation] = field(default_factory=list)  # по портфелям
     metrics: Metrics | None = None
+    periods: dict[str, PeriodTotal] = field(default_factory=_no_periods)
 
     @property
     def cost(self) -> Decimal:
@@ -113,6 +143,8 @@ class PositionsView:
     portfolios: list[PortfolioState]
     lines: list[PositionLine]
     repos: list[RepoLine] = field(default_factory=list)
+    # Бумаги, которых в позиции уже нет, — их результат за периоды одной суммой.
+    closed: dict[str, PeriodTotal] = field(default_factory=_no_periods)
 
     @property
     def cash(self) -> Decimal:
@@ -220,13 +252,69 @@ async def positions(
         if marketdata is not None and line.kind == "bond" and line.trade_quantity:
             line.metrics = await marketdata.metrics(instrument_id, at)
     deals = await repo.trades_by_id(r.id for _, r in open_repos)
+    today_valuations = [v for line in lines.values() for v in line.valuations]
+    totals = await period_results(repo, [p.id for p in physical], day, today_valuations)
+    closed = _spread_periods(lines, totals)
     return PositionsView(
         portfolio,
         day,
         states,
         sorted(lines.values(), key=lambda line: line.secid),
         [RepoLine(ref, r, deals[r.id]) for ref, r in open_repos],
+        closed,
     )
+
+
+def _spread_periods(
+    lines: Mapping[UUID, PositionLine], totals: Mapping[UUID, dict[str, PeriodTotal]]
+) -> dict[str, PeriodTotal]:
+    """Результат за периоды — по строкам позиций; бумаг, которых в позиции нет, — одной
+    суммой: её возвращаем."""
+    closed = _no_periods()
+    for instrument_id, periods in totals.items():
+        if instrument_id in lines:
+            lines[instrument_id].periods = periods
+            continue
+        for name, total in periods.items():
+            closed[name].result += total.result
+            closed[name].realized += total.realized
+    return closed
+
+
+async def period_results(
+    repo: Repository, portfolio_ids: list[UUID], day: date, today: Iterable[Valuation]
+) -> dict[UUID, dict[str, PeriodTotal]]:
+    """Результат и реализованный результат каждой бумаги за периоды до ``day`` включительно.
+
+    Прошлые дни — из действующих снапшотов, сам ``day`` — из оценки, которую уже
+    показывают позиции: сегодня она по текущим ценам.
+    """
+    starts = period_starts(day)
+    totals: dict[UUID, dict[str, PeriodTotal]] = defaultdict(_no_periods)
+
+    def add(instrument_id: UUID, on: date, result: Decimal, realized: Decimal) -> None:
+        for name, start in starts.items():
+            if on >= start:
+                totals[instrument_id][name].result += result
+                totals[instrument_id][name].realized += realized
+
+    first, yesterday = min(starts.values()), day - timedelta(days=1)
+    past = await repo.snapshots_between(portfolio_ids, first, yesterday)
+    for snapshot in past:
+        for v in snapshot.state.get("valuations", []):
+            parts = [Decimal(v[name]) for name in ("revaluation", "realized", "coupon", "fees")]
+            add(UUID(v["instrument_id"]), snapshot.day, sum(parts, ZERO), Decimal(v["realized"]))
+    for valuation in today:
+        add(valuation.instrument_id, day, valuation.result, valuation.realized)
+    return dict(totals)
+
+
+def previous_trading_day(day: date, exceptions: Mapping[date, bool]) -> date:
+    """Ближайший торговый день раньше ``day``."""
+    current = day - timedelta(days=1)
+    while not is_trading_day(current, exceptions):
+        current -= timedelta(days=1)
+    return current
 
 
 def _portfolio_state(

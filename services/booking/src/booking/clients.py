@@ -195,18 +195,37 @@ class MarketdataClient(_ServiceClient):
         )
         if found is None:
             return None
+        kind = found.get("type")
         if found["spread"] is not None:
             spread = found["spread"]
             reset = spread.get("reset_duration")
+            smooth = spread.get("continuous") or {}
             return Metrics(
                 "spread",
                 Decimal(spread["spread_dv01"]),
                 Decimal(spread["spread_duration"]),
                 None if reset is None else Decimal(reset),
+                bond_type=kind,
+                spread_bp=_decimal(spread.get("spread_bp")),
+                spread_continuous_bp=_decimal(smooth.get("spread_bp")),
+                duration_continuous=_decimal(smooth.get("spread_duration")),
+                dv01_continuous=_decimal(smooth.get("spread_dv01")),
+                **_horizon(spread.get("horizon")),
             )
         for item in found["yields"]:
             if item["dv01"] is not None:
-                return Metrics("yield", Decimal(item["dv01"]), Decimal(item["modified_duration"]))
+                smooth = item.get("continuous") or {}
+                return Metrics(
+                    "yield",
+                    Decimal(item["dv01"]),
+                    Decimal(item["modified_duration"]),
+                    bond_type=kind,
+                    yield_percent=_decimal(item.get("yield_percent")),
+                    yield_continuous=_decimal(smooth.get("yield_percent")),
+                    duration_continuous=_decimal(smooth.get("modified_duration")),
+                    dv01_continuous=_decimal(smooth.get("dv01")),
+                    **_horizon(item.get("horizon")),
+                )
         return None
 
 
@@ -219,6 +238,18 @@ class Metrics:
     duration: Decimal  # модифицированная, лет
     # Флоатер: модифицированная дюрация до ближайшего купона — для лимитов (design/09).
     reset_duration: Decimal | None = None
+    bond_type: str | None = None  # fixed | floater | linker (design/04)
+    # Облигация с фиксированным купоном — доходность к горизонту, % годовых.
+    yield_percent: Decimal | None = None  # эффективная годовая
+    yield_continuous: Decimal | None = None  # непрерывная (решение 156)
+    # Флоатер и линкер — спред над фондированием, бп.
+    spread_bp: Decimal | None = None
+    spread_continuous_bp: Decimal | None = None
+    horizon_kind: str | None = None  # offer | maturity
+    horizon_date: date | None = None
+    # То же в непрерывной капитализации: модифицированная дюрация — дюрация Маколея.
+    duration_continuous: Decimal | None = None
+    dv01_continuous: Decimal | None = None  # ₽ на бумагу за 1 бп
 
 
 @dataclass(frozen=True, slots=True)
@@ -291,3 +322,15 @@ def service_token(resources: Resources) -> ServiceToken | None:
         client_id=settings.keycloak_client_id,
         client_secret=secret.get_secret_value(),
     )
+
+
+def _decimal(value: object) -> Decimal | None:
+    """Число из ответа сервиса; нет — None (старый сервис цен без непрерывных величин)."""
+    return None if value is None else Decimal(str(value))
+
+
+def _horizon(found: Mapping[str, str] | None) -> dict[str, Any]:
+    """К чему посчитаны доходность или спред: оферта или погашение и дата."""
+    if found is None:
+        return {}
+    return {"horizon_kind": found["kind"], "horizon_date": date.fromisoformat(found["date"])}

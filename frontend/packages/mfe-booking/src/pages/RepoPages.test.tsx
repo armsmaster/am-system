@@ -122,7 +122,10 @@ describe('REPO in positions, ladder, NAV and operations (design/07)', () => {
     const base = positions();
     api.positions.mockResolvedValue(
       positions({
-        repos: [BORROWED, { ...BORROWED, id: 't-ksu', direct: false, secid: 'КСУ', quantity: 0, value: '30023342.47' }],
+        repos: [
+          BORROWED,
+          { ...BORROWED, id: 't-ksu', direct: false, instrument_id: null, secid: 'КСУ', short_name: 'КСУ', quantity: 0, value: '30023342.47' },
+        ],
         result: dayResult({ repo: '-2228.67' }),
         portfolios: [
           {
@@ -138,9 +141,10 @@ describe('REPO in positions, ladder, NAV and operations (design/07)', () => {
 
     const [, borrowed, placed] = within(await screen.findByRole('table', { name: 'РЕПО' })).getAllByRole('row');
     expect(borrowed).toHaveTextContent(
-      'OPIF1-BONDSпрямое: привлеклиSU26238RMFS410 00014,530.11.2026 → 03.12.2026: 5 616 786,01 ₽5 610 100,002 228,67−5 612 328,67',
+      'прямоепривлекли · OPIF1-BONDSОФЗ 26238SU26238RMFS410 000 шт.14,530.11.2026 → 03.12.2026вторая часть 5 616 786,01 ₽' +
+        '5 610 100,002 228,67−5 612 328,67',
     );
-    expect(placed).toHaveTextContent('обратное: разместилиКСУ—');
+    expect(placed).toHaveTextContent(/^обратноеразместили · OPIF1-BONDSКСУ14,5/);
     expect(screen.getByText('проценты по РЕПО')).toBeInTheDocument();
     expect(screen.getByRole('table', { name: 'Движения дня' })).toHaveTextContent('купон: передача дохода по РЕПО');
   });

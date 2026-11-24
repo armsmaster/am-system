@@ -3,7 +3,7 @@ import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import BookingApp from './App';
-import { INSTRUMENTS, PORTFOLIOS, positions, session, trade } from './test/fixtures';
+import { ATTRIBUTES, INSTRUMENTS, PORTFOLIOS, positions, SCALE, session, trade } from './test/fixtures';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -14,8 +14,12 @@ function stubServices() {
   const fetchMock = vi.fn((path: string) => {
     const body = path.includes('/api/portfolio/')
       ? PORTFOLIOS
-      : path.includes('/api/refdata/')
-        ? INSTRUMENTS
+      : path.includes('/api/refdata/attributes')
+        ? ATTRIBUTES
+        : path.includes('/api/refdata/ratings/scale')
+          ? SCALE
+          : path.includes('/api/refdata/')
+            ? INSTRUMENTS
         : path.includes('/positions')
           ? positions()
           : path.includes('/trades/')
@@ -72,6 +76,6 @@ describe('BookingApp', () => {
     stubServices();
     renderInShell('/booking/positions', 'trading');
 
-    expect(await screen.findByRole('table', { name: 'Позиции' })).toBeInTheDocument();
+    expect(await screen.findByRole('table', { name: 'Облигации' })).toBeInTheDocument();
   });
 });

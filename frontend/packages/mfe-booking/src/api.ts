@@ -163,6 +163,31 @@ export interface Line {
   readonly duration: Decimal | null;
   /** yield — по доходности, spread — по спреду (флоатер, линкер). */
   readonly metrics_basis: 'yield' | 'spread' | null;
+  /** Тип облигации из расчёта сервиса цен; null — расчёта нет. */
+  readonly bond_type: BondType | null;
+  /** Фиксированный купон: доходность к оферте или погашению, % — годовая и непрерывная. */
+  readonly yield_percent: Decimal | null;
+  readonly yield_continuous: Decimal | null;
+  /** Флоатер и линкер: спред, бп — годовой и непрерывный. */
+  readonly spread_bp: Decimal | null;
+  readonly spread_continuous_bp: Decimal | null;
+  readonly horizon_kind: 'offer' | 'maturity' | null;
+  readonly horizon_date: string | null;
+  /** В непрерывной капитализации: дюрация (Маколея) и DV01 на всю позицию. */
+  readonly duration_continuous: Decimal | null;
+  readonly dv01_continuous: Decimal | null;
+  /** Результат и реализованный результат за периоды (решение 164). */
+  readonly periods: Readonly<Record<Period, PeriodTotal>>;
+}
+
+export type BondType = 'fixed' | 'floater' | 'linker';
+
+/** Периоды результата: неделя и 30 дней — скользящие, остальные — с начала. */
+export type Period = 'week' | 'days30' | 'month' | 'quarter' | 'year';
+
+export interface PeriodTotal {
+  readonly result: Decimal;
+  readonly realized: Decimal;
 }
 
 /** Почему оценка неполная или неточная (design/06). */
@@ -266,6 +291,11 @@ export interface Positions extends FundFigures {
   readonly dv01_spread: Decimal;
   /** Открытые сделки РЕПО на дату. */
   readonly repos: readonly RepoLine[];
+  /** Бумаги, которых в позиции уже нет: результат за периоды одной суммой. */
+  readonly closed: Readonly<Record<Period, PeriodTotal>>;
+  /** Соседние торговые дни; null — календарь недоступен. */
+  readonly previous_day: string | null;
+  readonly next_day: string | null;
 }
 
 /** Открытая сделка РЕПО: долг и начисленные проценты (design/07). */
@@ -649,6 +679,59 @@ export interface WhatIf {
   readonly changes: readonly LimitChange[];
 }
 
+// --- справочник: признаки и рейтинги на дату (design/09) ------------------------------
+
+export interface AgencyRating {
+  readonly agency: string;
+  readonly agency_name: string;
+  readonly rating: string;
+  /** Ступень общей шкалы. */
+  readonly grade: string;
+  readonly since: string;
+}
+
+export interface RatingsOn {
+  /** unrated — рейтинга нет; unknown — рейтинг ещё не вводили. */
+  readonly status: 'rated' | 'unrated' | 'unknown';
+  readonly ratings: readonly AgencyRating[];
+}
+
+export interface Classifier {
+  readonly id: string;
+  readonly name: string;
+  readonly target: 'instrument' | 'issuer';
+  readonly values: readonly { readonly id: string; readonly name: string }[];
+}
+
+export interface InstrumentAttributes {
+  readonly id: string;
+  readonly issuer_id: string | null;
+  readonly coupon_kind: 'fixed' | 'floater' | 'unknown' | null;
+  readonly nominal_indexation: 'none' | 'ruonia' | 'unknown';
+  /** Классификатор → значение. */
+  readonly classes: Readonly<Record<string, string>>;
+  readonly ratings: RatingsOn;
+}
+
+export interface IssuerAttributes {
+  readonly id: string;
+  readonly name: string;
+  readonly classes: Readonly<Record<string, string>>;
+  readonly ratings: RatingsOn;
+}
+
+export interface Attributes {
+  readonly date: string;
+  readonly classifiers: readonly Classifier[];
+  readonly instruments: readonly InstrumentAttributes[];
+  readonly issuers: readonly IssuerAttributes[];
+}
+
+/** Общая шкала рейтингов: ступени от высшей к низшей. */
+export interface RatingScale {
+  readonly grades: readonly string[];
+}
+
 const BASE = '/api/booking';
 
 /** Вызовы API сделок; портфели — из сервиса портфелей, бумаги — из справочника. */
@@ -694,6 +777,9 @@ export function bookingApi(client: ApiClient) {
     ladder: (accountId: string, from?: string) =>
       client.get<Ladder>(`${BASE}/ladder${query({ account_id: accountId, from })}`),
     limitsCheck: (trade: LimitsTrade) => client.post<WhatIf>('/api/limits/check', trade),
+    /** Классификаторы и рейтинги бумаг и эмитентов на дату — для колонок позиций. */
+    attributes: (date: string) => client.get<Attributes>(`/api/refdata/attributes${query({ date })}`),
+    ratingScale: () => client.get<RatingScale>('/api/refdata/ratings/scale'),
   };
 }
 

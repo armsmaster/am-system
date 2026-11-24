@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 import pytest
@@ -14,7 +14,9 @@ from httpx2 import Response
 from am_common.app import Resources
 from am_common.clock import MOSCOW
 from am_common.testing import TokenFactory
+from booking.queries import PositionLine, _spread_periods, period_results, period_starts
 from booking.recalc import marketdata_client, recalc_once, refdata_client
+from booking.repository import Repository, Snapshot
 
 if TYPE_CHECKING:
     from conftest import World
@@ -89,8 +91,21 @@ async def week(trader: Api, ops: Api, resources: Resources, world: World) -> Non
     """Неделя фонда «ОПИФ 1»: паи, перевод, покупка, продажа, купон."""
     world.prices |= {(OFZ, day): price for day, price in PRICES.items()}
     world.metrics[OFZ] = {
+        "type": "fixed",
         "spread": None,
-        "yields": [{"dv01": "0.326", "modified_duration": "5.89"}],
+        "yields": [
+            {
+                "dv01": "0.326",
+                "modified_duration": "5.89",
+                "yield_percent": "15.935227",
+                "horizon": {"kind": "maturity", "date": "2041-05-15"},
+                "continuous": {
+                    "yield_percent": "14.786146",
+                    "modified_duration": "6.82",
+                    "dv01": "0.3779",
+                },
+            }
+        ],
     }
     issue = ops.ok(
         "POST",
@@ -188,6 +203,19 @@ def test_positions_with_valuation_and_dv01(trader: Api) -> None:
     )
     # DV01 позиции — 30 000 × 0,326 ₽ на бумагу за 1 бп.
     assert (ofz["dv01"], ofz["duration"], ofz["metrics_basis"]) == ("9780.00", "5.89", "yield")
+    # Доходность к горизонту из расчёта сервиса цен — в годовых и непрерывная (решение 164).
+    assert (ofz["bond_type"], ofz["yield_percent"], ofz["yield_continuous"], ofz["spread_bp"]) == (
+        "fixed",
+        "15.935227",
+        "14.786146",
+        None,
+    )
+    assert (ofz["horizon_kind"], ofz["horizon_date"], ofz["duration_continuous"]) == (
+        "maturity",
+        "2041-05-15",
+        "6.82",
+    )
+    assert ofz["dv01_continuous"] == "11337.00"  # 30 000 × 0,3779
     assert (monday["dv01_yield"], monday["dv01_spread"]) == ("9780.00", "9780.00")
     result = monday["result"]
     assert numbers(result, "total", "receivable", "value") == money(
@@ -196,6 +224,69 @@ def test_positions_with_valuation_and_dv01(trader: Api) -> None:
         "60066000.00",
     )
     assert monday["portfolios"][0]["result"]["flags"] == []
+
+
+@pytest.mark.usefixtures("week")
+def test_positions_results_by_period(trader: Api, world: World) -> None:
+    tuesday = trader.ok("GET", "/positions", portfolio_id=str(FUND), date="2026-12-02")
+
+    [ofz] = tuesday["lines"]
+    periods = {name: (p["result"], p["realized"]) for name, p in ofz["periods"].items()}
+    # Результат дня по таблице методики: 27.11 +25 000, 30.11 +41 000 (продажа: +20 000
+    # реализованных), 01.12 −6 300, 02.12 +41 700. Декабрь — с 01.12.
+    assert periods == {
+        "week": ("101400.00", "20000.00"),
+        "days30": ("101400.00", "20000.00"),
+        "month": ("35400.00", "0.00"),
+        "quarter": ("101400.00", "20000.00"),
+        "year": ("101400.00", "20000.00"),
+    }
+    assert tuesday["closed"]["year"] == {"result": "0.00", "realized": "0.00"}
+    # Соседние торговые дни — для кнопок даты.
+    assert (tuesday["previous_day"], tuesday["next_day"]) == ("2026-12-01", "2026-12-03")
+
+    # Справочник недоступен (календарь другого года ещё не загружен) — кнопок нет.
+    world.down.add("refdata")
+    blind = trader.ok("GET", "/positions", portfolio_id=str(FUND), date="2030-06-03")
+    assert (blind["previous_day"], blind["next_day"]) == (None, None)
+
+
+def test_period_starts() -> None:
+    assert period_starts(date(2026, 11, 30)) == {
+        "week": date(2026, 11, 24),
+        "days30": date(2026, 11, 1),
+        "month": date(2026, 11, 1),
+        "quarter": date(2026, 10, 1),
+        "year": date(2026, 1, 1),
+    }
+    assert period_starts(date(2026, 2, 14))["quarter"] == date(2026, 1, 1)
+
+
+async def test_sold_bonds_go_to_the_closed_line() -> None:
+    sold, held = UUID(int=1), UUID(int=2)
+
+    class Snapshots:
+        async def snapshots_between(self, *_: object) -> list[Snapshot]:
+            state = {
+                "valuations": [
+                    {
+                        "instrument_id": str(sold),
+                        "revaluation": "10",
+                        "realized": "5",
+                        "coupon": "1",
+                        "fees": "-1",
+                    },
+                ]
+            }
+            return [Snapshot(UUID(int=9), date(2026, 11, 27), state, UUID(int=8))]
+
+    totals = await period_results(
+        cast(Repository, Snapshots()), [UUID(int=9)], date(2026, 11, 30), []
+    )
+    line = PositionLine(held, "bond", "HELD", "Held")
+    closed = _spread_periods({held: line}, totals)
+    assert (closed["week"].result, closed["week"].realized) == (Decimal(15), Decimal(5))
+    assert line.periods["week"].result == 0
 
 
 @pytest.mark.usefixtures("week")

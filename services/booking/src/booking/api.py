@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import datetime as dt
 from collections.abc import Callable, Mapping
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -22,6 +23,7 @@ from pydantic import (
 
 from am_common.app import AppResources, DbSession
 from am_common.auth import Principal, Role, require_any_role
+from am_common.calendar import add_trading_days
 from am_common.clock import MOSCOW
 from am_common.events import Actor
 from booking.accounts import MAX_ACCOUNT_DAYS, AccountDay, AccountDays, account_days
@@ -40,12 +42,14 @@ from booking.ladder import MAX_PAST_DAYS, Ladder, ladder
 from booking.operations import OperationDesk, OperationInput, OperationView
 from booking.queries import (
     NavDay,
+    PeriodTotal,
     PortfolioState,
     PositionLine,
     ResultDay,
     ResultLine,
     nav,
     positions,
+    previous_trading_day,
     results,
 )
 from booking.quik import QuikFormatError, QuikImport, QuikLine, Rates
@@ -305,6 +309,24 @@ class LineOut(BaseModel):
     metrics_basis: str | None = None
     # Флоатер: модифицированная дюрация до ближайшего купона — для лимитов (design/09).
     reset_duration: Decimal | None = None
+    bond_type: str | None = None  # fixed | floater | linker
+    # Доходность к горизонту (облигация с фиксированным купоном) или спред (флоатер,
+    # линкер) — по цене для оценки, в годовых и в непрерывной капитализации.
+    yield_percent: Decimal | None = None
+    yield_continuous: Decimal | None = None
+    spread_bp: Decimal | None = None
+    spread_continuous_bp: Decimal | None = None
+    horizon_kind: str | None = None
+    horizon_date: date | None = None
+    duration_continuous: Decimal | None = None
+    dv01_continuous: Decimal | None = None  # на всю позицию
+    # Результат и реализованный результат за периоды (решение 164).
+    periods: dict[str, PeriodOut] = {}
+
+
+class PeriodOut(BaseModel):
+    result: Decimal
+    realized: Decimal
 
 
 class MovementOut(BaseModel):
@@ -387,6 +409,11 @@ class PositionsOut(FundFigures):
     dv01_yield: Decimal = Decimal(0)  # облигации с фиксированным купоном
     dv01_spread: Decimal = Decimal(0)  # все облигации: по спреду
     repos: list[RepoOut] = []
+    # Бумаги, которых в позиции уже нет: результат за периоды одной суммой.
+    closed: dict[str, PeriodOut] = {}
+    # Соседние торговые дни — для кнопок «‹ пред.» и «след. ›»; нет календаря — None.
+    previous_day: dt.date | None = None
+    next_day: dt.date | None = None
 
 
 class ResultDayOut(BaseModel):
@@ -1136,7 +1163,19 @@ async def get_positions(
     )
     if view is None:
         raise NotFoundError("portfolio", portfolio_id)
+    try:
+        exceptions = await services.refdata.calendar_around(on)
+        following = add_trading_days(on + timedelta(days=1), 0, exceptions)
+        neighbours: tuple[date | None, date | None] = (
+            previous_trading_day(on, exceptions),
+            following,
+        )
+    except ServiceUnavailableError:
+        neighbours = (None, None)
     return PositionsOut(
+        previous_day=neighbours[0],
+        next_day=neighbours[1],
+        closed={name: _period_out(total) for name, total in view.closed.items()},
         portfolio_id=view.portfolio.id,
         code=view.portfolio.code,
         name=view.portfolio.name,
@@ -1828,6 +1867,32 @@ def _ladder_out(found: Ladder) -> LadderOut:
     )
 
 
+def _period_out(total: PeriodTotal) -> PeriodOut:
+    cent = Decimal("0.01")
+    return PeriodOut(result=total.result.quantize(cent), realized=total.realized.quantize(cent))
+
+
+def _metrics_fields(line: PositionLine) -> dict[str, Any]:
+    """Доходность, спред и тип облигации из расчёта сервиса цен; DV01 — на всю позицию."""
+    metrics = line.metrics
+    if metrics is None:
+        return {}
+    dv01 = metrics.dv01_continuous
+    return {
+        "bond_type": metrics.bond_type,
+        "yield_percent": metrics.yield_percent,
+        "yield_continuous": metrics.yield_continuous,
+        "spread_bp": metrics.spread_bp,
+        "spread_continuous_bp": metrics.spread_continuous_bp,
+        "horizon_kind": metrics.horizon_kind,
+        "horizon_date": metrics.horizon_date,
+        "duration_continuous": metrics.duration_continuous,
+        "dv01_continuous": None
+        if dv01 is None
+        else (line.trade_quantity * dv01).quantize(Decimal("0.01")),
+    }
+
+
 def _line_out(line: PositionLine) -> LineOut:
     average = line.average_price
     return LineOut(
@@ -1869,4 +1934,6 @@ def _line_out(line: PositionLine) -> LineOut:
         duration=None if line.metrics is None else line.metrics.duration,
         reset_duration=None if line.metrics is None else line.metrics.reset_duration,
         metrics_basis=None if line.metrics is None else line.metrics.basis,
+        **_metrics_fields(line),
+        periods={name: _period_out(total) for name, total in line.periods.items()},
     )

@@ -6,6 +6,7 @@ import { vi } from 'vitest';
 import { Booking } from '../App';
 import type {
   Account,
+  Attributes,
   BookingApi,
   DayResult,
   FeeRate,
@@ -19,6 +20,7 @@ import type {
   Positions,
   QuikLine,
   QuikReport,
+  RatingScale,
   Results,
   Trade,
   WhatIf,
@@ -170,6 +172,15 @@ export function positions(fields: Partial<Positions> = {}): Positions {
     dv01_yield: '9780.00',
     dv01_spread: '9780.00',
     repos: [],
+    closed: {
+      week: { result: '0.00', realized: '0.00' },
+      days30: { result: '0.00', realized: '0.00' },
+      month: { result: '0.00', realized: '0.00' },
+      quarter: { result: '0.00', realized: '0.00' },
+      year: { result: '0.00', realized: '0.00' },
+    },
+    previous_day: '2026-12-01',
+    next_day: '2026-12-03',
     lines: [
       {
         instrument_id: 'i-ofz',
@@ -208,11 +219,72 @@ export function positions(fields: Partial<Positions> = {}): Positions {
         dv01: '9780.00',
         duration: '5.89',
         metrics_basis: 'yield',
+        bond_type: 'fixed',
+        yield_percent: '15.935227',
+        yield_continuous: '14.786146',
+        spread_bp: null,
+        spread_continuous_bp: null,
+        horizon_kind: 'maturity',
+        horizon_date: '2041-05-15',
+        duration_continuous: '6.82',
+        dv01_continuous: '11337.00',
+        // Результат дня по таблице методики: 27.11 +25 000, 30.11 +41 000 (продажа: +20 000
+        // реализованных), 01.12 −6 300, 02.12 +41 700 (решение 164).
+        periods: {
+          week: { result: '101400.00', realized: '20000.00' },
+          days30: { result: '101400.00', realized: '20000.00' },
+          month: { result: '35400.00', realized: '0.00' },
+          quarter: { result: '101400.00', realized: '20000.00' },
+          year: { result: '101400.00', realized: '20000.00' },
+        },
       },
     ],
     ...fields,
   };
 }
+
+/** Справочник на дату: сектор эмитента, очерёдность выпуска, рейтинги двух агентств. */
+export const ATTRIBUTES: Attributes = {
+  date: '2026-12-02',
+  classifiers: [
+    {
+      id: 'c-sector',
+      name: 'Сектор',
+      target: 'issuer',
+      values: [
+        { id: 'v-gov', name: 'Государство' },
+        { id: 'v-fin', name: 'Финансы' },
+      ],
+    },
+    { id: 'c-rank', name: 'Очередность', target: 'instrument', values: [{ id: 'v-senior', name: 'Старший' }] },
+  ],
+  instruments: [
+    {
+      id: 'i-ofz',
+      issuer_id: 'e-minfin',
+      coupon_kind: 'fixed',
+      nominal_indexation: 'none',
+      classes: { 'c-rank': 'v-senior' },
+      ratings: { status: 'unknown', ratings: [] },
+    },
+  ],
+  issuers: [
+    {
+      id: 'e-minfin',
+      name: 'Минфин России',
+      classes: { 'c-sector': 'v-gov' },
+      ratings: {
+        status: 'rated',
+        ratings: [
+          { agency: 'expert', agency_name: 'Эксперт РА', rating: 'ruAA+', grade: 'AA+', since: '2025-03-01' },
+          { agency: 'acra', agency_name: 'АКРА', rating: 'AAA(RU)', grade: 'AAA', since: '2025-01-15' },
+        ],
+      },
+    },
+  ],
+};
+
+export const SCALE: RatingScale = { grades: ['AAA', 'AA+', 'AA', 'AA-', 'A+', 'A', 'A-'] };
 
 /** Портфель облигаций на 02.12: купон пришёл, цена выросла (design/06, сквозной пример). */
 export function dayResult(fields: Partial<DayResult> = {}): DayResult {
@@ -594,6 +666,8 @@ export function fakeApi() {
     cancelOperation: answer(operation({ status: 'cancelled' })),
     ladder: answer(ladder()),
     limitsCheck: answer<WhatIf>(whatIf()),
+    attributes: answer<Attributes>(ATTRIBUTES),
+    ratingScale: answer<RatingScale>(SCALE),
     results: answer<Results>(results()),
     nav: answer<Nav>(nav()),
     feeRates: answer<FeeRate[]>(FEE_RATES),
