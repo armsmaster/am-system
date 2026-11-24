@@ -26,6 +26,12 @@ ENV SERVICE=${SERVICE} \
     PATH=/app/.venv/bin:$PATH \
     PYTHONUNBUFFERED=1
 
+# Корневой сертификат Минцифры (решение 163): с 24.11.2026 ISS отдаёт сертификат
+# национального удостоверяющего центра. Добавляем его к системным доверенным —
+# httpx берёт их из /etc/ssl/certs.
+COPY infra/certs/russian_trusted_root_ca.crt /usr/local/share/ca-certificates/
+RUN update-ca-certificates
+
 RUN useradd --system --uid 10001 --no-create-home app
 COPY --from=build /app/.venv /app/.venv
 
