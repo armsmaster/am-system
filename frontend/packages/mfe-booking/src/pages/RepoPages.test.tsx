@@ -158,15 +158,17 @@ describe('REPO in positions, ladder, NAV and operations (design/07)', () => {
           {
             ...base.days[0]!,
             movements: [
-              { portfolio_code: 'OPIF1-BONDS', kind: 'repo_second', instrument_id: 'i-ofz', trade_id: 't-repo', operation_id: null, quantity: 10000, cash: '-5616786.01' },
+              { portfolio_code: 'OPIF1-BONDS', repo_term: 3, kind: 'repo_second', instrument_id: 'i-ofz', trade_id: 't-repo', operation_id: null, quantity: 10000, cash: '-5616786.01' },
             ],
           },
         ],
       }),
     );
     renderBooking(api, '/booking/ladder?account=a-broker');
-    expect(await screen.findByText('OPIF1-BONDS: РЕПО: вторая часть SU26238RMFS4 −5 616 786,01 ₽')).toBeInTheDocument();
-    expect(screen.getByText('SU26238RMFS4 +10 000 → 50 000 шт.')).toHaveClass('mv-security');
+    // Часть РЕПО — строкой по сроку сделки (решение 166).
+    const rows = within(await screen.findByRole('table', { name: 'План по расчётам' })).getAllByRole('row');
+    expect(rows[1]).toHaveTextContent('РЕПО3 дня · вторая часть5 616 786,01');
+    expect(screen.getByText('ОФЗ 26238 +10 000 → 50 000 шт.')).toHaveClass('mv-security');
 
     const fund = fakeApi();
     const [first] = nav().days;

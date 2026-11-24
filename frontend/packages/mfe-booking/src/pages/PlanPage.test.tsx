@@ -12,27 +12,27 @@ function tiles(): string[] {
 }
 
 describe('PlanPage', () => {
-  it('shows money and securities on every settlement date from today', async () => {
+  it('shows money in and out, the balance and securities on every settlement date from today', async () => {
+    const user = userEvent.setup();
     const api = renderBooking(fakeApi(), '/booking/plan');
 
     const rows = within(await screen.findByRole('table', { name: 'План по расчётам' })).getAllByRole('row');
     expect(api.ladder).toHaveBeenCalledWith('a-broker', undefined);
-    // Бумаги — не колонками, а метками в строке дня: сколько пришло или ушло и сколько стало.
-    expect(rows[0]).toHaveTextContent(/^ДатаДвиженияДеньги на конец дня, ₽$/);
+    expect(rows[0]).toHaveTextContent(/^ДатаПоступило, ₽Списано, ₽Деньги на конец дня, ₽Бумаги$/);
     expect(rows[1]).toHaveTextContent(
-      '30.11 пнсегодняOPIF1-BONDS: расчёты по сделке SU26238RMFS4 −28 000 500,00 ₽SU26238RMFS4 +50 000 → 50 000 шт.' +
-        '31 999 500,00',
+      '30.11 пнсегодня—−28 000 500,00сделкиОФЗ 26238 · 1 покупка, +50 000 шт.28 000 500,00' +
+        '31 999 500,00ОФЗ 26238 +50 000 → 50 000 шт.',
     );
     expect(rows[1]).toHaveClass('next');
-    expect(rows[2]).toHaveTextContent('01.12 втплан');
     expect(rows[2]).toHaveTextContent(
-      'расчёты по сделке SU26238RMFS4 +11 224 200,00 ₽SU26238RMFS4 −20 000 → 30 000 шт.43 223 700,00',
+      '01.12 втплан+11 224 200,00сделкиОФЗ 26238 · 1 продажа, −20 000 шт.11 224 200,00—43 223 700,00' +
+        'ОФЗ 26238 −20 000 → 30 000 шт.',
     );
-    expect(within(rows[2]!).getByText(/расчёты по сделке/)).toHaveClass('mv', 'mv-in');
-    expect(within(rows[1]!).getByText(/расчёты по сделке/)).toHaveClass('mv', 'mv-out');
-    expect(within(rows[1]!).getByText(/→ 50 000 шт\./)).toHaveClass('mv', 'mv-security');
-    expect(rows[3]).toHaveTextContent('OPIF1-BONDS: купон SU26238RMFS4 +1 062 000,00 ₽44 285 700,00');
-    expect(rows[4]).toHaveTextContent('03.12 чтплан—44 285 700,00');
+    expect(within(rows[2]!).getByText('+11 224 200,00')).toHaveClass('plan-total', 'up');
+    expect(rows[3]).toHaveTextContent('02.12 срплан+1 062 000,00купонОФЗ 26238');
+    // День без движений — свёрнутой строкой.
+    expect(rows[4]).toHaveTextContent('03.12 чт · без движений44 285 700,00');
+    expect(rows[4]).toHaveClass('plan-quiet');
     // Бумаги в плане: сейчас, движения по датам, минимум с датой.
     const securities = within(screen.getByRole('table', { name: 'Бумаги в плане' })).getAllByRole('row');
     expect(securities).toHaveLength(2);
@@ -40,11 +40,42 @@ describe('PlanPage', () => {
     expect(within(securities[1]!).getByText('01.12 −20 000')).toHaveClass('mv', 'mv-out');
     expect(tiles()).toEqual([
       'Деньги сегодня: 32,0 млн ₽',
-      'Минимум до 03.12: 32,0 млн ₽на 30.11',
-      'Дефицитов: 0',
+      'Можно разместить до 03.12: 32,0 млн ₽минимум остатка — 30.11',
+      'Дефицит денег: нет',
+      'Дефицит бумаг: нет',
     ]);
     expect(screen.getByText(/Портфели счёта: OPIF1-BONDS. Прогноз от расчёта на 29.11.2026/)).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+    // Столбики остатка по дням: щелчок открывает движения дня.
+    const chart = within(screen.getByRole('group', { name: 'Деньги на конец дня' }));
+    const columns = chart.getAllByRole('button');
+    expect(columns.map((c) => c.getAttribute('aria-label'))[0]).toBe(
+      '30.11 пн: на конец дня 31 999 500,00 ₽, поступило 0,00, списано 28 000 500,00',
+    );
+    expect(columns[0]).toHaveClass('today');
+    expect(columns.map((c) => c.querySelector('.plan-col-label')?.textContent)).toEqual(['30', '01', '02', '03']);
+    await user.click(columns[0]!);
+    const panel = within(screen.getByRole('dialog', { name: 'Движения 30.11 · сегодня' }));
+    expect(panel.getByLabelText('Деньги дня')).toHaveTextContent(
+      'на начало дня, ₽60 000 000,00поступило, ₽0,00списано, ₽−28 000 500,00на конец дня, ₽31 999 500,00',
+    );
+    expect(panel.getByRole('region', { name: 'Сделки' })).toHaveTextContent(
+      'ОФЗ 26238 · 1 покупка, +50 000 шт.−28 000 500,00OPIF1-BONDS · расчёты по сделке · сделка−28 000 500,00',
+    );
+    expect(panel.getByRole('link', { name: 'сделка' })).toHaveAttribute('href', '/booking/trades/t-1');
+    expect(panel.getByRole('region', { name: 'Бумаги дня' })).toHaveTextContent('ОФЗ 26238+50 000 → 50 000 шт.');
+    await user.click(screen.getByRole('button', { name: 'Закрыть' }));
+
+    // Строка тоже открывает день — щелчком и клавишей Enter.
+    await user.click(rows[3]!);
+    expect(screen.getByRole('dialog', { name: 'Движения 02.12 · план' })).toHaveTextContent('Купоны и погашения');
+    await user.click(screen.getByRole('button', { name: 'Закрыть' }));
+    rows[2]!.focus();
+    await user.keyboard('{Enter}');
+    expect(screen.getByRole('dialog', { name: 'Движения 01.12 · план' })).toBeInTheDocument();
+    await user.keyboard('a');
+    expect(screen.getByRole('dialog', { name: 'Движения 01.12 · план' })).toBeInTheDocument();
   });
 
   it('shows past days as fact', async () => {
@@ -56,11 +87,13 @@ describe('PlanPage', () => {
     expect(rows[1]).toHaveClass('past');
     expect(rows[1]).toHaveTextContent('30.11 пнфакт');
     expect(rows[3]).toHaveTextContent('02.12 срсегодня');
+    expect(screen.getAllByRole('button', { name: /^30.11 пн/ })[0]).toHaveClass('past');
     // Деньги сегодня — на конец сегодняшнего дня; минимум — с сегодня.
     expect(tiles()).toEqual([
       'Деньги сегодня: 44,3 млн ₽',
-      'Минимум до 03.12: 44,3 млн ₽на 02.12',
-      'Дефицитов: 0',
+      'Можно разместить до 03.12: 44,3 млн ₽минимум остатка — 02.12',
+      'Дефицит денег: нет',
+      'Дефицит бумаг: нет',
     ]);
   });
 
@@ -127,7 +160,15 @@ describe('PlanPage', () => {
           },
           // Тот же дефицит назавтра — без нового сообщения; деньги ушли глубже — с новым.
           { ...first!, date: '2026-12-06', cash: '-1500.00', securities: [{ instrument_id: 'i-ofz', quantity: -10000 }] },
-          { ...first!, date: '2026-12-07', cash: '-2000.00', securities: [{ instrument_id: 'i-ofz', quantity: -10000 }] },
+          {
+            ...first!,
+            date: '2026-12-07',
+            cash: '-2000.00',
+            securities: [
+              { instrument_id: 'i-ofz', quantity: -10000 },
+              { instrument_id: 'i-gone', quantity: -5 },
+            ],
+          },
           {
             ...first!,
             date: '2026-12-08',
@@ -143,23 +184,122 @@ describe('PlanPage', () => {
     expect(alert).toHaveTextContent('Не хватает 1 500,00 ₽ к расчётам 05.12.2026. Нужно РЕПО или перенос.');
     expect(alert).toHaveTextContent('Не хватает 10 000 SU26238RMFS4 к расчётам 05.12.2026.');
     expect(alert).toHaveTextContent('Не хватает 2 000,00 ₽ к расчётам 07.12.2026.');
-    expect(within(alert).getAllByText(/Не хватает/)).toHaveLength(3);
+    expect(alert).toHaveTextContent('Не хватает 5 i-gone к расчётам 07.12.2026.');
+    expect(within(alert).getAllByText(/Не хватает/)).toHaveLength(4);
     expect(screen.getByText(/Фонд пересчитывается с 30.11.2026/)).toBeInTheDocument();
     expect(screen.getByText(/Сумма купона не объявлена — в плане её нет/)).toBeInTheDocument();
     const rows = within(screen.getByRole('table', { name: 'План по расчётам' })).getAllByRole('row');
-    expect(rows[1]).toHaveTextContent('05.12 сбвыходнойOPIF1-BONDS: выплата: сумма не объявлена i-gone');
-    expect(within(rows[1]!).getByText(/выплата/)).toHaveClass('mv', 'mv-none');
+    // Выплата без суммы — не в ячейках денег, а в панели дня; бумаги не хватает и без движения.
+    expect(rows[1]).toHaveTextContent('05.12 сбвыходной——−1 500,00не хватаетОФЗ 26238 → не хватает 10 000 шт.');
     expect(rows[1]).toHaveClass('deficit');
-    expect(within(rows[1]!).getAllByRole('cell')[2]).toHaveClass('danger');
+    expect(within(rows[1]!).getAllByRole('cell')[3]).toHaveClass('danger');
     // Пришло, но всё равно не хватает — красная метка бумаги.
-    expect(within(rows[2]!).getByText('SU26238RMFS4 +50 000 → не хватает 10 000 шт.')).toHaveClass('mv-short');
-    expect(rows[4]).toHaveTextContent('OPIF1-BONDS: расчёт по паям −28 000 500,00 ₽');
+    expect(within(rows[2]!).getByText('ОФЗ 26238 +50 000 → не хватает 10 000 шт.')).toHaveClass('mv-short');
+    expect(rows[4]).toHaveTextContent('08.12 втплан—−28 000 500,00паирасчёт по паям28 000 500,00');
     expect(rows[4]).not.toHaveClass('deficit');
+    // Дефицит — красным столбиком вниз от нуля.
+    expect(screen.getAllByRole('button', { name: /^05.12 сб/ })[0]!.querySelector('.plan-bar')).toHaveClass('plan-bar-short');
+    const user = userEvent.setup();
+    await user.click(rows[1]!);
+    const panel = within(screen.getByRole('dialog', { name: 'Движения 05.12 · выходной' }));
+    expect(panel.getByRole('region', { name: 'Без денег' })).toHaveTextContent(
+      'OPIF1-BONDS · выплата: сумма не объявлена · i-gone',
+    );
+    expect(panel.getByRole('region', { name: 'Бумаги дня' })).toHaveTextContent('ОФЗ 26238не хватает 10 000 шт.');
     const securities = within(screen.getByRole('table', { name: 'Бумаги в плане' })).getAllByRole('row');
     expect(securities[1]).toHaveTextContent('ОФЗ 26238SU26238RMFS4—06.12 +50 00007.12 +50 000−10 00005.12 · дефицит');
     expect(within(securities[1]!).getAllByRole('cell')[3]).toHaveClass('danger');
-    expect(tiles()).toEqual(['Деньги сегодня: —', 'Минимум до 08.12: −2 000 ₽на 07.12', 'Дефицитов: 3']);
-    expect(screen.getByText('−2 000 ₽')).toHaveClass('danger');
+    expect(tiles()).toEqual([
+      'Деньги сегодня: —',
+      'Можно разместить до 08.12: 0 ₽минимум остатка — 07.12',
+      'Дефицит денег: −2 000 ₽05.12–07.12 · 3 дня',
+      'Дефицит бумаг: 2 бумагиОФЗ 26238 с 05.12 и другие',
+    ]);
+  });
+
+  it('folds the smallest items of a busy day and labels a long chart by Mondays', async () => {
+    const api = fakeApi();
+    const base = ladder();
+    const [first] = base.days;
+    const coupon = (instrument: string, cash: string) => ({ ...first!.movements[0]!, kind: 'coupon' as const, instrument_id: instrument, trade_id: null, quantity: 0, cash });
+    const busy = { ...first!, movements: ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((id, n) => coupon(`i-${id}`, `${(n + 1) * 100}.00`)) };
+    const days = Array.from({ length: 35 }, (_, n) => ({
+      ...first!,
+      date: shiftDay('2026-11-02', n),
+      movements: [],
+      cash: `${n * 1000}.00`,
+    }));
+    api.ladder.mockResolvedValue(ladder({ today: '2026-11-10', days: [...days.slice(0, 8), { ...busy, date: '2026-11-10' }, ...days.slice(9)] }));
+    renderBooking(api, '/booking/plan');
+
+    const rows = within(await screen.findByRole('table', { name: 'План по расчётам' })).getAllByRole('row');
+    const today = rows.find((r) => r.classList.contains('next'))!;
+    const items = within(today).getAllByRole('listitem');
+    expect(items).toHaveLength(6);
+    expect(items[0]).toHaveTextContent('купонi-g700,00');
+    expect(items[5]).toHaveTextContent('ещё 2 движения300,00');
+    // 35 дней — подписаны только понедельники и сегодня.
+    const labels = within(screen.getByRole('group', { name: 'Деньги на конец дня' }))
+      .getAllByRole('button')
+      .map((c) => c.querySelector('.plan-col-label')?.textContent)
+      .filter(Boolean);
+    expect(labels).toEqual(['02', '09', '10', '16', '23', '30']);
+  });
+
+  it('opens a REPO day with the commission and names a one-day shortfall', async () => {
+    const user = userEvent.setup();
+    const api = fakeApi();
+    const base = ladder();
+    const [first] = base.days;
+    const leg = { ...first!.movements[0]!, instrument_id: null, quantity: 0, repo_term: 1 };
+    api.ladder.mockResolvedValue(
+      ladder({
+        days: [
+          {
+            ...first!,
+            cash: '-5.00',
+            securities: [{ instrument_id: 'i-ofz', quantity: -1 }],
+            movements: [
+              { ...leg, kind: 'repo_first', trade_id: 'r-1', cash: '-8200000.00' },
+              { ...leg, kind: 'fee', trade_id: 'r-1', cash: '-56.16' },
+            ],
+          },
+        ],
+      }),
+    );
+    renderBooking(api, '/booking/plan');
+
+    const rows = within(await screen.findByRole('table', { name: 'План по расчётам' })).getAllByRole('row');
+    expect(rows[1]).toHaveTextContent('РЕПОовернайт · первая частькомиссия 56,168 200 056,16');
+    expect(tiles().slice(2)).toEqual(['Дефицит денег: −5 ₽30.11', 'Дефицит бумаг: 1 бумагаОФЗ 26238 с 30.11']);
+    await user.click(rows[1]!);
+    expect(screen.getByRole('region', { name: 'РЕПО' })).toHaveTextContent(
+      'овернайт · первая часть · комиссия 56,16−8 200 056,16' +
+        'OPIF1-BONDS · РЕПО: первая часть · сделка−8 200 000,00OPIF1-BONDS · комиссия · сделка−56,16',
+    );
+  });
+
+  it('folds quiet days of a lasting shortfall into one red row', async () => {
+    const api = fakeApi();
+    const base = ladder();
+    const [first] = base.days;
+    const short = { cash: '-5.00', securities: [{ instrument_id: 'i-ofz', quantity: -1 }] };
+    api.ladder.mockResolvedValue(
+      ladder({
+        days: [
+          { ...first!, ...short },
+          { ...first!, ...short, date: '2026-12-01', movements: [] },
+          { ...first!, ...short, date: '2026-12-02', movements: [] },
+        ],
+      }),
+    );
+    renderBooking(api, '/booking/plan');
+
+    const rows = within(await screen.findByRole('table', { name: 'План по расчётам' })).getAllByRole('row');
+    expect(rows).toHaveLength(3);
+    expect(rows[2]).toHaveTextContent('01.12–02.12 · без движений−5,00ОФЗ 26238 → не хватает 1 шт.');
+    expect(rows[2]).toHaveClass('plan-quiet', 'deficit');
+    expect(within(rows[2]!).getAllByRole('cell')[1]).toHaveClass('danger');
   });
 
   it('switches the account', async () => {
@@ -185,7 +325,8 @@ describe('PlanPage', () => {
     renderBooking(api, '/booking/plan');
 
     await screen.findByRole('table', { name: 'План по расчётам' });
-    expect(tiles()).toEqual(['Деньги сегодня: —', 'Минимум до —: —', 'Дефицитов: 0']);
+    expect(tiles()).toEqual(['Деньги сегодня: —', 'Можно разместить до —: —', 'Дефицит денег: нет', 'Дефицит бумаг: нет']);
+    expect(screen.queryByRole('group', { name: 'Деньги на конец дня' })).not.toBeInTheDocument();
     // Бумага без движений — свёрнута.
     expect(screen.getByRole('button', { name: 'Ещё 1 бумага без движений в плане — показать' })).toBeInTheDocument();
   });
@@ -230,12 +371,19 @@ describe('PlanPage', () => {
     const base = ladder();
     const [first] = base.days;
     const transfer = { ...first!.movements[0]!, kind: 'transfer_in' as const, quantity: 100, cash: '0.00' };
-    api.ladder.mockResolvedValue(ladder({ days: [{ ...first!, movements: [transfer], securities: [{ instrument_id: 'i-ofz', quantity: 100 }] }] }));
+    const away = { ...transfer, kind: 'transfer_out' as const, quantity: -40, portfolio_code: 'OPIF1-TREASURY' };
+    api.ladder.mockResolvedValue(
+      ladder({ days: [{ ...first!, movements: [transfer, away], securities: [{ instrument_id: 'i-ofz', quantity: 60 }] }] }),
+    );
     renderBooking(api, '/booking/plan');
 
     const rows = within(await screen.findByRole('table', { name: 'План по расчётам' })).getAllByRole('row');
-    expect(rows[1]).toHaveTextContent('30.11 пнсегодняSU26238RMFS4 +100 → 100 шт.31 999 500,00');
+    expect(rows[1]).toHaveTextContent('30.11 пнсегодня——31 999 500,00ОФЗ 26238 +60 → 60 шт.');
     expect(within(rows[1]!).queryByText(/перевод/)).not.toBeInTheDocument();
+    await userEvent.setup().click(rows[1]!);
+    expect(screen.getByRole('region', { name: 'Без денег' })).toHaveTextContent(
+      'OPIF1-BONDS · перевод: пришло · ОФЗ 26238+100 шт.OPIF1-TREASURY · перевод: ушло · ОФЗ 26238−40 шт.',
+    );
   });
 
   it('shows a floater coupon forecast with its rate', async () => {
@@ -274,16 +422,11 @@ describe('PlanPage', () => {
     );
     renderBooking(api, '/booking/plan');
 
-    expect(
-      await screen.findByText(
-        'OPIF1-BONDS: купон, прогноз RU000A107HG1 +62 900,00 ₽ (КС 14% + 1,3%, 12,58 ₽ на бумагу)',
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        'OPIF1-BONDS: купон, прогноз RU000A107HG1 +42 450,00 ₽ (RUONIA 13,9% − 0,2%, с капитализацией, 8,49 ₽ на бумагу)',
-      ),
-    ).toBeInTheDocument();
+    const rows = within(await screen.findByRole('table', { name: 'План по расчётам' })).getAllByRole('row');
+    expect(rows[1]).toHaveTextContent('купон, прогнозГазпнф3P8RКС 14% + 1,3%, 12,58 ₽ на бумагу62 900,00');
+    expect(rows[2]).toHaveTextContent(
+      'купон, прогнозГазпнф3P8RRUONIA 13,9% − 0,2%, с капитализацией, 8,49 ₽ на бумагу42 450,00',
+    );
     expect(screen.queryByText(/Сумма купона не объявлена/)).not.toBeInTheDocument();
   });
 });

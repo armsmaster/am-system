@@ -639,6 +639,8 @@ async def test_repo_week_from_the_methodology(trader: Api, ops: Api, resources: 
     assert [(m["trade_id"], m["quantity"], m["cash"]) for m in second] == [
         (borrowed["id"], 10_000, "-5616786.01")
     ]
+    # Срок сделки Б: 30.11 → 03.12 — три торговых дня (решение 166).
+    assert [m["repo_term"] for m in second] == [3]
     listed = trader.ok("GET", "/trades", portfolio_id=str(BONDS), date="2026-11-30")
     assert [(t["kind"], t["second_date"]) for t in listed] == [
         ("repo", "2026-12-03"),

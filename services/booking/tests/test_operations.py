@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -16,6 +16,7 @@ from am_common.app import Resources
 from am_common.clock import MOSCOW
 from am_common.testing import TokenFactory
 from booking.db import outbox
+from booking.ladder import trading_days_between
 from booking.main import build_app
 from booking.recalc import marketdata_client, recalc_once, refdata_client
 from booking.settings import BookingSettings
@@ -389,10 +390,11 @@ async def test_ladder_from_the_methodology(
         ("2026-12-02", "44285700.00", 30_000, ["coupon"]),
     ]
     first = ladder["days"][0]["movements"][0]
-    assert (first["portfolio_code"], first["quantity"], first["cash"]) == (
+    assert (first["portfolio_code"], first["quantity"], first["cash"], first["repo_term"]) == (
         "OPIF1-BONDS",
         50_000,
         "-28000500.00",
+        None,
     )
     assert monday.problem("GET", "/ladder", account_id=str(UUID(int=9))) == (404, "not_found")
     assert ladder["today"] == "2026-11-30"
@@ -404,3 +406,10 @@ async def test_ladder_from_the_methodology(
     for since in ("2026-12-01", "2026-08-01"):
         refused = monday.problem("GET", "/ladder", account_id=str(BONDS_ACCOUNT), **starting(since))
         assert refused == (422, "bad_period")
+
+
+def test_repo_term_counts_trading_days() -> None:
+    # Пятница → понедельник — овернайт; праздник в середине срока не считается.
+    friday, monday = date(2026, 11, 27), date(2026, 11, 30)
+    assert trading_days_between(friday, monday, {}) == 1
+    assert trading_days_between(monday, date(2026, 12, 3), {date(2026, 12, 2): False}) == 2

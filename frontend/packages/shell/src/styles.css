@@ -3271,3 +3271,287 @@ table.data tr.closed-row td {
     font-size: 12px;
   }
 }
+
+/* --- План по расчётам (решение 166): столбики остатка, движения строками ------------- */
+
+.plan-tiles {
+  margin: 4px 0 12px;
+}
+
+.plan-chart {
+  margin-bottom: 16px;
+  padding: 12px 14px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.plan-chart-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin-bottom: 8px;
+}
+
+.plan-chart-head h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.plan-chart-plot {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  height: 150px;
+  padding-bottom: 18px;
+}
+
+/* Столбик дня — кнопка: верх — остаток, низ — дефицит, ноль между ними. */
+.plan-col {
+  position: relative;
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-width: 4px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: none;
+}
+
+.plan-col:hover,
+.plan-col:focus-visible {
+  background: var(--hover);
+}
+
+.plan-col-up {
+  display: flex;
+  align-items: flex-end;
+}
+
+.plan-col-down {
+  display: flex;
+  align-items: flex-start;
+  border-top: 1px solid var(--border);
+}
+
+.plan-bar {
+  width: 100%;
+  min-height: 1px;
+  border-radius: 3px 3px 0 0;
+  background: var(--accent);
+}
+
+.plan-col.past .plan-bar {
+  background: color-mix(in srgb, var(--accent) 45%, var(--surface));
+}
+
+.plan-bar.plan-bar-short,
+.plan-col.past .plan-bar.plan-bar-short {
+  border-radius: 0 0 3px 3px;
+  background: var(--danger-text);
+}
+
+.plan-col.today {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.plan-col-label {
+  position: absolute;
+  bottom: -18px;
+  left: 50%;
+  color: var(--muted);
+  font-size: 11px;
+  transform: translateX(-50%);
+}
+
+.plan-col.today .plan-col-label {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.plan-col-tip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  z-index: 3;
+  width: max-content;
+  max-width: 260px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.plan-col:hover .plan-col-tip,
+.plan-col:focus-visible .plan-col-tip {
+  display: block;
+}
+
+.plan-scroll {
+  margin-bottom: 16px;
+  overflow-x: auto;
+}
+
+.plan-scroll table.data {
+  margin-bottom: 0;
+}
+
+.plan-scroll table.data th {
+  top: 0;
+}
+
+.plan-table td.plan-date,
+.plan-table td.plan-balance {
+  white-space: nowrap;
+}
+
+.plan-table td.plan-balance {
+  font-weight: 500;
+}
+
+/* Ячейка денег: итог сверху, движения — строками в рамке. */
+.plan-total {
+  margin-bottom: 4px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.plan-items {
+  display: grid;
+  gap: 3px;
+  min-width: 240px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plan-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 12.5px;
+}
+
+.plan-item-label small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.plan-item-cash {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.plan-item.plan-more {
+  border-style: dashed;
+  color: var(--muted);
+}
+
+.plan-tag {
+  display: inline-block;
+  margin-right: 5px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  vertical-align: 1px;
+}
+
+.plan-tag-repo {
+  background: var(--accent-alt-soft);
+  color: var(--accent-alt);
+}
+
+.plan-tag-deal {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.plan-tag-payment {
+  background: var(--ok-bg);
+  color: var(--ok-text);
+}
+
+.plan-tag-units,
+.plan-tag-expense,
+.plan-tag-transfer,
+.plan-tag-fee {
+  background: var(--hover);
+  color: var(--muted);
+}
+
+table.data tr.plan-quiet td {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+/* Панель дня. */
+.plan-day h3 {
+  margin: 18px 0 6px;
+  font-size: 14px;
+}
+
+.plan-day .facts dd {
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-day-item {
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.plan-day-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-weight: 500;
+}
+
+.plan-day-moves {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plan-day-moves li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 0;
+  border-top: 1px dashed var(--border);
+  font-size: 13px;
+}
+
+.plan-day-moves li:first-child {
+  border-top: none;
+}
+
+@media (max-width: 640px) {
+  .plan-chart-plot {
+    height: 120px;
+  }
+
+  .plan-items {
+    min-width: 200px;
+  }
+}

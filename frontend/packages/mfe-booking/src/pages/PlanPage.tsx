@@ -1,22 +1,34 @@
-import { FilterChips, LoadedView, useLoad, type Choice } from '@am/ui';
-import { useCallback, useState } from 'react';
+import { Drawer, FilterChips, LoadedView, useLoad, type Choice } from '@am/ui';
+import { useCallback, useState, type KeyboardEvent } from 'react';
 import { useSearchParams } from 'react-router';
 
 import type { Context } from '../App';
-import type { Account, CouponForecast, Ladder, LadderDay, LadderMovement } from '../api';
+import type { Account, Decimal, Ladder, LadderDay } from '../api';
+import { PlanChart } from '../components/PlanChart';
+import { PlanDay, signedMoney } from '../components/PlanDay';
 import {
-  forecastBasis,
   formatDate,
   formatMoney,
   formatQuantity,
   monthStart,
   moscowToday,
-  movementLabel,
   plural,
   shiftDay,
   shortMoney,
+  sumMoney,
   weekday,
 } from '../format';
+import {
+  held,
+  isShort,
+  moved,
+  outlook,
+  planRows,
+  securityMarks,
+  summarize,
+  type DaySummary,
+  type PlanItem,
+} from '../plan';
 
 /** Начало плана — не раньше чем за 93 дня до сегодня (решение 161). */
 const MAX_PAST_DAYS = 93;
@@ -110,43 +122,43 @@ function AccountPlan({ context, accounts }: { readonly context: Context; readonl
           />
         )}
       </div>
-      <LoadedView state={state}>{(ladder) => <PlanView ladder={ladder} />}</LoadedView>
+      <LoadedView state={state}>{(ladder) => <PlanView ladder={ladder} basePath={context.basePath} />}</LoadedView>
     </>
   );
 }
 
 /** Дефицит называем в день, когда он появился или вырос: дальше он тянется, пока его не перекроют. */
-function deficits(ladder: Ladder, secid: (id: string | null) => string | null): string[] {
+function deficits(ladder: Ladder, secid: (id: string) => string): string[] {
   return ladder.days.flatMap((d, index) => {
     const previous = ladder.days[index - 1];
-    const held = (id: string) => previous?.securities.find((s) => s.instrument_id === id)?.quantity ?? 0;
     return [
       ...(Number(d.cash) < Math.min(0, Number(previous?.cash ?? 0))
         ? [`Не хватает ${formatMoney(d.cash.slice(1))} ₽ к расчётам ${formatDate(d.date)}.`]
         : []),
       ...d.securities
-        .filter((s) => s.quantity < Math.min(0, held(s.instrument_id)))
+        .filter((s) => s.quantity < Math.min(0, held(previous, s.instrument_id)))
         .map((s) => `Не хватает ${formatQuantity(-s.quantity)} ${secid(s.instrument_id)} к расчётам ${formatDate(d.date)}.`),
     ];
   });
 }
 
-function short(day: LadderDay): boolean {
-  return Number(day.cash) < 0 || day.securities.some((s) => s.quantity < 0);
+/** Больше строк в ячейке — остальные одной строкой «ещё N»; все — в панели дня. */
+const ITEMS_IN_CELL = 5;
+
+function shortDate(iso: string): string {
+  return formatDate(iso).slice(0, 5);
 }
 
-function PlanView({ ladder }: { readonly ladder: Ladder }) {
-  const secid = (id: string | null) =>
-    id === null ? null : (ladder.instruments.find((i) => i.instrument_id === id)?.secid ?? id);
+function PlanView({ ladder, basePath }: { readonly ladder: Ladder; readonly basePath: string }) {
+  const [selected, setSelected] = useState<string | null>(null);
+  // Бумаги нет в списке плана — показываем её номер, а не пустоту.
+  const known = (id: string) => ladder.instruments.find((i) => i.instrument_id === id);
+  const secid = (id: string) => known(id)?.secid ?? id;
+  const name = (id: string) => known(id)?.short_name ?? id;
   const found = deficits(ladder, secid);
-  const ahead = ladder.days.filter((d) => d.date >= ladder.today);
-  // Деньги сегодня — на конец сегодняшнего дня или последнего дня до него.
-  const now = [...ladder.days].reverse().find((d) => d.date <= ladder.today);
-  const lowest = ahead.reduce<LadderDay | undefined>(
-    (low, d) => (low === undefined || Number(d.cash) < Number(low.cash) ? d : low),
-    undefined,
-  );
-  const horizon = ladder.days.at(-1)?.date;
+  const summaries = new Map(ladder.days.map((d) => [d.date, summarize(d, ladder)]));
+  const opened = ladder.days.find((d) => d.date === selected);
+  const open = (day: LadderDay) => setSelected(day.date);
   return (
     <>
       <p className="muted">
@@ -158,23 +170,7 @@ function PlanView({ ladder }: { readonly ladder: Ladder }) {
           Фонд пересчитывается с {formatDate(ladder.waiting_since)} — план по прежнему расчёту.
         </p>
       )}
-      <dl className="tiles" aria-label="Итоги плана">
-        <div className="tile">
-          <dt>Деньги сегодня</dt>
-          <dd>{now ? shortMoney(now.cash) : '—'}</dd>
-        </div>
-        <div className="tile">
-          <dt>Минимум до {horizon ? formatDate(horizon).slice(0, 5) : '—'}</dt>
-          <dd className={lowest && Number(lowest.cash) < 0 ? 'danger' : undefined}>
-            {lowest ? shortMoney(lowest.cash) : '—'}
-            {lowest && <div className="subline">на {formatDate(lowest.date).slice(0, 5)}</div>}
-          </dd>
-        </div>
-        <div className="tile">
-          <dt>Дефицитов</dt>
-          <dd className={found.length ? 'danger' : undefined}>{found.length}</dd>
-        </div>
-      </dl>
+      <Tiles ladder={ladder} name={name} />
       {ladder.days.some((d) => d.movements.some((m) => m.kind === 'payment_unknown')) && (
         <p className="muted">
           Сумма купона не объявлена — в плане её нет. Купон флоатера получит прогноз по текущей ставке, если в
@@ -188,123 +184,219 @@ function PlanView({ ladder }: { readonly ladder: Ladder }) {
           ))}
         </div>
       )}
-      <table className="data plan-table" aria-label="План по расчётам">
-        <thead>
-          <tr>
-            <th>Дата</th>
-            <th>Движения</th>
-            <th className="num">Деньги на конец дня, ₽</th>
-          </tr>
-        </thead>
-        <tbody>
-          {ladder.days.map((d) => (
-            <PlanRow key={d.date} day={d} ladder={ladder} secid={secid} />
-          ))}
-        </tbody>
-      </table>
+      {ladder.days.length > 0 && <PlanChart ladder={ladder} summaries={summaries} onOpen={open} />}
+      <div className="plan-scroll">
+        <table className="data plan-table" aria-label="План по расчётам">
+          <thead>
+            <tr>
+              <th>Дата</th>
+              <th>Поступило, ₽</th>
+              <th>Списано, ₽</th>
+              <th className="num">Деньги на конец дня, ₽</th>
+              <th>Бумаги</th>
+            </tr>
+          </thead>
+          <tbody>
+            {planRows(ladder).map((row) =>
+              row.kind === 'quiet' ? (
+                <tr key={row.first.date} className={`quiet-row plan-quiet${isShort(row.last) ? ' deficit' : ''}`}>
+                  <td colSpan={3}>
+                    {row.first === row.last
+                      ? `${shortDate(row.first.date)} ${weekday(row.first.date)}`
+                      : `${shortDate(row.first.date)}–${shortDate(row.last.date)}`}{' '}
+                    · без движений
+                  </td>
+                  <td className={`num plan-balance${Number(row.last.cash) < 0 ? ' danger' : ''}`}>
+                    {formatMoney(row.last.cash)}
+                  </td>
+                  <td>
+                    <SecurityMarks day={row.last} name={name} />
+                  </td>
+                </tr>
+              ) : (
+                <PlanRow
+                  key={row.day.date}
+                  day={row.day}
+                  summary={summaries.get(row.day.date)!}
+                  ladder={ladder}
+                  name={name}
+                  onOpen={open}
+                />
+              ),
+            )}
+          </tbody>
+        </table>
+      </div>
       <Securities ladder={ladder} />
+      {opened && (
+        <Drawer
+          title={`Движения ${shortDate(opened.date)} · ${stageOf(opened, ladder)}`}
+          open
+          onClose={() => setSelected(null)}
+          wide
+        >
+          <PlanDay day={opened} summary={summaries.get(opened.date)!} ladder={ladder} basePath={basePath} />
+        </Drawer>
+      )}
     </>
   );
 }
 
-/** Бумага на счёте на конец дня; нет строки — ноль. */
-function held(day: LadderDay | undefined, instrumentId: string): number {
-  return day?.securities.find((s) => s.instrument_id === instrumentId)?.quantity ?? 0;
+/** Деньги сегодня, сколько можно разместить до горизонта, дефициты денег и бумаг. */
+function Tiles({ ladder, name }: { readonly ladder: Ladder; readonly name: (id: string) => string }) {
+  const { now, lowest, horizon, cashShort, securitiesShort } = outlook(ladder);
+  const deepest = cashShort.reduce<LadderDay | undefined>(
+    (low, d) => (low === undefined || Number(d.cash) < Number(low.cash) ? d : low),
+    undefined,
+  );
+  const [firstShort] = securitiesShort;
+  return (
+    <dl className="tiles plan-tiles" aria-label="Итоги плана">
+      <div className="tile">
+        <dt>Деньги сегодня</dt>
+        <dd>{now ? shortMoney(now.cash) : '—'}</dd>
+      </div>
+      <div className="tile">
+        <dt>Можно разместить до {horizon ? shortDate(horizon) : '—'}</dt>
+        <dd>
+          {lowest ? (Number(lowest.cash) > 0 ? shortMoney(lowest.cash) : '0 ₽') : '—'}
+          {lowest && <div className="subline">минимум остатка — {shortDate(lowest.date)}</div>}
+        </dd>
+      </div>
+      <div className="tile">
+        <dt>Дефицит денег</dt>
+        {deepest ? (
+          <dd className="danger">
+            {shortMoney(deepest.cash)}
+            <div className="subline">
+              {cashShort.length === 1
+                ? shortDate(deepest.date)
+                : `${shortDate(cashShort[0]!.date)}–${shortDate(cashShort.at(-1)!.date)} · ${plural(cashShort.length, 'день', 'дня', 'дней')}`}
+            </div>
+          </dd>
+        ) : (
+          <dd>нет</dd>
+        )}
+      </div>
+      <div className="tile">
+        <dt>Дефицит бумаг</dt>
+        {firstShort ? (
+          <dd className="danger">
+            {plural(securitiesShort.length, 'бумага', 'бумаги', 'бумаг')}
+            <div className="subline">
+              {name(firstShort.id)} с {shortDate(firstShort.from)}
+              {securitiesShort.length > 1 ? ' и другие' : ''}
+            </div>
+          </dd>
+        ) : (
+          <dd>нет</dd>
+        )}
+      </div>
+    </dl>
+  );
 }
 
-/** Сколько бумаг пришло и ушло за день — по каждой бумаге, всеми портфелями счёта. */
-function moved(day: LadderDay): Map<string, number> {
-  const found = new Map<string, number>();
-  for (const m of day.movements) {
-    if (m.instrument_id !== null && m.quantity) {
-      found.set(m.instrument_id, (found.get(m.instrument_id) ?? 0) + m.quantity);
-    }
+function stageOf(day: LadderDay, ladder: Ladder): string {
+  if (!day.trading) {
+    return 'выходной';
   }
-  return found;
+  if (day.date === ladder.today) {
+    return 'сегодня';
+  }
+  return day.date < ladder.today ? 'факт' : 'план';
 }
 
 function PlanRow({
   day: d,
+  summary,
   ladder,
-  secid,
+  name,
+  onOpen,
 }: {
   readonly day: LadderDay;
+  readonly summary: DaySummary;
   readonly ladder: Ladder;
-  readonly secid: (id: string | null) => string | null;
+  readonly name: (id: string) => string;
+  readonly onOpen: (day: LadderDay) => void;
 }) {
-  const past = d.date < ladder.today;
-  const current = d.date === ladder.today;
-  const stage = !d.trading ? 'выходной' : past ? 'факт' : current ? 'сегодня' : 'план';
-  const classes = [past ? 'past' : null, current ? 'next' : null, short(d) ? 'deficit' : null].filter(Boolean);
-  // Движение только бумагами (перевод) — меткой бумаги; деньгами — меткой денег.
-  const money = d.movements.filter((m) => !(m.quantity && !Number(m.cash)));
-  const securities = [...moved(d)];
+  const classes = [
+    'link-row',
+    d.date < ladder.today ? 'past' : null,
+    d.date === ladder.today ? 'next' : null,
+    isShort(d) ? 'deficit' : null,
+  ];
+  const key = (event: KeyboardEvent) => {
+    if (event.key === 'Enter') {
+      onOpen(d);
+    }
+  };
   return (
-    <tr className={classes.join(' ') || undefined}>
-      <td>
-        {formatDate(d.date).slice(0, 5)} {weekday(d.date)}
-        <div className="subline">{stage}</div>
+    <tr className={classes.filter(Boolean).join(' ')} tabIndex={0} onClick={() => onOpen(d)} onKeyDown={key}>
+      <td className="plan-date">
+        {shortDate(d.date)} {weekday(d.date)}
+        <div className="subline">{stageOf(d, ladder)}</div>
       </td>
       <td>
-        {money.length === 0 && securities.length === 0 ? (
-          <span className="muted">—</span>
-        ) : (
-          <>
-            {money.map((m, index) => (
-              <MovementChip
-                key={index}
-                movement={m}
-                secid={secid}
-                forecast={ladder.forecasts.find((f) => f.instrument_id === m.instrument_id && f.date === d.date)}
-              />
-            ))}
-            {securities.map(([id, quantity]) => (
-              <SecurityChip key={id} secid={secid(id)} quantity={quantity} balance={held(d, id)} />
-            ))}
-          </>
-        )}
+        <MoneyCell items={summary.incoming} total={summary.inflow} />
       </td>
-      <td className={`num${d.cash.startsWith('-') ? ' danger' : ''}`}>{formatMoney(d.cash)}</td>
+      <td>
+        <MoneyCell items={summary.outgoing} total={summary.outflow} />
+      </td>
+      <td className={`num plan-balance${Number(d.cash) < 0 ? ' danger' : ''}`}>
+        {formatMoney(d.cash)}
+        {Number(d.cash) < 0 && <div className="subline">не хватает</div>}
+      </td>
+      <td>
+        <SecurityMarks day={d} name={name} />
+      </td>
     </tr>
   );
 }
 
-function MovementChip({
-  movement: m,
-  secid,
-  forecast,
-}: {
-  readonly movement: LadderMovement;
-  readonly secid: (id: string | null) => string | null;
-  readonly forecast: CouponForecast | undefined;
-}) {
-  const cash = m.cash.replace(/[-0.]/g, '') ? `${m.cash.startsWith('-') ? '' : '+'}${formatMoney(m.cash)} ₽` : null;
-  const parts = [
-    `${m.portfolio_code}: ${movementLabel(m)}`,
-    secid(m.instrument_id),
-    cash,
-    m.kind === 'coupon_forecast' && forecast ? `(${forecastBasis(forecast)})` : null,
-  ];
-  const direction = m.cash.startsWith('-') ? 'out' : cash ? 'in' : 'none';
-  return <span className={`mv mv-${direction}`}>{parts.filter(Boolean).join(' ')}</span>;
+/** Бумаги дня: что пришло или ушло и сколько стало; не хватает — красной меткой. */
+function SecurityMarks({ day, name }: { readonly day: LadderDay; readonly name: (id: string) => string }) {
+  return (
+    <>
+      {securityMarks(day).map((mark) => (
+        <span key={mark.id} className={`mv mv-security${mark.balance < 0 ? ' mv-short' : ''}`}>
+          {name(mark.id)} {mark.quantity !== 0 && `${mark.quantity > 0 ? '+' : ''}${formatQuantity(mark.quantity)} `}→{' '}
+          {mark.balance < 0 ? `не хватает ${formatQuantity(-mark.balance)}` : formatQuantity(mark.balance)} шт.
+        </span>
+      ))}
+    </>
+  );
 }
 
-/** Бумаги дня: сколько пришло или ушло и сколько стало; не хватает — красным. */
-function SecurityChip({
-  secid,
-  quantity,
-  balance,
-}: {
-  readonly secid: string | null;
-  readonly quantity: number;
-  readonly balance: number;
-}) {
-  const after = balance < 0 ? `не хватает ${formatQuantity(-balance)} шт.` : `${formatQuantity(balance)} шт.`;
+/** Итог ячейки сверху, под ним — каждое движение своей строкой в рамке. */
+function MoneyCell({ items, total }: { readonly items: readonly PlanItem[]; readonly total: Decimal }) {
+  if (items.length === 0) {
+    return <span className="muted">—</span>;
+  }
+  const shown = items.slice(0, ITEMS_IN_CELL);
+  const rest = items.slice(ITEMS_IN_CELL);
+  const amount = (value: Decimal) => formatMoney(value.replace('-', ''));
   return (
-    <span className={`mv mv-security${balance < 0 ? ' mv-short' : ''}`}>
-      {secid} {quantity > 0 ? '+' : ''}
-      {formatQuantity(quantity)} → {after}
-    </span>
+    <>
+      <div className={`plan-total${Number(total) > 0 ? ' up' : ''}`}>{signedMoney(total)}</div>
+      <ul className="plan-items">
+        {shown.map((item) => (
+          <li key={item.key} className="plan-item">
+            <span className="plan-item-label">
+              <span className={`plan-tag plan-tag-${item.category}`}>{item.tag}</span>
+              {item.label}
+              {item.note && <small>{item.note}</small>}
+            </span>
+            <span className="plan-item-cash">{amount(item.cash)}</span>
+          </li>
+        ))}
+        {rest.length > 0 && (
+          <li className="plan-item plan-more">
+            <span className="plan-item-label">ещё {plural(rest.length, 'движение', 'движения', 'движений')}</span>
+            <span className="plan-item-cash">{amount(sumMoney(rest.map((i) => i.cash)))}</span>
+          </li>
+        )}
+      </ul>
+    </>
   );
 }
 

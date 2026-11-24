@@ -516,6 +516,8 @@ export type OperationInput =
 
 export interface LadderMovement extends Movement {
   readonly portfolio_code: string;
+  /** Сделка РЕПО: срок в торговых днях — у частей, комиссии и взносов (решение 166). */
+  readonly repo_term: number | null;
 }
 
 export interface LadderDay {

@@ -458,6 +458,7 @@ export function ladder(fields: Partial<Ladder> = {}): Ladder {
         movements: [
           {
             portfolio_code: 'OPIF1-BONDS',
+            repo_term: null,
             kind: 'settlement',
             instrument_id: 'i-ofz',
             trade_id: 't-1',
@@ -475,6 +476,7 @@ export function ladder(fields: Partial<Ladder> = {}): Ladder {
         movements: [
           {
             portfolio_code: 'OPIF1-BONDS',
+            repo_term: null,
             kind: 'settlement',
             instrument_id: 'i-ofz',
             trade_id: 't-2',
@@ -492,6 +494,7 @@ export function ladder(fields: Partial<Ladder> = {}): Ladder {
         movements: [
           {
             portfolio_code: 'OPIF1-BONDS',
+            repo_term: null,
             kind: 'coupon',
             instrument_id: 'i-ofz',
             trade_id: null,

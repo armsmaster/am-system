@@ -78,6 +78,8 @@ class Ladder:
     days: list[LadderDay]
     names: Mapping[UUID, Any]  # бумага → код и название
     forecasts: list[CouponForecast] = field(default_factory=list)
+    # Сделка РЕПО → срок в торговых днях: по нему план группирует части (решение 166).
+    repo_terms: Mapping[UUID, int] = field(default_factory=dict)
 
 
 def horizon(
@@ -221,6 +223,9 @@ async def ladder(
     instruments = {i for d in days for i in d.securities} | {
         m.instrument_id for d in days for _, m in d.movements if m.instrument_id is not None
     }
+    deals = await repo.trades_by_id(
+        {m.trade_id for d in days for _, m in d.movements if m.trade_id is not None}
+    )
     return Ladder(
         account_id=account_id,
         portfolios=portfolios,
@@ -230,7 +235,21 @@ async def ladder(
         days=days,
         names=await repo.instruments_named(instruments),
         forecasts=_forecasts(days, book),
+        repo_terms={
+            trade_id: trading_days_between(row.settle_date, row.second_date, exceptions)
+            for trade_id, row in deals.items()
+            if row.kind == "repo"
+        },
     )
+
+
+def trading_days_between(first: date, second: date, exceptions: Mapping[date, bool]) -> int:
+    """Срок РЕПО в торговых днях: торговые дни после первой части по вторую включительно.
+
+    Пятница — понедельник — один день, «овернайт».
+    """
+    span = (second - first).days
+    return sum(is_trading_day(first + timedelta(days=n), exceptions) for n in range(1, span + 1))
 
 
 async def _rates(marketdata: MarketdataClient, today: date) -> dict[str, Decimal] | None:

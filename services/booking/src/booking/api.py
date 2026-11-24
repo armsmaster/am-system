@@ -753,6 +753,8 @@ class TradeBatchOut(BaseModel):
 
 class LadderMovementOut(MovementOut):
     portfolio_code: str
+    # Сделка РЕПО: срок в торговых днях — части, комиссия и взносы (решение 166).
+    repo_term: int | None = None
 
 
 class LadderSecurityOut(BaseModel):
@@ -1842,7 +1844,9 @@ def _ladder_out(found: Ladder) -> LadderOut:
                 cash=d.cash,
                 movements=[
                     LadderMovementOut(
-                        portfolio_code=codes[portfolio_id], **_movement_out(m).model_dump()
+                        portfolio_code=codes[portfolio_id],
+                        repo_term=None if m.trade_id is None else found.repo_terms.get(m.trade_id),
+                        **_movement_out(m).model_dump(),
                     )
                     for portfolio_id, m in d.movements
                 ],
