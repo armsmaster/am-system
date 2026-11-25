@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from httpx2 import Response
 
 from am_common.app import Resources
+from am_common.calendar import add_trading_days
 from am_common.clock import MOSCOW
 from am_common.testing import TokenFactory
 from am_quant.kalman import NAV_SETTINGS, kalman_trend
@@ -1146,6 +1147,48 @@ def test_nav_history_in_excel(trader: Api, world: World) -> None:
 
 
 @pytest.mark.usefixtures("week")
+async def test_nav_smoothing_adds_back_one_off_charges(
+    trader: Api, ops: Api, resources: Resources
+) -> None:
+    """Решение 172: начисление расхода 01.12 — 0,20 ₽ на пай — не сбивает фильтр."""
+    history = trader.ok("GET", "/nav/history", fund_id=str(FUND))
+    before = [p["unit_price"] for p in history["points"]]
+    ops.ok(
+        "POST",
+        "/operations",
+        {
+            "kind": "expense_accrual",
+            "fund_id": str(FUND),
+            "op_date": "2026-12-01",
+            "expense_kind": "auditor",
+            "amount": "20000",
+        },
+    )
+    await recalc(resources)
+
+    points = trader.ok("GET", "/nav/history", fund_id=str(FUND))["points"]
+
+    # Стоимость пая с 01.12 ниже на 20 000 / 100 000 паёв = 0,20 ₽.
+    charge = [Decimal("0.20") if p["date"] >= "2026-12-01" else Decimal(0) for p in points]
+    assert [Decimal(p["unit_price"]) for p in points] == [
+        Decimal(b) - c for b, c in zip(before, charge, strict=True)
+    ]
+    # В фильтр — стоимость пая со списанием, прибавленным обратно; сглаженная — без него.
+    weekend = ("2026-11-28", "2026-11-29")
+    trading = [(p, c) for p, c in zip(points, charge, strict=True) if p["date"] not in weekend]
+    filtered = kalman_trend(
+        [(Decimal(n + 1), Decimal(p["unit_price"]) + c) for n, (p, c) in enumerate(trading)],
+        NAV_SETTINGS,
+        [Decimal(a) for a in (0, 3, 4, 5, 6, 7)],
+    )
+    expected = [
+        str((x.level - c).quantize(Decimal("0.01")))
+        for x, (_, c) in zip(filtered.points, trading, strict=True)
+    ]
+    assert [p["smoothed"] for p, _ in trading] == expected
+
+
+@pytest.mark.usefixtures("week")
 async def test_result_summary_shows_what_is_owed(
     trader: Api, ops: Api, resources: Resources
 ) -> None:
@@ -1169,6 +1212,62 @@ async def test_result_summary_shows_what_is_owed(
     [day] = nav_of(trader, "2026-12-03", "2026-12-03")["days"]
     assert (found["expenses_owed"], found["fees_owed"]) == ("20000.00", day["fees_owed"])
     assert Decimal(day["fees_owed"]) > 0
+
+
+def test_smoothing_removes_one_off_charges() -> None:
+    """Решение 172: разовая комиссия по операции фонда не сбивает фильтр.
+
+    Пай растёт на 0,30 ₽ за день начисления (дата расчётов T+1), в среду 04.11 — разовое
+    списание 5 ₽ на пай. Без поправки фильтр принимает скачок за падение доходности
+    и через месяц всё ещё ниже стоимости пая; с поправкой — совпадает с ней каждый день.
+    """
+    growth, charge, units = Decimal("0.30"), Decimal(5000), Decimal(1000)
+    start, charged_on, end = date(2026, 11, 2), date(2026, 11, 4), date(2026, 12, 4)
+
+    def settle(on: date) -> date:
+        return add_trading_days(on + timedelta(days=1), 0, {})
+
+    def series(*, recorded: bool) -> list[NavDay]:
+        zero, days, on = Decimal(0), [], start
+        while on <= end:
+            price = Decimal(1000) + growth * (settle(on) - settle(start)).days
+            price -= charge / units if on >= charged_on else 0
+            days.append(
+                NavDay(
+                    day=on,
+                    nav=price * units,
+                    units=units,
+                    cash=zero,
+                    clean=zero,
+                    accrued=zero,
+                    principal_due=zero,
+                    receivable=zero,
+                    payable=zero,
+                    claims=zero,
+                    obligations=zero,
+                    expenses=zero,
+                    fees_owed=zero,
+                    fees_today={},
+                    flags=[],
+                    charges_today=charge if recorded and on == charged_on else zero,
+                )
+            )
+            on += timedelta(days=1)
+        return days
+
+    days = series(recorded=True)
+    smoothed, forecast = smooth_unit_price(days, {})
+    gaps = [abs(smoothed[d.day] - cast(Decimal, d.unit_price)) for d in days]
+    assert max(gaps) < Decimal("0.01")
+    assert forecast is not None
+    assert abs(forecast.trend - growth) < Decimal("0.001")
+
+    # Без записи о списании — то, что было на графике: отставание и заниженный тренд.
+    unrecorded = series(recorded=False)
+    lagging, guess = smooth_unit_price(unrecorded, {})
+    assert cast(Decimal, unrecorded[-1].unit_price) - lagging[end] > Decimal("0.2")
+    assert guess is not None
+    assert guess.trend < growth - Decimal("0.02")
 
 
 def test_smoothing_follows_settlement_dates_and_removes_fees() -> None:

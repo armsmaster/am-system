@@ -781,8 +781,11 @@ def smooth_unit_price(
     Поэтому фильтр идёт только по торговым дням: время — торговые сессии, начисление —
     дни от первой даты расчётов. Комиссии от СЧА начисляются за каждый календарный
     день и известны точно: их накопленную сумму на пай прибавляем к стоимости пая до
-    фильтра и вычитаем после. В выходные и праздники сглаженная — уровень последнего
-    торгового дня за вычетом комиссий за прошедшие с него дни.
+    фильтра и вычитаем после. Так же — с разовыми списаниями по операциям фонда:
+    расходами и выплатой вознаграждения сверх начисленного (решение 172). Иначе фильтр
+    принял бы скачок за падение доходности и неделями отставал бы от стоимости пая.
+    В выходные и праздники сглаженная — уровень последнего торгового дня за вычетом
+    комиссий за прошедшие с него дни.
     """
 
     def settle(day: date) -> date:
@@ -792,7 +795,7 @@ def smooth_unit_price(
     total = ZERO
     for found in days:
         if found.units:
-            total += sum(found.fees_today.values(), ZERO) / found.units
+            total += (sum(found.fees_today.values(), ZERO) + found.charges_today) / found.units
         cumulative[found.day] = total
     observed = [d for d in days if d.unit_price is not None and is_trading_day(d.day, exceptions)]
     if not observed:
@@ -870,6 +873,10 @@ class NavDay:
     flags: list[Flag]
     repo_placed: Decimal = ZERO  # размещено в обратное РЕПО, с процентами
     repo_borrowed: Decimal = ZERO  # привлечено в прямое РЕПО, с процентами
+    # Разовые списания дня, известные по операциям фонда: начисленные расходы и разница
+    # при выплате вознаграждения сверх начисленного (решение 172). Меньше начисленного —
+    # со знаком минус.
+    charges_today: Decimal = ZERO
 
     @property
     def unit_price(self) -> Decimal | None:
@@ -952,6 +959,7 @@ def _nav_day(day: date, states: list[State]) -> NavDay:
         flags=sorted({f for r in results for f in r.flags}),
         repo_placed=sum((r.value for s in states for r in s.repos if not r.direct), ZERO),
         repo_borrowed=sum((-r.value for s in states for r in s.repos if r.direct), ZERO),
+        charges_today=-sum((r.expenses + r.correction for r in results), ZERO),
     )
 
 
