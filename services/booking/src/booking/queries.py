@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from am_common.calendar import add_trading_days, is_trading_day
 from am_common.clock import MOSCOW
-from am_quant.kalman import NAV_SETTINGS, kalman_trend
+from am_quant.kalman import NAV_SETTINGS, Settings, kalman_trend
 from booking.clients import (
     MarketdataClient,
     Metrics,
@@ -705,7 +705,9 @@ class NavForecast:
     day: date
     value: Decimal
     std: Decimal | None  # стандартное отклонение прогноза; мало истории — None
-    trend: Decimal  # прирост стоимости пая за день
+    trend: Decimal  # прирост стоимости пая за день начисления, до комиссий от СЧА
+    # Комиссии от СЧА на пай за календарный день — по ставкам последнего дня.
+    fees_per_day: Decimal = ZERO
 
 
 @dataclass(frozen=True, slots=True)
@@ -729,9 +731,11 @@ async def nav_history(
     marketdata: MarketdataClient,
     refdata: RefdataClient,
     benchmark: str,
+    settings: Settings = NAV_SETTINGS,
 ) -> NavHistory | None:
     """Стоимость пая и СЧА за период (по умолчанию — вся история по сегодня), уровень
-    и прогноз фильтра Калмана — по всей истории, цена бумаги сравнения за те же дни."""
+    и прогноз фильтра Калмана — по всей истории, цена бумаги сравнения за те же дни.
+    ``settings`` — настройки фильтра: свои у пользователя (решение 174)."""
     fund = visible.get(fund_id)
     if fund is None or not fund.is_fund:
         return None
@@ -751,7 +755,7 @@ async def nav_history(
         exceptions = await refdata.calendar_around(first_day or today, today + timedelta(days=14))
     except ServiceUnavailableError:
         exceptions = {}
-    smoothed, forecast = smooth_unit_price(days, exceptions)
+    smoothed, forecast = smooth_unit_price(days, exceptions, settings)
     since, till = period
     shown = [
         d for d in days if (since is None or d.day >= since) and (till is None or d.day <= till)
@@ -773,7 +777,7 @@ async def nav_history(
 
 
 def smooth_unit_price(
-    days: Sequence[NavDay], exceptions: Mapping[date, bool]
+    days: Sequence[NavDay], exceptions: Mapping[date, bool], settings: Settings = NAV_SETTINGS
 ) -> tuple[dict[date, Decimal], NavForecast | None]:
     """Сглаженная стоимость пая и прогноз на следующий торговый день (решение 169).
 
@@ -814,7 +818,7 @@ def smooth_unit_price(
             (Decimal(sessions[d.day]), cast(Decimal, d.unit_price) + cumulative[d.day])
             for d in observed
         ],
-        NAV_SETTINGS,
+        settings,
         [Decimal((settle(d.day) - settle(first)).days) for d in observed],
     )
     levels = {d.day: p.level for d, p in zip(observed, filtered.points, strict=True)}
@@ -833,7 +837,7 @@ def smooth_unit_price(
     final = days[-1]
     per_day = sum(final.fees_today.values(), ZERO) / final.units if final.units else ZERO
     value = ahead.value - cumulative[last] - per_day * (target - last).days
-    return smoothed, NavForecast(target, value, ahead.std, filtered.points[-1].trend)
+    return smoothed, NavForecast(target, value, ahead.std, filtered.points[-1].trend, per_day)
 
 
 async def _benchmark(

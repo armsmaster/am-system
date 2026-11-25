@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { fakeApi, navHistory, refused, renderBooking } from '../test/fixtures';
+import { fakeApi, navHistory, refused, renderBooking, STANDARD_FILTER } from '../test/fixtures';
 
 // График рисует canvas — в jsdom его нет; что именно рисуем, проверяет NavChart.test.
 const charts = vi.hoisted(() => ({ titles: [] as string[] }));
@@ -49,10 +49,10 @@ describe('NavPage (decision 168)', () => {
     const api = renderBooking(fakeApi(), PAGE);
 
     const now = await screen.findByRole('region', { name: 'Стоимость пая сейчас' });
-    expect(api.navHistory).toHaveBeenCalledWith('p-fund', '2026-11-04', undefined);
+    expect(api.navHistory).toHaveBeenCalledWith('p-fund', '2026-11-04', undefined, null);
     expect(now).toHaveTextContent('Стоимость пая · 03.12.20261 000,95 ₽−0,06 ₽ за день · СЧА 100,1 млн ₽ · 100 000 паёв');
     expect(screen.getByRole('region', { name: 'Прогноз на следующий торговый день' })).toHaveTextContent(
-      'Прогноз на 04.12.2026 · фильтр Калмана1 001,12 ₽68%: 1 000,98 – 1 001,26 · тренд 0,1050 ₽ за день начисления · ≈ 3,83% годовых',
+      'Прогноз на 04.12.2026 · фильтр Калмана1 001,12 ₽68%: 1 000,98 – 1 001,26 · тренд 0,1050 ₽ за день начисления до комиссий · ≈ 3,83% годовых после комиссий',
     );
     expect(cards()).toEqual(['Комиссии от СЧА: 1,50% годовыхуправление 1,5']);
     expect(lastChart()).toEqual(['Стоимость пая']);
@@ -69,10 +69,10 @@ describe('NavPage (decision 168)', () => {
     await user.click(layers.getByRole('button', { name: 'LQDT' }));
     expect(cards()).toEqual([
       'Комиссии от СЧА: 1,50% годовыхуправление 1,5',
-      'Сглаженная · Калман: 1 001,02 ₽тренд ≈ 3,83% годовых',
+      'Сглаженная · Калман: 1 001,02 ₽≈ 3,83% годовых после комиссий',
       'LQDT · 1 месяц: +0,11%2,1024 ₽ · ≈ 6,95% годовых',
     ]);
-    expect(lastChart().slice(-4)).toEqual(['Стоимость пая', 'Калман', 'Прогноз', 'LQDT']);
+    expect(lastChart().slice(-3)).toEqual(['Стоимость пая', 'Калман', 'LQDT']);
     expect([localStorage.getItem('am.booking.nav.kalman'), localStorage.getItem('am.booking.nav.benchmark')]).toEqual([
       'true',
       'true',
@@ -95,26 +95,26 @@ describe('NavPage (decision 168)', () => {
     const periods = within(screen.getByRole('group', { name: 'Период' }));
 
     await user.click(periods.getByRole('button', { name: '3 месяца' }));
-    await waitFor(() => expect(api.navHistory).toHaveBeenLastCalledWith('p-fund', '2026-09-04', undefined));
+    await waitFor(() => expect(api.navHistory).toHaveBeenLastCalledWith('p-fund', '2026-09-04', undefined, null));
     await user.click(periods.getByRole('button', { name: 'Год' }));
-    await waitFor(() => expect(api.navHistory).toHaveBeenLastCalledWith('p-fund', '2025-12-04', undefined));
+    await waitFor(() => expect(api.navHistory).toHaveBeenLastCalledWith('p-fund', '2025-12-04', undefined, null));
     await user.click(periods.getByRole('button', { name: 'Весь срок' }));
-    await waitFor(() => expect(api.navHistory).toHaveBeenLastCalledWith('p-fund', undefined, undefined));
+    await waitFor(() => expect(api.navHistory).toHaveBeenLastCalledWith('p-fund', undefined, undefined, null));
     expect(localStorage.getItem('am.booking.nav.period')).toBe('all');
 
     await user.click(periods.getByRole('button', { name: 'Свой период' }));
-    await waitFor(() => expect(api.navHistory).toHaveBeenLastCalledWith('p-fund', '2026-11-01', '2026-11-30'));
+    await waitFor(() => expect(api.navHistory).toHaveBeenLastCalledWith('p-fund', '2026-11-01', '2026-11-30', null));
     fireEvent.change(screen.getByLabelText('Свой период с'), { target: { value: '2026-11-10' } });
-    await waitFor(() => expect(api.navHistory).toHaveBeenLastCalledWith('p-fund', '2026-11-10', '2026-11-30'));
+    await waitFor(() => expect(api.navHistory).toHaveBeenLastCalledWith('p-fund', '2026-11-10', '2026-11-30', null));
     fireEvent.change(screen.getByLabelText('Свой период по'), { target: { value: '2026-11-20' } });
-    await waitFor(() => expect(api.navHistory).toHaveBeenLastCalledWith('p-fund', '2026-11-10', '2026-11-20'));
+    await waitFor(() => expect(api.navHistory).toHaveBeenLastCalledWith('p-fund', '2026-11-10', '2026-11-20', null));
     fireEvent.change(screen.getByLabelText('Свой период с'), { target: { value: '' } });
     fireEvent.change(screen.getByLabelText('Свой период по'), { target: { value: '' } });
-    expect(api.navHistory).toHaveBeenLastCalledWith('p-fund', '2026-11-10', '2026-11-20');
+    expect(api.navHistory).toHaveBeenLastCalledWith('p-fund', '2026-11-10', '2026-11-20', null);
     // Свой период запомнен: снова выбрать его — те же даты.
     await user.click(periods.getByRole('button', { name: '1 месяц' }));
     await user.click(periods.getByRole('button', { name: 'Свой период' }));
-    await waitFor(() => expect(api.navHistory).toHaveBeenLastCalledWith('p-fund', '2026-11-10', '2026-11-20'));
+    await waitFor(() => expect(api.navHistory).toHaveBeenLastCalledWith('p-fund', '2026-11-10', '2026-11-20', null));
   });
 
   it('shows the days in a table and exports them to Excel', async () => {
@@ -138,7 +138,7 @@ describe('NavPage (decision 168)', () => {
 
     await user.click(screen.getByRole('button', { name: 'Экспортировать в Excel' }));
     await waitFor(() => expect(click).toHaveBeenCalled());
-    expect(api.navWorkbook).toHaveBeenCalledWith('p-fund', '2026-11-04', undefined);
+    expect(api.navWorkbook).toHaveBeenCalledWith('p-fund', '2026-11-04', undefined, null);
     expect(created).toHaveBeenCalled();
 
     api.navWorkbook.mockRejectedValueOnce(refused('Сервис сделок недоступен.'));
@@ -279,6 +279,32 @@ describe('NavPage (decision 168)', () => {
     expect(api.setFeeRate).toHaveBeenCalledWith('p-fund', expect.objectContaining({ kind: 'management', rate: '1.2', comment: null }));
   });
 
+  it('opens own Kalman settings and marks the forecast made with them (decision 174)', async () => {
+    const user = userEvent.setup();
+    localStorage.setItem('am.booking.nav.kalman', 'true');
+    localStorage.setItem('am.booking.nav.filter', JSON.stringify({ halfLife: 1, memory: 20 }));
+    const api = fakeApi();
+    api.navHistory.mockResolvedValue(
+      navHistory({ filter: { ...STANDARD_FILTER, half_life: '1.00', trend_memory: '20.0', standard: false } }),
+    );
+    renderBooking(api, PAGE);
+
+    await screen.findByRole('region', { name: 'Стоимость пая сейчас' });
+    expect(api.navHistory).toHaveBeenCalledWith('p-fund', '2026-11-04', undefined, { halfLife: 1, memory: 20 });
+    expect(screen.getByRole('region', { name: 'Прогноз на следующий торговый день' })).toHaveTextContent(
+      'фильтр Калмана, свои настройки',
+    );
+    expect(cards()[1]).toContain('свои настройки: 1,0 и 20 дн.');
+
+    await user.click(screen.getByRole('button', { name: 'Настройки фильтра' }));
+    const panel = within(screen.getByRole('dialog', { name: 'Настройки фильтра Калмана' }));
+    await user.click(panel.getByRole('button', { name: /По умолчанию/ }));
+    await waitFor(() => expect(api.navHistory).toHaveBeenLastCalledWith('p-fund', '2026-11-04', undefined, null));
+    expect(localStorage.getItem('am.booking.nav.filter')).toBe('null');
+    await user.click(panel.getByRole('button', { name: 'Закрыть' }));
+    expect(screen.queryByRole('dialog', { name: 'Настройки фильтра Калмана' })).not.toBeInTheDocument();
+  });
+
   it('switches the fund and explains when there are no funds', async () => {
     const user = userEvent.setup();
     const api = fakeApi();
@@ -289,7 +315,7 @@ describe('NavPage (decision 168)', () => {
     renderBooking(api, PAGE);
     await screen.findByRole('region', { name: 'Стоимость пая сейчас' });
     await user.selectOptions(screen.getByRole('combobox', { name: 'Фонд' }), 'p-fund-2');
-    await waitFor(() => expect(api.navHistory).toHaveBeenLastCalledWith('p-fund-2', '2026-11-04', undefined));
+    await waitFor(() => expect(api.navHistory).toHaveBeenLastCalledWith('p-fund-2', '2026-11-04', undefined, null));
 
     const none = fakeApi();
     none.portfolios.mockResolvedValue([]);

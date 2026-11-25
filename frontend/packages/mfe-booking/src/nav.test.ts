@@ -1,7 +1,23 @@
 import { describe, expect, it } from 'vitest';
 
 import type { FeeRate } from './api';
-import { activeRates, chartData, monthsBefore, parseMetric, parsePeriod, periodChange, periodRange } from './nav';
+import {
+  activeRates,
+  chartData,
+  fitFilter,
+  formatFilter,
+  fromSlider,
+  HALF_LIFE_RANGE,
+  maxHalfLife,
+  MEMORY_RANGE,
+  monthsBefore,
+  parseFilter,
+  parseMetric,
+  parsePeriod,
+  periodChange,
+  periodRange,
+  toSlider,
+} from './nav';
 import { FEE_RATES, navHistory } from './test/fixtures';
 
 const HISTORY = navHistory();
@@ -47,33 +63,23 @@ describe('NAV page rules (decision 168)', () => {
     ]);
   });
 
-  it('draws one NAV line, or the unit price with Kalman and the forecast', () => {
-    expect(chartData(HISTORY.points, HISTORY.forecast, { metric: 'nav', kalman: true, benchmark: 'LQDT' })).toEqual({
+  it('draws one NAV line, or the unit price with Kalman; the forecast stays in its card', () => {
+    expect(chartData(HISTORY.points, { metric: 'nav', kalman: true, benchmark: 'LQDT' })).toEqual({
       percent: false,
       lines: [{ key: 'nav', label: 'СЧА фонда', data: expect.any(Array) }],
     });
-    const plain = chartData(HISTORY.points, HISTORY.forecast, { metric: 'unit', kalman: false, benchmark: null });
+    const plain = chartData(HISTORY.points, { metric: 'unit', kalman: false, benchmark: null });
     expect(plain.lines.map((l) => [l.key, l.data.length])).toEqual([['unit', 8]]);
-    const smooth = chartData(HISTORY.points, HISTORY.forecast, { metric: 'unit', kalman: true, benchmark: null });
+    const smooth = chartData(HISTORY.points, { metric: 'unit', kalman: true, benchmark: null });
     expect(smooth.lines.map((l) => [l.key, l.data.length])).toEqual([
       ['unit', 8],
       ['smoothed', 8],
-      ['forecast', 2],
     ]);
-    expect(smooth.lines[2]!.data).toEqual([
-      { time: '2026-12-03', value: 1001.02 },
-      { time: '2026-12-04', value: 1001.12 },
-    ]);
-    // Последний день без сглаженной — прогноз не к чему пристроить.
-    const gap = [...HISTORY.points.slice(0, -1), { ...HISTORY.points.at(-1)!, smoothed: null }];
-    expect(chartData(gap, HISTORY.forecast, { metric: 'unit', kalman: true, benchmark: null }).lines.map((l) => l.key)).toEqual([
-      'unit',
-      'smoothed',
-    ]);
+    expect(smooth.lines[1]!.data.at(-1)).toEqual({ time: '2026-12-03', value: 1001.02 });
   });
 
   it('compares with LQDT in percent from the start of the period', () => {
-    const found = chartData(HISTORY.points, null, { metric: 'unit', kalman: true, benchmark: 'LQDT' });
+    const found = chartData(HISTORY.points, { metric: 'unit', kalman: true, benchmark: 'LQDT' });
     expect(found.percent).toBe(true);
     const [unit, smoothed, benchmark] = found.lines;
     expect(unit!.data[0]).toEqual({ time: '2026-11-26', value: 0 });
@@ -84,7 +90,7 @@ describe('NAV page rules (decision 168)', () => {
     expect(benchmark!.data.at(-1)!.value).toBeCloseTo(0.114, 3);
     // Цен LQDT за период нет — без процентов.
     const none = HISTORY.points.map((p) => ({ ...p, benchmark: null }));
-    expect(chartData(none, null, { metric: 'unit', kalman: false, benchmark: 'LQDT' }).percent).toBe(false);
+    expect(chartData(none, { metric: 'unit', kalman: false, benchmark: 'LQDT' }).percent).toBe(false);
   });
 
   it('measures the change over the period', () => {
@@ -92,5 +98,34 @@ describe('NAV page rules (decision 168)', () => {
     expect(change!.percent).toBeCloseTo(0.1143, 3);
     expect(change!.annual).toBeCloseTo((0.1143 * 365) / 6, 2);
     expect(periodChange(HISTORY.points.slice(0, 2), (p) => p.benchmark)).toBeNull();
+  });
+});
+
+describe('own Kalman settings (decision 174)', () => {
+  it('limits smoothing by the trend memory, as the server does', () => {
+    expect([5, 50, 500].map(maxHalfLife)).toEqual([0.8, 3.2, 10.7]);
+    expect(fitFilter(10, 50)).toEqual({ halfLife: 3.2, memory: 50 });
+    expect(fitFilter(0.1, 2)).toEqual({ halfLife: 0.5, memory: 5 });
+    expect(fitFilter(30, 900)).toEqual({ halfLife: 10.7, memory: 500 });
+    expect(fitFilter(1.234, 30.4)).toEqual({ halfLife: 1.2, memory: 30 });
+  });
+
+  it('remembers own settings and forgets broken ones', () => {
+    expect(parseFilter(formatFilter({ halfLife: 1.5, memory: 30 }))).toEqual({ halfLife: 1.5, memory: 30 });
+    expect(parseFilter('{"halfLife": 9, "memory": 50}')).toEqual({ halfLife: 3.2, memory: 50 });
+    expect([parseFilter(null), parseFilter('null'), parseFilter('{"halfLife": "1"}'), parseFilter('{oops')]).toEqual([
+      null,
+      null,
+      null,
+      null,
+    ]);
+    expect(formatFilter(null)).toBe('null');
+  });
+
+  it('moves sliders on a log scale', () => {
+    expect(toSlider(0.5, HALF_LIFE_RANGE)).toBe(0);
+    expect(toSlider(500, MEMORY_RANGE)).toBe(1000);
+    expect(toSlider(50, MEMORY_RANGE)).toBe(500);
+    expect(fromSlider(500, MEMORY_RANGE)).toBeCloseTo(50);
   });
 });

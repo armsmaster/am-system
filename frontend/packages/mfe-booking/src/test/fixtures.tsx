@@ -726,6 +726,17 @@ export function resultSummary(fields: Partial<ResultSummary> = {}): ResultSummar
   };
 }
 
+/** Стандартные настройки фильтра Калмана (решения 168, 174). */
+export const STANDARD_FILTER = {
+  half_life: '2.25',
+  trend_memory: '52.2',
+  q_level: '0.05',
+  q_trend: '0.0005',
+  standard: true,
+  standard_half_life: '2.25',
+  standard_trend_memory: '52.2',
+};
+
 /** СЧА фонда за неделю методики (решение 168): 100 000 паёв, LQDT с 27.11, прогноз на 04.12. */
 export function navHistory(fields: Partial<NavHistory> = {}): NavHistory {
   const point = (date: string, unit: string, smoothed: string, benchmark: string | null) => ({
@@ -755,6 +766,7 @@ export function navHistory(fields: Partial<NavHistory> = {}): NavHistory {
       point('2026-12-03', '1000.95', '1001.02', '2.1024'),
     ],
     forecast: { date: '2026-12-04', value: '1001.12', low: '1000.98', high: '1001.26', trend: '0.1050', trend_percent: '3.83' },
+    filter: STANDARD_FILTER,
     ...fields,
   };
 }

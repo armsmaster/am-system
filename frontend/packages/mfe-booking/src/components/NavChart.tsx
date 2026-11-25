@@ -4,12 +4,11 @@ import { useEffect, useRef } from 'react';
 import type { ChartData, LineKey } from '../nav';
 
 // Цвета различимы и на светлой, и на тёмной теме: пай — акцентный синий, Калман —
-// фиолетовый пунктиром (прогноз — точками), LQDT — бирюзовый.
+// фиолетовый пунктиром, LQDT — бирюзовый.
 const STYLES: Readonly<Record<LineKey, { readonly color: string; readonly style: number; readonly width: 1 | 2 }>> = {
   unit: { color: '#2a78d6', style: LineStyle.Solid, width: 2 },
   nav: { color: '#2a78d6', style: LineStyle.Solid, width: 2 },
   smoothed: { color: '#7c3aed', style: LineStyle.Dashed, width: 2 },
-  forecast: { color: '#7c3aed', style: LineStyle.Dotted, width: 2 },
   benchmark: { color: '#1baf7a', style: LineStyle.Solid, width: 2 },
 };
 
@@ -56,7 +55,7 @@ export function NavChart({ data, title }: { readonly data: ChartData; readonly t
           lineStyle: style.style,
           lineWidth: style.width,
           priceLineVisible: false,
-          lastValueVisible: line.key !== 'forecast',
+          lastValueVisible: true,
           title: line.label,
         })
         .setData(line.data.map((p) => ({ time: p.time as Time, value: p.value })));

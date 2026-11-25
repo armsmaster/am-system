@@ -32,7 +32,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from decimal import Decimal, localcontext
+from decimal import ROUND_FLOOR, Decimal, localcontext
 
 from am_quant.bond import QuantError
 
@@ -54,6 +54,100 @@ class Settings:
 
 
 NAV_SETTINGS = Settings(NAV_Q_LEVEL, NAV_Q_TREND)
+
+# Насколько точно ищем установившийся режим фильтра и сколько шагов на это даём.
+STEADY_TOLERANCE = Decimal(10) ** -24
+STEADY_STEPS = 100_000
+
+
+@dataclass(frozen=True, slots=True)
+class Memory:
+    """Настройки в днях — так их видит пользователь (решение 174).
+
+    В установившемся режиме при шаге 1 фильтр — сглаживание Холта с коэффициентами
+    K₁ (уровень) и K₂ (тренд):
+
+        полураспад скачка  h = ln ½ / ln(1 − K₁)
+        память тренда      m = 1 / K₂
+    """
+
+    half_life: Decimal  # за сколько шагов уровень наполовину догоняет скачок
+    trend_memory: Decimal  # по скольким последним шагам считается тренд
+
+
+def settings_for(memory: Memory) -> Settings:
+    """Шумы уровня и тренда для настроек в днях — без подбора, из автоковариаций Δ²y.
+
+    У модели: γ₀ = q_trend + 2·q_level + 6, γ₁ = −q_level − 4, γ₂ = 1 (при σ² = 1).
+    У фильтра: Δ²y = vₖ + θ₁vₖ₋₁ + θ₂vₖ₋₂, θ₁ = K₁ + K₂ − 2, θ₂ = 1 − K₁, дисперсия
+    ошибки прогноза f = γ₂ / θ₂. Отсюда q_level = −f·θ₁·(1 + θ₂) − 4 и
+    q_trend = f·(1 + θ₁² + θ₂²) − 2·q_level − 6. Шум не бывает отрицательным: при
+    короткой памяти тренда сильно сгладить нельзя.
+    """
+    if memory.half_life <= 0 or memory.trend_memory <= 1:
+        raise QuantError(
+            "bad_settings", "Сглаживание — больше нуля дней, память тренда — больше одного дня."
+        )
+    q_level, q_trend = _noises(memory.half_life, memory.trend_memory)
+    if q_level < 0 or q_trend < 0:
+        limit = max_half_life(memory.trend_memory)
+        raise QuantError(
+            "bad_settings",
+            f"При памяти тренда {_days(memory.trend_memory, 0)} дн. сглаживание — "
+            f"не больше {_days(limit, 1)} дн.",
+        )
+    return Settings(q_level, q_trend)
+
+
+def max_half_life(trend_memory: Decimal) -> Decimal:
+    """Самое сильное сглаживание при этой памяти тренда — до 0,1 дня вниз: шум уровня — ноль."""
+    low, high = Decimal(0), Decimal(1000)
+    with localcontext() as ctx:
+        ctx.prec = PRECISION
+        for _ in range(100):
+            middle = (low + high) / 2
+            if _noises(middle, trend_memory)[0] >= 0:
+                low = middle
+            else:
+                high = middle
+        return low.quantize(Decimal("0.1"), rounding=ROUND_FLOOR)
+
+
+def memory_of(settings: Settings) -> Memory:
+    """Настройки в днях для шумов уровня и тренда: установившийся режим фильтра."""
+    if settings.q_level < 0 or settings.q_trend <= 0:
+        raise QuantError("bad_settings", "Для памяти в днях нужен шум тренда больше нуля.")
+    with localcontext() as ctx:
+        ctx.prec = PRECISION
+        cov = (Decimal(1), Decimal(0), DIFFUSE)
+        gains, steps = (Decimal(0), Decimal(0)), 0
+        while True:
+            a11, a12, a22 = _predict_cov(cov, Decimal(1), Decimal(1), settings)
+            f = a11 + 1
+            k1, k2 = a11 / f, a12 / f
+            cov = (a11 - k1 * a11, a12 - k1 * a12, a22 - k2 * a12)
+            settled = abs(k1 - gains[0]) + abs(k2 - gains[1]) < STEADY_TOLERANCE
+            gains, steps = (k1, k2), steps + 1
+            if settled or steps >= STEADY_STEPS:
+                break
+        return Memory(Decimal("0.5").ln() / (1 - gains[0]).ln(), 1 / gains[1])
+
+
+def _noises(half_life: Decimal, trend_memory: Decimal) -> tuple[Decimal, Decimal]:
+    with localcontext() as ctx:
+        ctx.prec = PRECISION
+        k1 = 1 - Decimal("0.5") ** (1 / half_life)
+        k2 = 1 / trend_memory
+        theta1, theta2 = k1 + k2 - 2, 1 - k1
+        f = 1 / theta2
+        q_level = -f * theta1 * (1 + theta2) - 4
+        q_trend = f * (1 + theta1 * theta1 + theta2 * theta2) - 2 * q_level - 6
+        return q_level, q_trend
+
+
+def _days(value: Decimal, places: int) -> str:
+    """Число дней по-русски: десятичная запятая."""
+    return f"{value:.{places}f}".replace(".", ",")
 
 
 @dataclass(frozen=True, slots=True)

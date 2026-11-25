@@ -18,7 +18,7 @@ from am_common.app import Resources
 from am_common.calendar import add_trading_days
 from am_common.clock import MOSCOW
 from am_common.testing import TokenFactory
-from am_quant.kalman import NAV_SETTINGS, kalman_trend
+from am_quant.kalman import NAV_SETTINGS, Memory, kalman_trend, settings_for
 from booking.queries import (
     NavDay,
     PeriodResult,
@@ -1147,6 +1147,77 @@ def test_nav_history_in_excel(trader: Api, world: World) -> None:
 
 
 @pytest.mark.usefixtures("week")
+def test_nav_history_with_own_filter_settings(trader: Api) -> None:
+    """Решение 174: свои настройки фильтра в днях — сглаженная и прогноз по ним."""
+    standard = trader.ok("GET", "/nav/history", fund_id=str(FUND))
+    assert standard["filter"]["standard"] is True
+    assert (standard["filter"]["q_level"], standard["filter"]["q_trend"]) == ("0.05", "0.0005")
+    assert abs(Decimal(standard["filter"]["half_life"]) - Decimal("2.25")) <= Decimal("0.01")
+    assert abs(Decimal(standard["filter"]["trend_memory"]) - Decimal("52.2")) <= Decimal("0.1")
+
+    own = trader.ok("GET", "/nav/history", fund_id=str(FUND), half_life="1", trend_memory="20")
+
+    settings = settings_for(Memory(Decimal(1), Decimal(20)))
+    assert own["filter"] == {
+        "half_life": "1.00",
+        "trend_memory": "20.0",
+        "q_level": str(settings.q_level),
+        "q_trend": str(settings.q_trend),
+        "standard": False,
+        "standard_half_life": standard["filter"]["half_life"],
+        "standard_trend_memory": standard["filter"]["trend_memory"],
+    }
+    points = own["points"]
+    trading = [p for p in points if p["date"] not in ("2026-11-28", "2026-11-29")]
+    filtered = kalman_trend(
+        [(Decimal(n + 1), Decimal(p["unit_price"])) for n, p in enumerate(trading)],
+        settings,
+        [Decimal(a) for a in (0, 3, 4, 5, 6, 7)],
+    )
+    assert [p["smoothed"] for p in trading] == [
+        str(x.level.quantize(Decimal("0.01"))) for x in filtered.points
+    ]
+    assert own["forecast"]["value"] == str(
+        filtered.forecast(Decimal(1), Decimal(3)).value.quantize(Decimal("0.01"))
+    )
+    # Задана одна настройка — вторая стандартная.
+    one = trader.ok("GET", "/nav/history", fund_id=str(FUND), trend_memory="100")
+    assert one["filter"]["half_life"] == standard["filter"]["half_life"]
+    assert one["filter"]["standard"] is False
+    # Выгрузка — с теми же настройками.
+    sheet = trader.call(
+        "GET", "/nav/history.xlsx", fund_id=str(FUND), half_life="1", trend_memory="20"
+    )
+    assert sheet.status_code == 200
+
+    impossible = trader.call(
+        "GET", "/nav/history", fund_id=str(FUND), half_life="10", trend_memory="50"
+    )
+    assert impossible.status_code == 422
+    assert impossible.json()["detail"]["code"] == "bad_settings"
+    assert "не больше 3,2 дн." in impossible.json()["detail"]["message"]
+    outside = trader.call("GET", "/nav/history", fund_id=str(FUND), half_life="0.1")
+    assert outside.status_code == 422
+
+
+@pytest.mark.usefixtures("week")
+async def test_nav_trend_percent_is_after_fees(trader: Api, ops: Api, resources: Resources) -> None:
+    """«% годовых» — то, что получает пайщик: тренд минус комиссия от СЧА за день."""
+    management(ops)
+    await recalc(resources)
+
+    forecast = trader.ok("GET", "/nav/history", fund_id=str(FUND))["forecast"]
+    [last] = nav_of(trader, "2026-12-03", "2026-12-03")["days"]
+
+    fee = sum(Decimal(v) for v in last["fees_today"].values()) / Decimal(last["units"])
+    assert fee > 0
+    net = (Decimal(forecast["trend"]) - fee) * 365 / Decimal(forecast["value"]) * 100
+    gross = Decimal(forecast["trend"]) * 365 / Decimal(forecast["value"]) * 100
+    assert abs(Decimal(forecast["trend_percent"]) - net) < Decimal("0.01")
+    assert Decimal(forecast["trend_percent"]) < gross - Decimal("1")
+
+
+@pytest.mark.usefixtures("week")
 async def test_nav_smoothing_adds_back_one_off_charges(
     trader: Api, ops: Api, resources: Resources
 ) -> None:
@@ -1336,6 +1407,8 @@ def test_smoothing_follows_settlement_dates_and_removes_fees() -> None:
         ahead.std,
     )
     assert forecast.trend == filtered.points[-1].trend
+    # Для «% годовых» после комиссий: комиссия на пай за календарный день.
+    assert forecast.fees_per_day == fee
 
     # Последний день с расчётом — воскресенье: прогноз на понедельник от пятницы.
     _, monday = smooth_unit_price(days[:-1], holiday)

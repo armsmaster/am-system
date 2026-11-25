@@ -27,6 +27,8 @@ from am_common.auth import Principal, Role, require_any_role
 from am_common.calendar import add_trading_days
 from am_common.clock import MOSCOW
 from am_common.events import Actor
+from am_quant.bond import QuantError
+from am_quant.kalman import NAV_SETTINGS, Memory, Settings, memory_of, settings_for
 from booking.accounts import MAX_ACCOUNT_DAYS, AccountDay, AccountDays, account_days
 from booking.clients import (
     MarketdataClient,
@@ -107,6 +109,11 @@ Price = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)]
 Kopecks = Annotated[Decimal, Field(ge=0, max_digits=18, decimal_places=2)]
 Quantity = Annotated[int, Field(gt=0, le=10**12)]
 Rate = Annotated[Decimal, Field(ge=0, le=100, max_digits=9, decimal_places=6)]  # % годовых
+
+# Свои настройки фильтра Калмана в днях (решение 174) и стандартные — для сравнения.
+HalfLife = Annotated[Decimal | None, Query(ge=Decimal("0.5"), le=Decimal(20))]
+TrendMemory = Annotated[Decimal | None, Query(ge=Decimal(5), le=Decimal(500))]
+STANDARD_MEMORY = memory_of(NAV_SETTINGS)
 
 router = APIRouter()
 
@@ -530,7 +537,21 @@ class NavForecastOut(BaseModel):
     low: Decimal | None  # ± одно стандартное отклонение: 68%
     high: Decimal | None
     trend: Decimal  # прирост стоимости пая за день
-    trend_percent: Decimal  # тот же прирост, % годовых
+    # Чистый прирост, % годовых: тренд минус комиссии от СЧА за день — столько получает
+    # пайщик. Дни начисления и календарные дни за год совпадают: по 365.
+    trend_percent: Decimal
+
+
+class NavFilterOut(BaseModel):
+    """Настройки фильтра Калмана, по которым посчитаны сглаженная и прогноз (решение 174)."""
+
+    half_life: Decimal  # за сколько торговых дней сглаженная наполовину догоняет скачок
+    trend_memory: Decimal  # по скольким последним торговым дням считается тренд
+    q_level: Decimal
+    q_trend: Decimal
+    standard: bool  # настройки по умолчанию, а не свои
+    standard_half_life: Decimal
+    standard_trend_memory: Decimal
 
 
 class NavHistoryOut(BaseModel):
@@ -543,6 +564,7 @@ class NavHistoryOut(BaseModel):
     benchmark: str | None
     points: list[NavPointOut]
     forecast: NavForecastOut | None
+    filter: NavFilterOut
 
 
 class _OperationBase(BaseModel):
@@ -1596,13 +1618,33 @@ async def get_nav_history(
     fund_id: UUID,
     since: Annotated[date | None, Query(alias="from")] = None,
     till: Annotated[date | None, Query(alias="till")] = None,
+    half_life: HalfLife = None,
+    trend_memory: TrendMemory = None,
 ) -> NavHistoryOut:
     """Стоимость пая и СЧА с ``from`` по ``till`` (по умолчанию — вся история по сегодня),
-    сглаженная фильтром Калмана, прогноз на завтра и цена бумаги сравнения (решение 168)."""
+    сглаженная фильтром Калмана, прогноз на завтра и цена бумаги сравнения (решение 168).
+    ``half_life`` и ``trend_memory`` — свои настройки фильтра в днях (решение 174)."""
+    memory, settings, standard = _nav_filter(half_life, trend_memory)
+    history = await _nav_history(
+        session,
+        authorization,
+        services,
+        now=now,
+        fund_id=fund_id,
+        period=(since, till),
+        settings=settings,
+    )
     return _nav_history_out(
-        await _nav_history(
-            session, authorization, services, now=now, fund_id=fund_id, period=(since, till)
-        )
+        history,
+        NavFilterOut(
+            half_life=memory.half_life.quantize(CENT),
+            trend_memory=memory.trend_memory.quantize(Decimal("0.1")),
+            q_level=settings.q_level,
+            q_trend=settings.q_trend,
+            standard=standard,
+            standard_half_life=STANDARD_MEMORY.half_life.quantize(CENT),
+            standard_trend_memory=STANDARD_MEMORY.trend_memory.quantize(Decimal("0.1")),
+        ),
     )
 
 
@@ -1622,10 +1664,18 @@ async def get_nav_workbook(
     fund_id: UUID,
     since: Annotated[date | None, Query(alias="from")] = None,
     till: Annotated[date | None, Query(alias="till")] = None,
+    half_life: HalfLife = None,
+    trend_memory: TrendMemory = None,
 ) -> Response:
-    """Те же дни в Excel."""
+    """Те же дни в Excel — с теми же настройками фильтра."""
     history = await _nav_history(
-        session, authorization, services, now=now, fund_id=fund_id, period=(since, till)
+        session,
+        authorization,
+        services,
+        now=now,
+        fund_id=fund_id,
+        period=(since, till),
+        settings=_nav_filter(half_life, trend_memory)[1],
     )
     return Response(
         nav_workbook(history),
@@ -1642,6 +1692,7 @@ async def _nav_history(
     now: datetime,
     fund_id: UUID,
     period: tuple[date | None, date | None],
+    settings: Settings,
 ) -> NavHistory:
     visible = await services.portfolios.visible(authorization)
     history = await nav_history(
@@ -1653,13 +1704,30 @@ async def _nav_history(
         marketdata=services.marketdata,
         refdata=services.refdata,
         benchmark=services.benchmark,
+        settings=settings,
     )
     if history is None:
         raise NotFoundError("fund", fund_id)
     return history
 
 
-def _nav_history_out(history: NavHistory) -> NavHistoryOut:
+def _nav_filter(
+    half_life: Decimal | None, trend_memory: Decimal | None
+) -> tuple[Memory, Settings, bool]:
+    """Настройки фильтра в днях → шумы уровня и тренда; не заданы — по умолчанию."""
+    if half_life is None and trend_memory is None:
+        return STANDARD_MEMORY, NAV_SETTINGS, True
+    memory = Memory(
+        STANDARD_MEMORY.half_life if half_life is None else half_life,
+        STANDARD_MEMORY.trend_memory if trend_memory is None else trend_memory,
+    )
+    try:
+        return memory, settings_for(memory), False
+    except QuantError as exc:
+        raise RuleViolationError(exc.code, exc.message) from exc
+
+
+def _nav_history_out(history: NavHistory, nav_filter: NavFilterOut) -> NavHistoryOut:
     forecast = history.forecast
     return NavHistoryOut(
         fund_id=history.fund.id,
@@ -1688,8 +1756,11 @@ def _nav_history_out(history: NavHistory) -> NavHistoryOut:
             low=None if forecast.std is None else (forecast.value - forecast.std).quantize(CENT),
             high=None if forecast.std is None else (forecast.value + forecast.std).quantize(CENT),
             trend=forecast.trend.quantize(Decimal("0.0001")),
-            trend_percent=(forecast.trend * 365 / forecast.value * 100).quantize(Decimal("0.01")),
+            trend_percent=(
+                (forecast.trend - forecast.fees_per_day) * 365 / forecast.value * 100
+            ).quantize(Decimal("0.01")),
         ),
+        filter=nav_filter,
     )
 
 

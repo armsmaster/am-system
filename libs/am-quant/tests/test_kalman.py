@@ -8,7 +8,15 @@ from decimal import Decimal
 import pytest
 
 from am_quant.bond import QuantError
-from am_quant.kalman import NAV_SETTINGS, Settings, kalman_trend
+from am_quant.kalman import (
+    NAV_SETTINGS,
+    Memory,
+    Settings,
+    kalman_trend,
+    max_half_life,
+    memory_of,
+    settings_for,
+)
 
 
 def rounded(value: Decimal, places: int) -> str:
@@ -158,3 +166,61 @@ def test_forecast_only_ahead() -> None:
     # Без начисления — уровень, но шум за время копится.
     flat = found.forecast(Decimal(1), Decimal(0))
     assert flat.value == found.points[-1].level
+
+
+# --- настройки в днях (решение 174) ---------------------------------------------
+
+
+def test_default_settings_in_days() -> None:
+    """Таблица методики: 0,05 и 0,0005 — скачок наполовину за 2,3 дня, тренд — 52 дня."""
+    memory = memory_of(NAV_SETTINGS)
+
+    assert abs(memory.half_life - Decimal("2.255")) < Decimal("0.001")
+    assert abs(memory.trend_memory - Decimal("52.15")) < Decimal("0.01")
+
+
+@pytest.mark.parametrize(
+    ("half_life", "trend_memory", "q_level", "q_trend"),
+    [
+        ("3.47", "110.5", "0.01993", "0.0001000"),
+        ("1.3", "29.2", "0.1985", "0.001999"),
+        ("0.5", "5", "1.250", "0.1600"),
+    ],
+)
+def test_settings_for_days(half_life: str, trend_memory: str, q_level: str, q_trend: str) -> None:
+    settings = settings_for(Memory(Decimal(half_life), Decimal(trend_memory)))
+
+    assert abs(settings.q_level - Decimal(q_level)) < Decimal("0.0001")
+    assert abs(settings.q_trend - Decimal(q_trend)) < Decimal("0.0000005")
+
+
+@pytest.mark.parametrize(
+    ("half_life", "trend_memory"), [("2.3", "50"), ("0.5", "500"), ("10", "500")]
+)
+def test_days_round_trip(half_life: str, trend_memory: str) -> None:
+    memory = memory_of(settings_for(Memory(Decimal(half_life), Decimal(trend_memory))))
+
+    assert abs(memory.half_life - Decimal(half_life)) < Decimal("0.000001")
+    assert abs(memory.trend_memory - Decimal(trend_memory)) < Decimal("0.0001")
+
+
+def test_short_memory_limits_smoothing() -> None:
+    assert [max_half_life(Decimal(m)) for m in (5, 50, 500)] == [
+        Decimal("0.8"),
+        Decimal("3.2"),
+        Decimal("10.7"),
+    ]
+    limit = r"При памяти тренда 50 дн\. сглаживание — не больше 3,2 дн\."
+    with pytest.raises(QuantError, match=limit):
+        settings_for(Memory(Decimal(10), Decimal(50)))
+
+
+@pytest.mark.parametrize(("half_life", "trend_memory"), [("0", "50"), ("2", "1")])
+def test_days_must_make_sense(half_life: str, trend_memory: str) -> None:
+    with pytest.raises(QuantError, match="больше"):
+        settings_for(Memory(Decimal(half_life), Decimal(trend_memory)))
+
+
+def test_memory_needs_trend_noise() -> None:
+    with pytest.raises(QuantError, match="шум тренда"):
+        memory_of(Settings(Decimal("0.05"), Decimal(0)))

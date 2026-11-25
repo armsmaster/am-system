@@ -1053,6 +1053,12 @@ button:disabled {
   padding: 16px 18px;
 }
 
+/* В панели прокручивается она сама: шапка таблицы липнет к её верху, а не под верхнюю
+   панель окна — иначе шапка съезжает вниз и закрывает первую строку. */
+.drawer table.data th {
+  top: 0;
+}
+
 .drawer-body form,
 .drawer-body section {
   border: none;
@@ -4058,4 +4064,32 @@ button.primary.danger-button {
   min-width: 0;
   font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
   font-size: 13px;
+}
+
+/* --- Свои настройки фильтра Калмана (решение 174). --- */
+
+.filter-panel label {
+  margin-bottom: 4px;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.filter-panel input[type='range'] {
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  accent-color: var(--accent-alt);
+}
+
+.filter-panel .hint {
+  margin: 0 0 14px;
+}
+
+.filter-panel .filter-noises {
+  font-variant-numeric: tabular-nums;
+}
+
+.nav-own-filter {
+  color: var(--accent-alt);
 }

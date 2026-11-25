@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router';
 
 import type { Context } from '../App';
 import type { FeeKind, FeeRate, NavHistory, NavPoint } from '../api';
+import { FilterPanel } from '../components/FilterPanel';
 import { NavChart } from '../components/NavChart';
 import { saveFile } from '../download';
 import {
@@ -22,8 +23,11 @@ import {
   chartData,
   CUSTOM_KEY,
   FEE_SHORT,
+  FILTER_KEY,
+  formatFilter,
   KALMAN_KEY,
   METRIC_KEY,
+  parseFilter,
   parseMetric,
   parsePeriod,
   PERIOD_KEY,
@@ -73,9 +77,14 @@ export function NavPage({ context }: { readonly context: Context }) {
   const [kalman, setKalman] = useStored(KALMAN_KEY, parseFlag);
   const [benchmark, setBenchmark] = useStored(BENCHMARK_KEY, parseFlag);
   const [table, setTable] = useStored(TABLE_KEY, parseFlag);
+  const [filter, setFilter] = useStored(FILTER_KEY, parseFilter, formatFilter);
   const [feesOpen, setFeesOpen] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
   const { from, till } = periodRange(period, today, custom);
-  const loadHistory = useCallback(() => context.api.navHistory(fundId, from, till), [context.api, fundId, from, till]);
+  const loadHistory = useCallback(
+    () => context.api.navHistory(fundId, from, till, filter),
+    [context.api, fundId, from, till, filter],
+  );
   const loadRates = useCallback(() => context.api.feeRates(fundId), [context.api, fundId]);
   const [history] = useLoad(loadHistory);
   const [rates, reloadRates] = useLoad(loadRates);
@@ -92,7 +101,7 @@ export function NavPage({ context }: { readonly context: Context }) {
   };
   const exportTable = (found: NavHistory) =>
     void exporting.run(async () =>
-      saveFile(await context.api.navWorkbook(fundId, from, till), `СЧА ${found.code} ${found.today}.xlsx`),
+      saveFile(await context.api.navWorkbook(fundId, from, till, filter), `СЧА ${found.code} ${found.today}.xlsx`),
     );
   const toggles: readonly (readonly [string, boolean, (value: boolean) => void, boolean])[] = [
     ['Калман', kalman, setKalman, metric === 'unit'],
@@ -123,7 +132,7 @@ export function NavPage({ context }: { readonly context: Context }) {
             <Hero history={found} />
             <dl className="tiles nav-cards" aria-label="Комиссии и сравнение">
               <FeesCard rates={rates.status === 'ready' ? rates.data : []} today={today} onOpen={() => setFeesOpen(true)} />
-              {metric === 'unit' && kalman && <KalmanCard history={found} />}
+              {metric === 'unit' && kalman && <KalmanCard history={found} onOpen={() => setFilterOpen(true)} />}
               {metric === 'unit' && benchmark && <BenchmarkCard history={found} label={PERIOD_LABELS[period]} />}
             </dl>
             <div className="toolbar nav-toolbar">
@@ -165,7 +174,7 @@ export function NavPage({ context }: { readonly context: Context }) {
             ) : (
               <>
                 <NavChart
-                  data={chartData(found.points, found.forecast, {
+                  data={chartData(found.points, {
                     metric,
                     kalman,
                     benchmark: benchmark ? found.benchmark : null,
@@ -185,6 +194,9 @@ export function NavPage({ context }: { readonly context: Context }) {
                 )}
               </>
             )}
+            <Drawer title="Настройки фильтра Калмана" open={filterOpen} onClose={() => setFilterOpen(false)}>
+              <FilterPanel filter={found.filter} onChange={setFilter} />
+            </Drawer>
           </>
         )}
       </LoadedView>
@@ -221,12 +233,14 @@ function Hero({ history }: { readonly history: NavHistory }) {
       <section className="nav-forecast" aria-label="Прогноз на следующий торговый день">
         <span className="nav-hero-label">
           Прогноз на {forecast ? formatDate(forecast.date) : 'следующий торговый день'} · фильтр Калмана
+          {!history.filter.standard && ', свои настройки'}
         </span>
         <span className="nav-hero-value">{forecast ? `${formatMoney(forecast.value)} ₽` : '—'}</span>
         {forecast && (
           <span className="nav-hero-note">
             {forecast.low && forecast.high && `68%: ${formatMoney(forecast.low)} – ${formatMoney(forecast.high)} · `}
-            тренд {fixed(forecast.trend, 4)} ₽ за день начисления · ≈ {fixed(forecast.trend_percent, 2)}% годовых
+            тренд {fixed(forecast.trend, 4)} ₽ за день начисления до комиссий · ≈{' '}
+            {fixed(forecast.trend_percent, 2)}% годовых после комиссий
           </span>
         )}
       </section>
@@ -263,15 +277,26 @@ function FeesCard({
   );
 }
 
-function KalmanCard({ history }: { readonly history: NavHistory }) {
+function KalmanCard({ history, onOpen }: { readonly history: NavHistory; readonly onOpen: () => void }) {
   const last = history.points.filter((p) => p.smoothed !== null).at(-1);
+  const { filter } = history;
   return (
     <div className="tile nav-card">
       <dt>Сглаженная · Калман</dt>
       <dd>
         {last ? `${formatMoney(last.smoothed)} ₽` : '—'}
-        {history.forecast && <div className="subline">тренд ≈ {fixed(history.forecast.trend_percent, 2)}% годовых</div>}
+        {history.forecast && (
+          <div className="subline">≈ {fixed(history.forecast.trend_percent, 2)}% годовых после комиссий</div>
+        )}
+        {!filter.standard && (
+          <div className="subline nav-own-filter">
+            свои настройки: {fixed(filter.half_life, 1)} и {fixed(filter.trend_memory, 0)} дн.
+          </div>
+        )}
       </dd>
+      <button type="button" className="icon-button nav-card-gear" aria-label="Настройки фильтра" onClick={onOpen}>
+        ⚙
+      </button>
     </div>
   );
 }

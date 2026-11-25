@@ -438,6 +438,25 @@ export interface NavForecast {
   readonly trend_percent: Decimal;
 }
 
+/** Настройки фильтра Калмана, по которым посчитаны сглаженная и прогноз (решение 174). */
+export interface NavFilter {
+  /** За сколько торговых дней сглаженная наполовину догоняет скачок пая. */
+  readonly half_life: Decimal;
+  /** По скольким последним торговым дням считается тренд. */
+  readonly trend_memory: Decimal;
+  readonly q_level: Decimal;
+  readonly q_trend: Decimal;
+  readonly standard: boolean;
+  readonly standard_half_life: Decimal;
+  readonly standard_trend_memory: Decimal;
+}
+
+/** Свои настройки фильтра в днях; null — стандартные. */
+export interface FilterDays {
+  readonly halfLife: number;
+  readonly memory: number;
+}
+
 export interface NavHistory {
   readonly fund_id: string;
   readonly code: string;
@@ -448,6 +467,7 @@ export interface NavHistory {
   readonly benchmark: string | null;
   readonly points: readonly NavPoint[];
   readonly forecast: NavForecast | null;
+  readonly filter: NavFilter;
 }
 
 export type OperationKind =
@@ -858,10 +878,10 @@ export function bookingApi(client: ApiClient) {
     nav: (fundId: string, first: string, last: string) =>
       client.get<Nav>(`${BASE}/nav${query({ fund_id: fundId, from: first, till: last })}`),
     /** Стоимость пая и СЧА с ``from`` по ``till`` (без них — вся история), Калман и LQDT (решение 168). */
-    navHistory: (fundId: string, from: string | undefined, till: string | undefined) =>
-      client.get<NavHistory>(`${BASE}/nav/history${query({ fund_id: fundId, from, till })}`),
-    navWorkbook: (fundId: string, from: string | undefined, till: string | undefined) =>
-      client.blob(`${BASE}/nav/history.xlsx${query({ fund_id: fundId, from, till })}`),
+    navHistory: (fundId: string, from: string | undefined, till: string | undefined, filter: FilterDays | null) =>
+      client.get<NavHistory>(`${BASE}/nav/history${query({ fund_id: fundId, from, till, ...filterQuery(filter) })}`),
+    navWorkbook: (fundId: string, from: string | undefined, till: string | undefined, filter: FilterDays | null) =>
+      client.blob(`${BASE}/nav/history.xlsx${query({ fund_id: fundId, from, till, ...filterQuery(filter) })}`),
     feeRates: (fundId: string) => client.get<FeeRate[]>(`${BASE}/funds/${fundId}/fee-rates`),
     setFeeRate: (fundId: string, body: FeeRateInput) =>
       client.post<FeeRate[]>(`${BASE}/funds/${fundId}/fee-rates`, body),
@@ -886,6 +906,12 @@ export function bookingApi(client: ApiClient) {
 }
 
 export type BookingApi = ReturnType<typeof bookingApi>;
+
+function filterQuery(filter: FilterDays | null): Record<string, string | undefined> {
+  return filter === null
+    ? {}
+    : { half_life: String(filter.halfLife), trend_memory: String(filter.memory) };
+}
 
 function query(params: Record<string, string | undefined>): string {
   const given = Object.entries(params).filter((entry): entry is [string, string] => entry[1] !== undefined);
