@@ -89,6 +89,7 @@ def get_admin(request: Request, resources: AppResources) -> KeycloakAdmin:
             realm=settings.keycloak_realm,
             client_id=settings.keycloak_client_id,
             client_secret=settings.keycloak_client_secret.get_secret_value(),
+            login_client_id=settings.login_client_id,
         )
         request.app.state.keycloak_admin = admin
     return admin

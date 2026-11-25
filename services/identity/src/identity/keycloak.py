@@ -158,9 +158,11 @@ class KeycloakAdmin:
         realm: str,
         client_id: str,
         client_secret: str,
+        login_client_id: str = "am-web",
     ) -> None:
         self._http = http
         self._base = f"{keycloak_url.rstrip('/')}/admin/realms/{realm}"
+        self._login_client = login_client_id
         self._token = ServiceToken(
             http,
             token_url=realm_token_url(keycloak_url, realm),
@@ -222,8 +224,16 @@ class KeycloakAdmin:
         await self._map_roles("DELETE", user_id, names)
 
     async def logout(self, user_id: str) -> None:
-        """Завершает все сессии пользователя, офлайн тоже: их токены перестают обновляться."""
+        """Завершает все сессии пользователя, «запомненные» тоже.
+
+        ``logout`` Keycloak закрывает только обычные сессии. Офлайн («Запомнить меня»)
+        закрывает отзыв согласия клиента входа — иначе после разблокировки старый
+        браузер вошёл бы без пароля. Офлайн-сессий нет — Keycloak отвечает 404.
+        """
         _check(await self._call("POST", f"/users/{user_id}/logout"))
+        response = await self._call("DELETE", f"/users/{user_id}/consents/{self._login_client}")
+        if response.status_code != httpx2.codes.NOT_FOUND:
+            _check(response)
 
     async def _map_roles(self, method: str, user_id: str, names: Sequence[str]) -> None:
         """Роль берём из доступных пользователю (добавить) или назначенных (снять).

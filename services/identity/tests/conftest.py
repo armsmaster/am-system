@@ -243,9 +243,22 @@ class FakeKeycloak:
             return httpx2.Response(204)
         if rest.startswith("/role-mappings/realm"):
             return self._roles(method, rest, user, body)
-        assert rest == "/logout", f"unexpected request {method} {rest}"
-        self.admin_logouts.append(user.id)
-        self.sessions = {t: uid for t, uid in self.sessions.items() if uid != user.id}
+        return self._end_sessions(rest, user)
+
+    def _end_sessions(self, rest: str, user: FakeUser) -> httpx2.Response:
+        mine = {t for t, uid in self.sessions.items() if uid == user.id}
+        offline = {t for t in mine if _typ(t) == "Offline"}
+        if rest == "/consents/am-web":
+            # Как в Keycloak: отзыв согласия закрывает офлайн-сессии клиента; их нет — 404.
+            if not offline:
+                return httpx2.Response(404, json={"error": "Consent nor offline token not found"})
+            gone = offline
+        else:
+            assert rest == "/logout", f"unexpected request {rest}"
+            # Как в Keycloak: logout закрывает только обычные сессии, офлайн остаются.
+            self.admin_logouts.append(user.id)
+            gone = mine - offline
+        self.sessions = {t: uid for t, uid in self.sessions.items() if t not in gone}
         return httpx2.Response(204)
 
     def _roles(self, method: str, rest: str, user: FakeUser, body: Any) -> httpx2.Response:

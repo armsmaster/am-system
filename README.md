@@ -126,22 +126,25 @@ docker compose exec -T postgres pg_dumpall -U postgres | gzip > backup-$(date +%
 
 **Вход (решения 162, 170).** Вход — на странице приложения. «Запомнить меня» —
 неделя с последней активности, но не больше 30 дней; без галочки — 30 минут
-без запросов, не больше 10 часов. Keycloak читает realm только при первом
-запуске. Если машину подняли до решения 170, донастройте Keycloak в консоли
-`/auth/admin`, realm `am`:
+без запросов, не больше 10 часов.
 
-1. Clients → `am-web` → Capability config: включите Direct access grants.
-2. Clients → Create client: `am-identity`, Client authentication — вкл.,
-   Service accounts roles — вкл., остальные потоки — выкл. Вкладка
-   Credentials: скопируйте Client secret в `.env` как `IDENTITY_KEYCLOAK_SECRET`.
-   Вкладка Service accounts roles → Assign role → роли клиента
-   `realm-management`: `view-users`, `query-users`, `manage-users`.
-3. Realm settings → Sessions: Offline Session Idle — 7 дней, Offline Session
-   Max Limited — вкл., Offline Session Max — 30 дней.
-4. Authentication → Required actions: выключите Verify Profile.
-5. Authentication → Policies → Password policy: Minimum length 10, Not username.
+**Обновление работающей машины (решение 171).** Keycloak читает realm только при
+первом запуске, а `.env` собирается один раз. Поэтому новые клиенты и настройки
+входа машина, поднятая раньше, получает отдельной командой — перед выкладкой
+нового кода:
 
-Затем `docker compose up -d --build`.
+```bash
+git pull
+python3 scripts/vm_upgrade.py            # покажет, что сделает
+python3 scripts/vm_upgrade.py --apply    # сделает
+docker compose up -d --build
+```
+
+Скрипт дописывает в `.env` недостающие секреты (случайные; существующие строки
+не трогает) и приводит Keycloak к realm для ВМ: клиенты, права служебных
+учётных записей, настройки входа, роль `offline_access` людям, у которых её нет.
+Ничего не удаляет, людей не заводит, повторный запуск ничего не меняет.
+Запускайте его при каждом обновлении: если менять нечего, он так и скажет.
 
 Чего режим ВМ не делает: не закрывает консоль Keycloak `/auth/admin` от
 интернета и не включает OTP — это решения о доступе пользователей (вопрос 54

@@ -276,6 +276,8 @@ def test_blocking_ends_sessions(
         "/public/auth/login",
         json={"username": "trader", "password": "trader-password", "remember": True},
     )
+    remembered = client.cookies.get("am_refresh")
+    assert remembered is not None
 
     blocked = client.put("/users/u-trader/enabled", headers=admin, json={"enabled": False})
 
@@ -288,6 +290,12 @@ def test_blocking_ends_sessions(
 
     unblocked = client.put("/users/u-trader/enabled", headers=admin, json={"enabled": True})
     assert unblocked.json()["status"] == "active"
+    # «Запомненный» браузер после разблокировки без пароля не войдёт.
+    client.cookies.set("am_refresh", remembered, path="/public/auth")
+    assert code(client.post("/public/auth/refresh")) == "session_expired"
+    # Без офлайн-сессий блокировка тоже проходит.
+    ops = client.put("/users/u-ops/enabled", headers=admin, json={"enabled": False})
+    assert ops.json()["status"] == "blocked"
     own = client.put("/users/u-admin/enabled", headers=admin, json={"enabled": False})
     assert code(own) == "self_block"
 

@@ -71,16 +71,23 @@ class Keycloak:
         request = urllib.request.Request(  # noqa: S310
             self._base + path, data=data, headers=headers, method=method
         )
-        with urllib.request.urlopen(request) as response:  # noqa: S310
+        with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
             raw = response.read()
         return json.loads(raw) if raw else None
 
 
-def sync(kc: Keycloak, realm: dict[str, Any], *, apply: bool) -> list[str]:
+def sync(
+    kc: Keycloak,
+    realm: dict[str, Any],
+    *,
+    apply: bool,
+    settings: tuple[str, ...] = REALM_SETTINGS,
+) -> list[str]:
+    """Что добавить и поправить; с ``apply`` — сделать. ``settings`` — какие настройки realm."""
     admin = f"/admin/realms/{realm['realm']}"
     plan: list[str] = []
 
-    _align_realm(kc, admin, realm, plan, apply=apply)
+    _align_realm(kc, admin, realm, plan, settings, apply=apply)
 
     have_roles = {r["name"] for r in kc.call("GET", f"{admin}/roles?max=1000")}
     for role in realm["roles"]["realm"]:
@@ -133,13 +140,17 @@ def sync(kc: Keycloak, realm: dict[str, Any], *, apply: bool) -> list[str]:
 
 
 def _align_realm(
-    kc: Keycloak, admin: str, realm: dict[str, Any], plan: list[str], *, apply: bool
+    kc: Keycloak,
+    admin: str,
+    realm: dict[str, Any],
+    plan: list[str],
+    keys: tuple[str, ...],
+    *,
+    apply: bool,
 ) -> None:
     """Настройки realm и обязательные действия — как в файле."""
     current = kc.call("GET", admin)
-    settings = {
-        key: realm[key] for key in REALM_SETTINGS if key in realm and current.get(key) != realm[key]
-    }
+    settings = {key: realm[key] for key in keys if key in realm and current.get(key) != realm[key]}
     plan.extend(f"настройка realm {key} = {value}" for key, value in settings.items())
     if apply and settings:
         kc.call("PUT", admin, settings)
