@@ -74,13 +74,18 @@ def test_env_and_realm_for_the_machine(root: Path) -> None:
     # Из людей — один администратор с временным паролем; служебные учётные записи на месте.
     people = [u for u in realm["users"] if not u.get("serviceAccountClientId")]
     assert [(u["username"], u["realmRoles"], u["credentials"]) for u in people] == [
-        ("admin", ["admin"], [{"type": "password", "value": password, "temporary": True}])
+        (
+            "admin",
+            ["admin", "offline_access"],
+            [{"type": "password", "value": password, "temporary": True}],
+        )
     ]
     accounts = {
         u["serviceAccountClientId"] for u in realm["users"] if u.get("serviceAccountClientId")
     }
     assert accounts == {
         "am-portfolio",
+        "am-identity",
         "am-marketdata",
         "am-booking",
         "am-reconciliation",
@@ -99,6 +104,18 @@ def test_env_and_realm_for_the_machine(root: Path) -> None:
         realm["ssoSessionIdleTimeoutRememberMe"],
         realm["ssoSessionMaxLifespanRememberMe"],
     ) == (True, 7 * 24 * 3600, 30 * 24 * 3600)
+    # Своя страница входа (решение 170): «Запомнить меня» — офлайн-сессия с теми же сроками,
+    # вход по паролю через сервис identity, политика паролей, без «проверки профиля».
+    assert (
+        realm["offlineSessionIdleTimeout"],
+        realm["offlineSessionMaxLifespanEnabled"],
+        realm["offlineSessionMaxLifespan"],
+    ) == (7 * 24 * 3600, True, 30 * 24 * 3600)
+    assert clients["am-web"]["directAccessGrantsEnabled"] is True
+    assert realm["passwordPolicy"] == "length(10) and notUsername"
+    actions = {a["alias"]: a["enabled"] for a in realm["requiredActions"]}
+    assert actions["VERIFY_PROFILE"] is False
+    assert actions["UPDATE_PASSWORD"] is True
     assert "admin-dev" not in json.dumps(realm)
 
 

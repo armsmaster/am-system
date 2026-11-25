@@ -17,6 +17,7 @@ def test_reads_streams_of_audited_services() -> None:
         "am.events.booking",
         "am.events.reconciliation",
         "am.events.limits",
+        "am.events.identity",
     ]
     assert settings.database_schema == "audit"
     assert settings.consumer_name

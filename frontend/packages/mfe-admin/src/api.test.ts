@@ -1,7 +1,7 @@
 import type { ApiClient } from '@am/platform';
 import { describe, expect, it, vi } from 'vitest';
 
-import { portfolioApi } from './api';
+import { identityApi, inviteUrl, portfolioApi } from './api';
 
 /** Каждый вызов админки — с методом и путём, которые ждёт сервис портфелей. */
 describe('portfolioApi', () => {
@@ -85,5 +85,35 @@ describe('portfolioApi', () => {
     await call();
 
     expect(client[method]).toHaveBeenCalledWith(...args);
+  });
+});
+
+/** Пользователи — в сервисе входа. */
+describe('identityApi', () => {
+  const client = {
+    get: vi.fn((..._args: unknown[]) => Promise.resolve(null)),
+    post: vi.fn((..._args: unknown[]) => Promise.resolve(null)),
+    put: vi.fn((..._args: unknown[]) => Promise.resolve(null)),
+  };
+  const api = identityApi(client as unknown as ApiClient);
+  const person = { username: 'ivan', first_name: 'Иван', last_name: 'Петров', email: null, roles: [], ttl_days: 7 } as const;
+
+  it.each([
+    ['people', () => api.people(), 'get', ['/api/identity/users']],
+    ['create', () => api.create(person), 'post', ['/api/identity/users', person]],
+    ['setRoles', () => api.setRoles('u/1', ['risk']), 'put', ['/api/identity/users/u%2F1/roles', { roles: ['risk'] }]],
+    ['setEnabled', () => api.setEnabled('u1', false), 'put', ['/api/identity/users/u1/enabled', { enabled: false }]],
+    ['invite', () => api.invite('u1', 3), 'post', ['/api/identity/users/u1/invite', { ttl_days: 3 }]],
+  ] as const)('%s', async (_name, call, method, args) => {
+    client[method].mockClear();
+
+    await call();
+
+    expect(client[method]).toHaveBeenCalledWith(...args);
+  });
+
+  it('builds the invitation address', () => {
+    expect(inviteUrl('a+b', 'https://am.example.ru')).toBe('https://am.example.ru/invite/a%2Bb');
+    expect(inviteUrl('t')).toBe(`${window.location.origin}/invite/t`);
   });
 });

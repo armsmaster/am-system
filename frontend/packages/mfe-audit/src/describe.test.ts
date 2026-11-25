@@ -501,6 +501,40 @@ describe('changes', () => {
   });
 });
 
+describe('user events', () => {
+  const ivan = { subject: 'u-ivan', username: 'ivan.petrov' };
+
+  it('names the user as the object', () => {
+    expect(objectLabel(event('user.password_changed', { user: ivan }))).toBe('ivan.petrov');
+    expect(objectLabel(event('user.password_changed', { user: { subject: 'u-ivan' } }))).toBe('u-ivan');
+    expect(objectLabel(event('user.password_changed', { user: {} }, 'u-x'))).toBe('u-x');
+    expect(actionLabel('user.blocked')).toBe('Пользователь заблокирован');
+  });
+
+  it('describes a new user, roles, blocking, links and logins', () => {
+    const created = event('user.created', {
+      user: ivan,
+      after: { username: 'ivan.petrov', full_name: 'Иван Петров', email: null, roles: ['trading', 'admin'] },
+    });
+    expect(changes(created)).toEqual([
+      { field: 'Логин', before: '—', after: 'ivan.petrov' },
+      { field: 'ФИО', before: '—', after: 'Иван Петров' },
+      { field: 'Email', before: '—', after: '—' },
+      { field: 'Роли', before: '—', after: 'трейдинг, администратор' },
+    ]);
+    const roles = event('user.roles_changed', { user: ivan, before: { roles: [] }, after: { roles: ['risk'] } });
+    expect(changes(roles)).toEqual([{ field: 'Роли', before: '—', after: 'риск-менеджмент' }]);
+    const blocked = event('user.blocked', { user: ivan, before: { enabled: true }, after: { enabled: false } });
+    expect(changes(blocked)).toEqual([{ field: 'Вход разрешён', before: 'да', after: 'нет' }]);
+    const invited = event('user.invited', { user: ivan, after: { expires_at: '2026-12-02T11:05:00+00:00' } });
+    expect(changes(invited)).toEqual([{ field: 'Ссылка действует до', before: '—', after: '02.12.2026, 14:05:00' }]);
+    const set = event('user.password_set', { user: ivan, after: { via: 'invite' } });
+    expect(changes(set)).toEqual([{ field: 'Как', before: '—', after: 'по ссылке' }]);
+    const login = event('user.logged_in', { user: ivan, after: { remember: true } });
+    expect(changes(login)).toEqual([{ field: 'Запомнить меня', before: '—', after: 'да' }]);
+  });
+});
+
 describe('formatTime', () => {
   it('shows Moscow time', () => {
     expect(formatTime('2026-10-25T09:14:03Z')).toBe('25.10.2026, 12:14:03');

@@ -1018,7 +1018,8 @@ button:disabled {
   z-index: 41;
   display: flex;
   flex-direction: column;
-  width: min(480px, 100vw);
+  /* 100%, а не 100vw: у фиксированного блока это окно без полосы прокрутки. */
+  width: min(480px, 100%);
   height: 100vh;
   background: var(--surface);
   border-left: 1px solid var(--border);
@@ -2603,7 +2604,7 @@ table.data tr.link-row:focus-visible td {
 }
 
 .drawer.drawer-wide {
-  width: min(780px, 100vw);
+  width: min(780px, 100%);
 }
 
 
@@ -3814,4 +3815,247 @@ table.data.statement tr.statement-bond-group td {
   .nav-hero-value {
     font-size: 30px;
   }
+}
+
+/* --- Вход: своя страница вместо страницы Keycloak (решение 170). --- */
+
+.auth-page {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 24px 16px;
+  background:
+    radial-gradient(1200px 600px at 10% -10%, var(--accent-soft), transparent 60%),
+    radial-gradient(900px 500px at 110% 110%, var(--accent-alt-soft), transparent 60%),
+    var(--bg);
+}
+
+.auth-card {
+  width: min(400px, 100%);
+  padding: 28px 28px 24px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.auth-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 20px;
+  font-weight: 600;
+}
+
+.auth-card h1 {
+  margin: 0 0 16px;
+  font-size: 22px;
+}
+
+.auth-lead {
+  margin: -6px 0 14px;
+}
+
+.auth-card > .hint {
+  margin: -6px 0 14px;
+}
+
+.auth-card .notice {
+  margin: 0 0 14px;
+}
+
+form.auth-form {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  border: none;
+  background: none;
+}
+
+.auth-form label {
+  margin-bottom: 12px;
+}
+
+.auth-form input:not([type='checkbox']) {
+  padding: 8px 10px;
+  font-size: 15px;
+}
+
+.auth-form label.checkbox {
+  margin-bottom: 4px;
+}
+
+.auth-form .hint {
+  margin: 0 0 14px 26px;
+}
+
+.auth-form .notice {
+  margin: 0 0 12px;
+}
+
+.auth-form button.primary,
+button.auth-wide {
+  width: 100%;
+  padding: 9px 12px;
+}
+
+.auth-form button.link {
+  align-self: center;
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.auth-form button.link + .hint {
+  margin: 8px 0 0;
+  text-align: center;
+}
+
+/* Правила пароля: отмечаются по мере ввода. */
+.password-rules {
+  display: grid;
+  gap: 2px;
+  margin: -2px 0 14px;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.password-rules li.ok {
+  color: var(--ok-text);
+}
+
+.password-rules li > span[aria-hidden] {
+  display: inline-block;
+  width: 14px;
+  text-align: center;
+}
+
+.notice-ok {
+  background: var(--ok-bg);
+  color: var(--ok-text);
+}
+
+.drawer-form .password-rules {
+  margin-top: 0;
+}
+
+/* Текст для экранного диктора: на экране не виден. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* --- Пользователи в администрировании (решение 170). --- */
+
+.people-scroll {
+  overflow-x: auto;
+}
+
+/* Внутри прокрутки вбок шапка липнет к её верху, а не к окну — отступ под верхнюю панель не нужен. */
+.people-scroll table.data th {
+  top: 0;
+}
+
+table.people td {
+  vertical-align: middle;
+}
+
+table.people td.row-actions {
+  width: 1%;
+  padding: 4px 6px;
+}
+
+table.data tr.blocked-row td:not(.row-actions) {
+  color: var(--muted);
+}
+
+.role-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.role-chips li {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--hover);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.role-chips li.role-admin {
+  background: var(--accent-alt-soft);
+  color: var(--accent-alt);
+}
+
+.status-chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.status-note {
+  margin-top: 2px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.status-chip {
+  white-space: nowrap;
+}
+
+.status-active {
+  background: var(--ok-bg);
+  color: var(--ok-text);
+}
+
+.status-pending {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.status-expired {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+}
+
+.status-blocked {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+.row-menu-list button.danger {
+  color: var(--danger-text);
+}
+
+button.primary.danger-button {
+  border-color: var(--danger-text);
+  background: var(--danger-text);
+}
+
+.issued > p {
+  margin: 0 0 12px;
+}
+
+.link-box {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.link-box input {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 13px;
 }

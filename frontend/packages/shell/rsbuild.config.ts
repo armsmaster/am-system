@@ -30,7 +30,7 @@ export default defineConfig({
   },
   server: {
     port: 3000,
-    // Локальная разработка: API и Keycloak — через шлюз из docker compose.
+    // Локальная разработка: API — через шлюз из docker compose.
     proxy: {
       '/api': 'http://localhost:8080',
     },

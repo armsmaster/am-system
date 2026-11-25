@@ -135,6 +135,19 @@ describe('Layout', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
+  it('opens the password change from the user menu', async () => {
+    const user = userEvent.setup();
+    renderLayout('/', fakeSession());
+
+    await user.click(screen.getByRole('button', { name: 'Иван Иванов' }));
+    await user.click(screen.getByRole('button', { name: 'Сменить пароль' }));
+
+    expect(screen.queryByRole('dialog', { name: 'Пользователь' })).not.toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Смена пароля' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Закрыть' }));
+    expect(screen.queryByRole('dialog', { name: 'Смена пароля' })).not.toBeInTheDocument();
+  });
+
   it('opens the sections over the page on a narrow screen', async () => {
     const user = userEvent.setup();
     const { layout } = renderLayout();

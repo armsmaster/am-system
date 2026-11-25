@@ -16,6 +16,9 @@ x-service-depends: &service-depends
     condition: service_healthy
   redis:
     condition: service_healthy
+  # Схема сервиса есть и в базе, созданной до его появления.
+  db-setup:
+    condition: service_completed_successfully
 
 x-service-healthcheck: &service-healthcheck
   test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready')"]
@@ -44,6 +47,23 @@ services:
       interval: 5s
       timeout: 3s
       retries: 30
+
+  # Роли и схемы сервисов: init-скрипты Postgres выполняются только на пустом томе,
+  # а этот — при каждом запуске. Идемпотентный: заводит только недостающее.
+  db-setup:
+    image: postgres:17.11-alpine
+    command: ["sh", "/docker-entrypoint-initdb.d/02-services.sh"]
+    environment:
+      PGHOST: postgres
+      POSTGRES_USER: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD:-postgres-dev}
+      SERVICES_DB_PASSWORD: ${SERVICES_DB_PASSWORD:-services-dev}
+    volumes:
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
 
   redis:
     restart: unless-stopped
@@ -125,6 +145,22 @@ services:
       AM_DATABASE_URL: postgresql+asyncpg://svc_portfolio:${SERVICES_DB_PASSWORD:-services-dev}@postgres:5432/am
       AM_KEYCLOAK_URL: http://keycloak:8080/auth
       AM_KEYCLOAK_CLIENT_SECRET: ${PORTFOLIO_KEYCLOAK_SECRET:-portfolio-dev-secret}
+    depends_on: *service-depends
+    healthcheck: *service-healthcheck
+
+  # Сервис входа (решение 170): своя страница входа поверх Keycloak, пользователи, приглашения.
+  identity:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE: identity
+    environment:
+      <<: *service-env
+      AM_DATABASE_URL: postgresql+asyncpg://svc_identity:${SERVICES_DB_PASSWORD:-services-dev}@postgres:5432/am
+      AM_KEYCLOAK_URL: http://keycloak:8080/auth
+      AM_KEYCLOAK_CLIENT_SECRET: ${IDENTITY_KEYCLOAK_SECRET:-identity-dev-secret}
     depends_on: *service-depends
     healthcheck: *service-healthcheck
 

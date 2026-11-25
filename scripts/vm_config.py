@@ -7,7 +7,7 @@ localhost, пароли вида admin-dev, секреты служебных у
 - .env — домен, HTTPS, рабочий режим Keycloak, случайные пароли и секреты;
 - infra/keycloak/realm-vm/am-realm.json — realm разработки, где адреса веб-клиента
   заменены на домен, секреты — на случайные, а вместо пользователей разработки —
-  один администратор с временным паролем: Keycloak попросит сменить его при входе.
+  один администратор с временным паролем: страница входа попросит сменить его.
 
 Только стандартная библиотека: на Ubuntu 24.04 хватит системного python3.
 
@@ -32,6 +32,7 @@ VM_REALM_DIR = "infra/keycloak/realm-vm"
 # секреты скриптов цен, сделок и выписок — для их авторов.
 CLIENT_SECRETS = {
     "am-portfolio": "PORTFOLIO_KEYCLOAK_SECRET",
+    "am-identity": "IDENTITY_KEYCLOAK_SECRET",
     "am-marketdata": "MARKETDATA_KEYCLOAK_SECRET",
     "am-booking": "BOOKING_KEYCLOAK_SECRET",
     "am-reconciliation": "RECONCILIATION_KEYCLOAK_SECRET",
@@ -47,6 +48,9 @@ PASSWORDS = (
     "KEYCLOAK_ADMIN_PASSWORD",
 )
 WEB_CLIENT = "am-web"
+# Те же правила проверяет сервис identity (решение 170). В realm разработки политики нет:
+# пароли пользователей разработки короче — их знает README.
+PASSWORD_POLICY = "length(10) and notUsername"  # noqa: S105 — правило, а не пароль
 
 
 class ConfigError(Exception):
@@ -107,13 +111,16 @@ def vm_realm(
         "email": email,
         "emailVerified": True,
         "credentials": [{"type": "password", "value": admin_password, "temporary": True}],
-        "realmRoles": ["admin"],
+        # offline_access — для «Запомнить меня» (решение 170): пользователи из файла realm
+        # не получают роли по умолчанию, в отличие от заведённых через приложение.
+        "realmRoles": ["admin", "offline_access"],
         # При импорте realm «temporary» смену пароля не требует — только это действие.
         "requiredActions": ["UPDATE_PASSWORD"],
     }
     realm["users"] = [admin, *services]
     # Без HTTPS вход только из внутренних сетей: снаружи — через Caddy.
     realm["sslRequired"] = "external"
+    realm["passwordPolicy"] = PASSWORD_POLICY
     return realm
 
 
@@ -155,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Ошибка: {exc}", file=sys.stderr)
         return 1
     print(f"Готово: .env и {VM_REALM_DIR}/am-realm.json.")
-    print("Вход в приложение: admin, временный пароль ниже — Keycloak попросит сменить его.")
+    print("Вход в приложение: admin, временный пароль ниже — при входе его попросят сменить.")
     print(f"  {password}")
     print("Консоль Keycloak: kcadmin, пароль — KEYCLOAK_ADMIN_PASSWORD в .env.")
     print("Запуск: docker compose up -d --build")

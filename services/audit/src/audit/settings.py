@@ -15,6 +15,7 @@ AUDITED_SERVICES = (
     "booking",
     "reconciliation",
     "limits",
+    "identity",
 )
 
 

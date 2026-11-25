@@ -4,7 +4,9 @@ Keycloak импортирует realm только в пустую базу. К�
 роли, клиенты или пользователи, их можно завести без `make reset`: скрипт сравнивает
 infra/keycloak/realms/am-realm.json с работающим Keycloak и добавляет недостающее —
 роли, клиенты, пользователей с паролями из realm, роли пользователей и служебных
-учётных записей. Существующее не меняет и ничего не удаляет.
+учётных записей. Из существующего приводит к realm только то, без чего не работает
+вход на своей странице (решение 170): настройки realm из REALM_SETTINGS, флаги
+клиентов из CLIENT_FLAGS и включённость обязательных действий. Ничего не удаляет.
 
 Только для разработки: пароли и секреты берёт из realm.
 
@@ -27,6 +29,14 @@ from typing import Any
 REALM_FILE = (
     Path(__file__).resolve().parent.parent / "infra" / "keycloak" / "realms" / "am-realm.json"
 )
+# Настройки realm, которые скрипт приводит к файлу и у работающего Keycloak.
+REALM_SETTINGS = (
+    "offlineSessionIdleTimeout",
+    "offlineSessionMaxLifespanEnabled",
+    "offlineSessionMaxLifespan",
+)
+# Флаги существующих клиентов, которые скрипт приводит к файлу.
+CLIENT_FLAGS = ("standardFlowEnabled", "directAccessGrantsEnabled", "serviceAccountsEnabled")
 
 
 class Keycloak:
@@ -70,6 +80,8 @@ def sync(kc: Keycloak, realm: dict[str, Any], *, apply: bool) -> list[str]:
     admin = f"/admin/realms/{realm['realm']}"
     plan: list[str] = []
 
+    _align_realm(kc, admin, realm, plan, apply=apply)
+
     have_roles = {r["name"] for r in kc.call("GET", f"{admin}/roles?max=1000")}
     for role in realm["roles"]["realm"]:
         if role["name"] not in have_roles:
@@ -82,6 +94,10 @@ def sync(kc: Keycloak, realm: dict[str, Any], *, apply: bool) -> list[str]:
         found = kc.call("GET", f"{admin}/clients?clientId={urllib.parse.quote(rep['clientId'])}")
         if found:
             clients[rep["clientId"]] = found[0]["id"]
+            flags = {k: rep[k] for k in CLIENT_FLAGS if k in rep and found[0].get(k) != rep[k]}
+            plan.extend(f"клиент {rep['clientId']}: {k} = {v}" for k, v in flags.items())
+            if apply and flags:
+                kc.call("PUT", f"{admin}/clients/{found[0]['id']}", {**found[0], **flags})
             continue
         plan.append(f"клиент {rep['clientId']}")
         if apply:
@@ -116,6 +132,33 @@ def sync(kc: Keycloak, realm: dict[str, Any], *, apply: bool) -> list[str]:
     return plan
 
 
+def _align_realm(
+    kc: Keycloak, admin: str, realm: dict[str, Any], plan: list[str], *, apply: bool
+) -> None:
+    """Настройки realm и обязательные действия — как в файле."""
+    current = kc.call("GET", admin)
+    settings = {
+        key: realm[key] for key in REALM_SETTINGS if key in realm and current.get(key) != realm[key]
+    }
+    plan.extend(f"настройка realm {key} = {value}" for key, value in settings.items())
+    if apply and settings:
+        kc.call("PUT", admin, settings)
+
+    actions = {a["alias"]: a for a in kc.call("GET", f"{admin}/authentication/required-actions")}
+    for action in realm.get("requiredActions", []):
+        have = actions.get(action["alias"])
+        if have is None or have["enabled"] == action["enabled"]:
+            continue
+        state = "включить" if action["enabled"] else "выключить"
+        plan.append(f"обязательное действие {action['alias']}: {state}")
+        if apply:
+            kc.call(
+                "PUT",
+                f"{admin}/authentication/required-actions/{action['alias']}",
+                {**have, "enabled": action["enabled"]},
+            )
+
+
 def _user_id(
     kc: Keycloak,
     admin: str,
@@ -145,7 +188,7 @@ def _user_id(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--apply", action="store_true", help="добавить, а не только показать")
+    parser.add_argument("--apply", action="store_true", help="изменить, а не только показать")
     parser.add_argument(
         "--url", default=os.environ.get("KEYCLOAK_URL", "http://localhost:8080/auth")
     )
@@ -165,9 +208,9 @@ def main() -> int:
         print(f"Keycloak недоступен по адресу {args.url}: {exc.reason}")
         return 1
     if not plan:
-        print("Keycloak совпадает с realm — добавлять нечего.")
+        print("Keycloak совпадает с realm — менять нечего.")
         return 0
-    print("Добавлено:" if args.apply else "Добавит (запустите с --apply):")
+    print("Сделано:" if args.apply else "Сделает (запустите с --apply):")
     for item in plan:
         print(" -", item)
     return 0

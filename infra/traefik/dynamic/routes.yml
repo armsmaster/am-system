@@ -18,6 +18,12 @@ http:
       service: portfolio
       entryPoints: [web]
 
+    identity-api:
+      rule: PathPrefix(`/api/identity`)
+      middlewares: [strip-identity]
+      service: identity
+      entryPoints: [web]
+
     refdata-api:
       rule: PathPrefix(`/api/refdata`)
       middlewares: [strip-refdata]
@@ -124,6 +130,9 @@ http:
     strip-audit:
       stripPrefix:
         prefixes: ["/api/audit"]
+    strip-identity:
+      stripPrefix:
+        prefixes: ["/api/identity"]
     strip-mfe-admin:
       stripPrefix:
         prefixes: ["/mfe/admin"]
@@ -189,6 +198,12 @@ http:
     audit:
       loadBalancer:
         servers: [{ url: "http://audit:8000" }]
+        healthCheck:
+          path: /health
+          interval: 10s
+    identity:
+      loadBalancer:
+        servers: [{ url: "http://identity:8000" }]
         healthCheck:
           path: /health
           interval: 10s

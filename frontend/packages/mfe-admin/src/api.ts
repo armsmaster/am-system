@@ -109,3 +109,59 @@ export function portfolioApi(client: ApiClient) {
 }
 
 export type PortfolioApi = ReturnType<typeof portfolioApi>;
+
+// --- Пользователи: сервис входа (решение 170) ---
+
+const IDENTITY = '/api/identity';
+
+export type UserStatus = 'active' | 'pending' | 'expired' | 'blocked';
+export type InviteTtl = 1 | 3 | 7;
+
+/** Пользователь в Keycloak: ФИО, роли, статус входа. */
+export interface Person {
+  readonly id: string;
+  readonly username: string;
+  readonly first_name: string;
+  readonly last_name: string;
+  readonly full_name: string;
+  readonly email: string | null;
+  readonly enabled: boolean;
+  readonly roles: readonly Role[];
+  readonly status: UserStatus;
+  /** Срок открытой ссылки для входа: не использована и не заменена новой. */
+  readonly invite_expires_at: string | null;
+  readonly last_login_at: string | null;
+}
+
+export interface NewPerson {
+  readonly username: string;
+  readonly first_name: string;
+  readonly last_name: string;
+  readonly email: string | null;
+  readonly roles: readonly Role[];
+  readonly ttl_days: InviteTtl;
+}
+
+/** Ссылка для входа: секрет показываем один раз, в системе хранится только его отпечаток. */
+export interface InviteLink {
+  readonly token: string;
+  readonly expires_at: string;
+}
+
+export function identityApi(client: ApiClient) {
+  const user = (id: string) => `${IDENTITY}/users/${encodeURIComponent(id)}`;
+  return {
+    people: () => client.get<Person[]>(`${IDENTITY}/users`),
+    create: (body: NewPerson) => client.post<{ user: Person; invite: InviteLink }>(`${IDENTITY}/users`, body),
+    setRoles: (id: string, roles: readonly Role[]) => client.put<Person>(`${user(id)}/roles`, { roles }),
+    setEnabled: (id: string, enabled: boolean) => client.put<Person>(`${user(id)}/enabled`, { enabled }),
+    invite: (id: string, ttlDays: InviteTtl) => client.post<InviteLink>(`${user(id)}/invite`, { ttl_days: ttlDays }),
+  };
+}
+
+export type IdentityApi = ReturnType<typeof identityApi>;
+
+/** Адрес ссылки для входа: страница приглашения в shell. */
+export function inviteUrl(token: string, origin: string = window.location.origin): string {
+  return `${origin}/invite/${encodeURIComponent(token)}`;
+}

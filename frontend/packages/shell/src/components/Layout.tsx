@@ -2,9 +2,12 @@ import { ROLE_LABELS, type Session } from '@am/platform';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink, useLocation } from 'react-router';
 
+import { ChangePassword } from '../auth/ChangePassword';
+
 import { THEMES, useCollapsed, useTheme, type Theme } from '../preferences';
 import { GROUPS, SECTIONS, sectionAt, type Access } from '../sections';
 import { Icon, type IconName } from './Icon';
+import { Logo } from './Logo';
 
 /**
  * Каркас приложения: боковая панель с разделами по группам, верхняя панель с тем,
@@ -91,35 +94,6 @@ function Sidebar({
   );
 }
 
-/** Знак AM System — тот же, что во вкладке браузера (assets/favicon.svg). */
-function Logo() {
-  return (
-    <svg className="brand-mark" viewBox="0 0 64 64" width={28} height={28} aria-hidden="true">
-      <defs>
-        <linearGradient id="am-logo-bg" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#3b82f6" />
-          <stop offset="1" stopColor="#1e3a8a" />
-        </linearGradient>
-      </defs>
-      <rect width="64" height="64" rx="15" fill="url(#am-logo-bg)" />
-      <g fill="#fff" fillOpacity={0.3}>
-        <rect x="13" y="38" width="9" height="13" rx="2.5" />
-        <rect x="27.5" y="31" width="9" height="20" rx="2.5" />
-        <rect x="42" y="24" width="9" height="27" rx="2.5" />
-      </g>
-      <path
-        d="M12 36 25.5 25l9 6.5L49 17"
-        fill="none"
-        stroke="#fff"
-        strokeWidth={5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <circle cx="49.5" cy="16.5" r="5" fill="#fff" />
-    </svg>
-  );
-}
-
 function Topbar({
   session,
   pathname,
@@ -192,6 +166,7 @@ export function initials(name: string): string {
 
 function UserMenu({ session }: { readonly session: Session }) {
   const [open, setOpen] = useState(false);
+  const [changing, setChanging] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const roles = [...session.roles].map((role) => ROLE_LABELS[role]).join(', ');
 
@@ -233,12 +208,24 @@ function UserMenu({ session }: { readonly session: Session }) {
             <div>{session.displayName}</div>
             <div className="muted">{roles || 'Ролей нет'}</div>
           </div>
+          <button
+            type="button"
+            className="popover-item"
+            onClick={() => {
+              setOpen(false);
+              setChanging(true);
+            }}
+          >
+            <Icon name="key" size={16} />
+            Сменить пароль
+          </button>
           <button type="button" className="popover-item" onClick={() => session.logout()}>
             <Icon name="logout" size={16} />
             Выйти
           </button>
         </div>
       )}
+      {changing && <ChangePassword session={session} onClose={() => setChanging(false)} />}
     </div>
   );
 }

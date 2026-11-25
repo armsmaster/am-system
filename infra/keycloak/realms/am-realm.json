@@ -15,6 +15,9 @@
   "ssoSessionMaxLifespan": 36000,
   "ssoSessionIdleTimeoutRememberMe": 604800,
   "ssoSessionMaxLifespanRememberMe": 2592000,
+  "offlineSessionIdleTimeout": 604800,
+  "offlineSessionMaxLifespanEnabled": true,
+  "offlineSessionMaxLifespan": 2592000,
   "internationalizationEnabled": true,
   "supportedLocales": [
     "ru",
@@ -70,7 +73,7 @@
       "protocol": "openid-connect",
       "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
-      "directAccessGrantsEnabled": false,
+      "directAccessGrantsEnabled": true,
       "serviceAccountsEnabled": false,
       "frontchannelLogout": true,
       "redirectUris": [
@@ -118,6 +121,20 @@
       "publicClient": false,
       "clientAuthenticatorType": "client-secret",
       "secret": "portfolio-dev-secret",
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true
+    },
+    {
+      "clientId": "am-identity",
+      "name": "Сервис identity: пользователи и пароли",
+      "description": "Служебная учётная запись: заводит пользователей, назначает роли, задаёт пароли и завершает сессии.",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "identity-dev-secret",
       "protocol": "openid-connect",
       "standardFlowEnabled": false,
       "implicitFlowEnabled": false,
@@ -337,7 +354,8 @@
         }
       ],
       "realmRoles": [
-        "admin"
+        "admin",
+        "offline_access"
       ]
     },
     {
@@ -355,7 +373,8 @@
         }
       ],
       "realmRoles": [
-        "trading"
+        "trading",
+        "offline_access"
       ]
     },
     {
@@ -373,7 +392,8 @@
         }
       ],
       "realmRoles": [
-        "operations"
+        "operations",
+        "offline_access"
       ]
     },
     {
@@ -391,7 +411,8 @@
         }
       ],
       "realmRoles": [
-        "risk"
+        "risk",
+        "offline_access"
       ]
     },
     {
@@ -402,6 +423,18 @@
         "realm-management": [
           "view-users",
           "query-users"
+        ]
+      }
+    },
+    {
+      "username": "service-account-am-identity",
+      "enabled": true,
+      "serviceAccountClientId": "am-identity",
+      "clientRoles": {
+        "realm-management": [
+          "view-users",
+          "query-users",
+          "manage-users"
         ]
       }
     },
@@ -454,6 +487,120 @@
       "realmRoles": [
         "fund_reader"
       ]
+    }
+  ],
+  "requiredActions": [
+    {
+      "alias": "TERMS_AND_CONDITIONS",
+      "name": "Terms and Conditions",
+      "providerId": "TERMS_AND_CONDITIONS",
+      "enabled": false,
+      "defaultAction": false,
+      "priority": 20
+    },
+    {
+      "alias": "UPDATE_PROFILE",
+      "name": "Update Profile",
+      "providerId": "UPDATE_PROFILE",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 40
+    },
+    {
+      "alias": "VERIFY_EMAIL",
+      "name": "Verify Email",
+      "providerId": "VERIFY_EMAIL",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 50
+    },
+    {
+      "alias": "CONFIGURE_TOTP",
+      "name": "Configure OTP",
+      "providerId": "CONFIGURE_TOTP",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 54
+    },
+    {
+      "alias": "UPDATE_PASSWORD",
+      "name": "Update Password",
+      "providerId": "UPDATE_PASSWORD",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 57
+    },
+    {
+      "alias": "delete_account",
+      "name": "Delete Account",
+      "providerId": "delete_account",
+      "enabled": false,
+      "defaultAction": false,
+      "priority": 60
+    },
+    {
+      "alias": "UPDATE_EMAIL",
+      "name": "Update Email",
+      "providerId": "UPDATE_EMAIL",
+      "enabled": false,
+      "defaultAction": false,
+      "priority": 70
+    },
+    {
+      "alias": "webauthn-register",
+      "name": "Webauthn Register",
+      "providerId": "webauthn-register",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 80
+    },
+    {
+      "alias": "webauthn-register-passwordless",
+      "name": "Webauthn Register Passwordless",
+      "providerId": "webauthn-register-passwordless",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 90
+    },
+    {
+      "alias": "VERIFY_PROFILE",
+      "name": "Verify Profile",
+      "providerId": "VERIFY_PROFILE",
+      "enabled": false,
+      "defaultAction": false,
+      "priority": 100
+    },
+    {
+      "alias": "delete_credential",
+      "name": "Delete Credential",
+      "providerId": "delete_credential",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 110
+    },
+    {
+      "alias": "idp_link",
+      "name": "Linking Identity Provider",
+      "providerId": "idp_link",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 120
+    },
+    {
+      "alias": "CONFIGURE_RECOVERY_AUTHN_CODES",
+      "name": "Recovery Authentication Codes",
+      "providerId": "CONFIGURE_RECOVERY_AUTHN_CODES",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 130
+    },
+    {
+      "alias": "update_user_locale",
+      "name": "Update User Locale",
+      "providerId": "update_user_locale",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 1000
     }
   ]
 }

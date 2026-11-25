@@ -37,10 +37,10 @@ make up
 
 Если realm Keycloak менялся, пересоздайте данные: `make reset && make up`.
 Keycloak импортирует realm только в пустую базу. Чтобы не терять данные,
-допишите недостающие роли, клиентов и пользователей в работающий Keycloak:
-`make keycloak-sync` покажет, чего не хватает, а
-`uv run python scripts/keycloak_sync.py --apply` добавит. Существующее скрипт
-не меняет.
+допишите недостающее в работающий Keycloak: `make keycloak-sync` покажет, чего
+не хватает, а `uv run python scripts/keycloak_sync.py --apply` добавит роли,
+клиентов, пользователей и приведёт к realm настройки входа (решение 170).
+Ничего не удаляет.
 
 Шлюз следит за файлами маршрутов в `infra/traefik/dynamic/`, но на Docker
 Desktop под Windows события изменения файлов до контейнера не доходят.
@@ -102,10 +102,11 @@ Desktop под Windows события изменения файлов до ко�
    realm, Caddy получает сертификат.
 
 5. Откройте `https://am.example.ru`, войдите как `admin` с временным паролем —
-   Keycloak попросит сменить его. Пользователей заведите в консоли Keycloak
-   `https://am.example.ru/auth/admin` (`kcadmin`, пароль —
-   `KEYCLOAK_ADMIN_PASSWORD` в `.env`), доступ к фондам выдайте в разделе
-   «Администрирование → Доступы».
+   страница входа попросит задать свой. Пользователей заведите в разделе
+   «Администрирование → Пользователи»: каждому система выдаст ссылку, по
+   которой он задаст пароль. Доступ к фондам выдайте в «Администрирование →
+   Доступы». Консоль Keycloak — `https://am.example.ru/auth/admin` (`kcadmin`,
+   пароль — `KEYCLOAK_ADMIN_PASSWORD` в `.env`).
 
 Секреты скриптов цен, сделок и выписок — `PRICE_FEED_SECRET`,
 `TRADE_FEED_SECRET`, `STATEMENT_FEED_SECRET` в `.env`: передайте их авторам
@@ -123,17 +124,24 @@ Desktop под Windows события изменения файлов до ко�
 docker compose exec -T postgres pg_dumpall -U postgres | gzip > backup-$(date +%F).sql.gz
 ```
 
-**Срок входа (решение 162).** На странице входа — «Запомнить меня»: с ней сессия
-живёт неделю с последней активности, но не больше 30 дней; без неё — 30 минут
+**Вход (решения 162, 170).** Вход — на странице приложения. «Запомнить меня» —
+неделя с последней активности, но не больше 30 дней; без галочки — 30 минут
 без запросов, не больше 10 часов. Keycloak читает realm только при первом
-запуске, поэтому на уже работающей машине настройку включает команда:
+запуске. Если машину подняли до решения 170, донастройте Keycloak в консоли
+`/auth/admin`, realm `am`:
 
-```bash
-docker compose exec keycloak sh -c '/opt/keycloak/bin/kcadm.sh config credentials --server http://localhost:8080/auth --realm master --user "$KC_BOOTSTRAP_ADMIN_USERNAME" --password "$KC_BOOTSTRAP_ADMIN_PASSWORD" && /opt/keycloak/bin/kcadm.sh update realms/am -s rememberMe=true -s ssoSessionIdleTimeoutRememberMe=604800 -s ssoSessionMaxLifespanRememberMe=2592000'
-```
+1. Clients → `am-web` → Capability config: включите Direct access grants.
+2. Clients → Create client: `am-identity`, Client authentication — вкл.,
+   Service accounts roles — вкл., остальные потоки — выкл. Вкладка
+   Credentials: скопируйте Client secret в `.env` как `IDENTITY_KEYCLOAK_SECRET`.
+   Вкладка Service accounts roles → Assign role → роли клиента
+   `realm-management`: `view-users`, `query-users`, `manage-users`.
+3. Realm settings → Sessions: Offline Session Idle — 7 дней, Offline Session
+   Max Limited — вкл., Offline Session Max — 30 дней.
+4. Authentication → Required actions: выключите Verify Profile.
+5. Authentication → Policies → Password policy: Minimum length 10, Not username.
 
-То же вручную — в консоли Keycloak: «Realm settings → Login → Remember me» и
-«Realm settings → Sessions → SSO Session Idle / Max Remember Me».
+Затем `docker compose up -d --build`.
 
 Чего режим ВМ не делает: не закрывает консоль Keycloak `/auth/admin` от
 интернета и не включает OTP — это решения о доступе пользователей (вопрос 54
@@ -178,6 +186,8 @@ libs/am-common/     общая библиотека: настройки, ток�
 libs/am-quant/      расчёты по облигациям: доходность, метрики, спреды флоатеров и линкеров
 services/Dockerfile общий образ Python-сервисов
 services/portfolio/ портфели, фонды, счета, доступы
+services/identity/  вход на своей странице поверх Keycloak, «Запомнить меня», приглашения,
+                    пользователи и роли
 services/audit/     журнал действий пользователей
 services/refdata/   справочник: бумаги из MOEX ISS, версии, эмитенты, рейтинги, классификаторы, календарь
 services/booking/   сделки с версиями, операции фонда и переводы, позиции по двум датам с лотами FIFO,
@@ -195,8 +205,8 @@ services/limits/    наборы лимитов инвестиционной п�
 frontend/
   packages/platform/  контракт shell ↔ микрофронтенды, API-клиент
   packages/ui/        общие помощники интерфейса: загрузка данных, действия, ошибки
-  packages/shell/     оболочка: вход, навигация, общие стили
-  packages/mfe-admin/ администрирование: портфели, счета, доступы
+  packages/shell/     оболочка: страница входа, приглашение, смена пароля, навигация, общие стили
+  packages/mfe-admin/ администрирование: портфели, счета, тарифы, пользователи, доступы
   packages/mfe-audit/ журнал действий
   packages/mfe-refdata/ справочник: бумаги, эмитенты, рейтинги, классификаторы, календарь
   packages/mfe-marketdata/ цены: обзор с разбросом, карточка с графиком и расчётом, правило, лента скрипта

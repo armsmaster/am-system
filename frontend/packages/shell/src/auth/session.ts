@@ -1,47 +1,64 @@
 import { parseRoles, type Session } from '@am/platform';
-import type Keycloak from 'keycloak-js';
 
-/** Часть keycloak-js, которой пользуется shell. */
-export type KeycloakClient = Pick<
-  Keycloak,
-  'token' | 'tokenParsed' | 'updateToken' | 'login' | 'logout'
->;
+import { AuthError, identity, type IdentityApi, type SessionData } from './identity';
 
-/** Токен обновляется, если до его истечения осталось меньше этого числа секунд. */
-const MIN_TOKEN_VALIDITY_SECONDS = 30;
+/** Токен обновляем заранее: за 30 секунд до истечения. */
+const MARGIN_MS = 30_000;
 
-export function sessionFromKeycloak(keycloak: KeycloakClient): Session {
-  const claims = keycloak.tokenParsed ?? {};
-  const username = stringClaim(claims.preferred_username) ?? stringClaim(claims.sub) ?? '';
-  const fullName = [stringClaim(claims.given_name), stringClaim(claims.family_name)]
-    .filter(Boolean)
-    .join(' ');
+export interface SessionOptions {
+  readonly api?: IdentityApi;
+  readonly now?: () => number;
+  /** Сессия закончилась — перезагрузка покажет страницу входа; после выхода — на главную. */
+  readonly location?: Pick<Location, 'reload' | 'assign'>;
+}
+
+/**
+ * Сессия для shell и микрофронтендов: access token в памяти, обновление по cookie
+ * через сервис входа. Одновременные запросы ждут одно обновление.
+ */
+export function createSession(
+  initial: SessionData,
+  { api = identity, now = Date.now, location = window.location }: SessionOptions = {},
+): Session {
+  let token = initial.access_token;
+  let expiresAt = now() + initial.expires_in * 1000;
+  let pending: Promise<string> | null = null;
+
+  async function renew(): Promise<string> {
+    try {
+      const next = await api.refresh();
+      token = next.access_token;
+      expiresAt = now() + next.expires_in * 1000;
+      return token;
+    } catch (error) {
+      if (error instanceof AuthError && error.status === 401) {
+        location.reload();
+      }
+      throw error;
+    } finally {
+      pending = null;
+    }
+  }
 
   return {
-    username,
-    displayName: fullName || username,
-    roles: parseRoles(claims.realm_access?.roles),
+    username: initial.user.username,
+    displayName: initial.user.display_name,
+    roles: parseRoles(initial.user.roles),
 
-    async getAccessToken() {
-      try {
-        await keycloak.updateToken(MIN_TOKEN_VALIDITY_SECONDS);
-      } catch (error) {
-        // Сессия в Keycloak закончилась — отправляем на повторный вход.
-        await keycloak.login();
-        throw error;
+    getAccessToken() {
+      if (now() < expiresAt - MARGIN_MS) {
+        return Promise.resolve(token);
       }
-      if (!keycloak.token) {
-        throw new Error('Keycloak returned no access token');
-      }
-      return keycloak.token;
+      pending ??= renew();
+      return pending;
     },
 
     logout() {
-      void keycloak.logout({ redirectUri: window.location.origin });
+      // Сервис недоступен — cookie останется, но страница всё равно уйдёт на вход.
+      void api
+        .logout()
+        .catch(() => undefined)
+        .finally(() => location.assign('/'));
     },
   };
-}
-
-function stringClaim(value: unknown): string | undefined {
-  return typeof value === 'string' && value !== '' ? value : undefined;
 }

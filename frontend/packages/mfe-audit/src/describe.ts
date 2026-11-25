@@ -50,6 +50,14 @@ const ACTIONS: Readonly<Record<string, string>> = {
   'breach.eliminated': 'Устранено нарушение лимита',
   'breach.reviewed': 'Записан вид нарушения',
   'breach.extended': 'Продлён срок устранения нарушения',
+  'user.created': 'Заведён пользователь',
+  'user.invited': 'Выдана ссылка для входа',
+  'user.password_set': 'Пользователь задал пароль',
+  'user.password_changed': 'Пользователь сменил пароль',
+  'user.logged_in': 'Вход в систему',
+  'user.roles_changed': 'Изменены роли пользователя',
+  'user.blocked': 'Пользователь заблокирован',
+  'user.unblocked': 'Пользователь разблокирован',
 };
 
 const FIELDS: Readonly<Record<string, string>> = {
@@ -144,11 +152,21 @@ const FIELDS: Readonly<Record<string, string>> = {
   deadline: 'Срок устранения',
   decision: 'Решение',
   eliminated_on: 'Устранено',
+  username: 'Логин',
+  full_name: 'ФИО',
+  email: 'Email',
+  roles: 'Роли',
+  enabled: 'Вход разрешён',
+  via: 'Как',
+  remember: 'Запомнить меня',
+  expires_at: 'Ссылка действует до',
 };
 
 /** Значения, которые зависят от поля: «active» у нарушения — не «действует». */
 const FIELD_VALUES: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   breach_kind: { active: 'активное', passive: 'пассивное' },
+  roles: { trading: 'трейдинг', operations: 'сопровождение', risk: 'риск-менеджмент', admin: 'администратор' },
+  via: { invite: 'по ссылке', temporary: 'вместо временного' },
 };
 
 /** Значения перечислений — словами. */
@@ -207,6 +225,7 @@ const VALUES: Readonly<Record<string, string>> = {
 const ORDER = Object.keys(FIELDS);
 
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const ISO_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
 
 export interface Change {
   readonly field: string;
@@ -294,6 +313,10 @@ export function objectLabel(event: AuditEvent): string {
   if (data.user && data.portfolio) {
     return `${data.user.username ?? data.user.subject}: ${data.portfolio.code}`;
   }
+  if (data.user) {
+    // События сервиса входа: пользователь сам и есть объект.
+    return data.user.username ?? data.user.subject ?? event.entity_id;
+  }
   const state = data.after ?? data.before;
   return typeof state?.code === 'string' ? state.code : event.entity_id;
 }
@@ -338,6 +361,9 @@ function show(value: unknown, key?: string): string {
   if (typeof value === 'boolean') {
     return value ? 'да' : 'нет';
   }
+  if (Array.isArray(value)) {
+    return value.length === 0 ? '—' : value.map((item) => show(item, key)).join(', ');
+  }
   if (typeof value === 'object') {
     // Вложенные условия, например параметры флоатера: «ставка: RUONIA; маржа (бп): 130».
     return Object.entries(value)
@@ -347,6 +373,9 @@ function show(value: unknown, key?: string): string {
   const date = ISO_DATE.exec(String(value));
   if (date) {
     return `${date[3]}.${date[2]}.${date[1]}`;
+  }
+  if (ISO_DATE_TIME.test(String(value))) {
+    return formatTime(String(value));
   }
   return VALUES[String(value)] ?? String(value);
 }
