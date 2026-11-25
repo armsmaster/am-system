@@ -206,6 +206,15 @@ describe('ResultsPage (decision 167)', () => {
     expect(rows()).toContain('ОФЗ 26238 SU26238RMFS40+95 400000');
   });
 
+  it('shows what the fund owes: accrued expenses and commissions', async () => {
+    const api = fakeApi();
+    api.resultSummary.mockResolvedValue(resultSummary({ expenses_owed: '20000.00', fees_owed: '12345.67' }));
+    renderBooking(api, PAGE);
+    await screen.findByRole('table', { name: 'Финансовый результат' });
+
+    expect(tiles().slice(4)).toEqual(['Расходы к оплате: 20 000 ₽', 'Комиссии от СЧА к выплате: 12 346 ₽']);
+  });
+
   it('keeps the portfolio and the date in the address', async () => {
     const user = userEvent.setup();
     const api = renderBooking(fakeApi(), '/booking/results');

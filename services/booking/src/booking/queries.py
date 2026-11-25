@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from decimal import ROUND_HALF_UP, Decimal
@@ -16,9 +16,17 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from am_common.calendar import is_trading_day
+from am_common.calendar import add_trading_days, is_trading_day
 from am_common.clock import MOSCOW
-from booking.clients import MarketdataClient, Metrics, PortfolioRef, physical_under
+from am_quant.kalman import NAV_SETTINGS, kalman_trend
+from booking.clients import (
+    MarketdataClient,
+    Metrics,
+    PortfolioRef,
+    RefdataClient,
+    ServiceUnavailableError,
+    physical_under,
+)
 from booking.repository import Repository, Snapshot
 from booking.roll import (
     HUNDRED,
@@ -564,6 +572,9 @@ class ResultSummary:
     waiting_since: date | None
     periods: list[PeriodResult]
     lines: list[SummaryLine]
+    # Начислено и не оплачено на дату отчёта (решение 168).
+    expenses_owed: Decimal = ZERO
+    fees_owed: Decimal = ZERO
 
 
 async def result_summary(
@@ -600,10 +611,10 @@ async def result_summary(
             )
     for period in periods:
         _fill(period, daily, by_instrument)
+    on_day = [state for snapshot, state in states if snapshot.day == day]
     held = {
         holding.instrument_id
-        for snapshot, state in states
-        if snapshot.day == day
+        for state in on_day
         for holding in state.holdings.values()
         if holding.trade_quantity
     }
@@ -617,6 +628,8 @@ async def result_summary(
         portfolios=physical,
         waiting_since=min(waiting.values(), default=None),
         periods=periods,
+        expenses_owed=sum((s.expenses for s in on_day), ZERO),
+        fees_owed=sum((s.fees_owed for s in on_day), ZERO),
         lines=sorted(
             (SummaryLine(i, names[i].secid, names[i].short_name, i in held) for i in instruments),
             key=lambda line: line.secid,
@@ -673,6 +686,167 @@ def _days(states: Iterable[tuple[Snapshot, State]]) -> list[ResultDay]:
 
 
 # --- СЧА фонда ----------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class NavPoint:
+    """День графика СЧА (решение 168): стоимость пая, сглаженная, сравнение."""
+
+    day: date
+    nav: Decimal
+    units: Decimal
+    unit_price: Decimal | None
+    smoothed: Decimal | None  # уровень фильтра Калмана
+    benchmark: Decimal | None  # цена LQDT для оценки
+
+
+@dataclass(frozen=True, slots=True)
+class NavForecast:
+    day: date
+    value: Decimal
+    std: Decimal | None  # стандартное отклонение прогноза; мало истории — None
+    trend: Decimal  # прирост стоимости пая за день
+
+
+@dataclass(frozen=True, slots=True)
+class NavHistory:
+    fund: PortfolioRef
+    first_day: date | None
+    today: date
+    waiting_since: date | None
+    benchmark: str | None  # код бумаги сравнения; нет в справочнике — None
+    points: list[NavPoint]
+    forecast: NavForecast | None
+
+
+async def nav_history(
+    session: AsyncSession,
+    visible: Mapping[UUID, PortfolioRef],
+    fund_id: UUID,
+    period: tuple[date | None, date | None],
+    *,
+    now: datetime,
+    marketdata: MarketdataClient,
+    refdata: RefdataClient,
+    benchmark: str,
+) -> NavHistory | None:
+    """Стоимость пая и СЧА за период (по умолчанию — вся история по сегодня), уровень
+    и прогноз фильтра Калмана — по всей истории, цена бумаги сравнения за те же дни."""
+    fund = visible.get(fund_id)
+    if fund is None or not fund.is_fund:
+        return None
+    repo = Repository(session)
+    first_day = await repo.first_day(fund_id)
+    today = now.astimezone(MOSCOW).date()
+    view = (
+        None
+        if first_day is None
+        else await nav(
+            session, visible, fund_id, (first_day, today), now=now, marketdata=marketdata
+        )
+    )
+    days = [] if view is None else view.days
+    try:
+        # Праздники — из календаря торгов; справочник недоступен — только выходные.
+        exceptions = await refdata.calendar_around(first_day or today, today + timedelta(days=14))
+    except ServiceUnavailableError:
+        exceptions = {}
+    smoothed, forecast = smooth_unit_price(days, exceptions)
+    since, till = period
+    shown = [
+        d for d in days if (since is None or d.day >= since) and (till is None or d.day <= till)
+    ]
+    prices, found_benchmark = await _benchmark(refdata, marketdata, benchmark, shown)
+    waiting = await repo.waiting([fund.id])
+    return NavHistory(
+        fund=fund,
+        first_day=first_day,
+        today=today,
+        waiting_since=waiting.get(fund.id),
+        benchmark=found_benchmark,
+        points=[
+            NavPoint(d.day, d.nav, d.units, d.unit_price, smoothed.get(d.day), prices.get(d.day))
+            for d in shown
+        ],
+        forecast=forecast,
+    )
+
+
+def smooth_unit_price(
+    days: Sequence[NavDay], exceptions: Mapping[date, bool]
+) -> tuple[dict[date, Decimal], NavForecast | None]:
+    """Сглаженная стоимость пая и прогноз на следующий торговый день (решение 169).
+
+    Стоимость пая растёт по дате расчётов T+1: в пятницу — за три дня, в выходные — нет.
+    Поэтому фильтр идёт только по торговым дням: время — торговые сессии, начисление —
+    дни от первой даты расчётов. Комиссии от СЧА начисляются за каждый календарный
+    день и известны точно: их накопленную сумму на пай прибавляем к стоимости пая до
+    фильтра и вычитаем после. В выходные и праздники сглаженная — уровень последнего
+    торгового дня за вычетом комиссий за прошедшие с него дни.
+    """
+
+    def settle(day: date) -> date:
+        return add_trading_days(day + timedelta(days=1), 0, exceptions)
+
+    cumulative: dict[date, Decimal] = {}
+    total = ZERO
+    for found in days:
+        if found.units:
+            total += sum(found.fees_today.values(), ZERO) / found.units
+        cumulative[found.day] = total
+    observed = [d for d in days if d.unit_price is not None and is_trading_day(d.day, exceptions)]
+    if not observed:
+        return {}, None
+    first, last = observed[0].day, days[-1].day
+    target = settle(last)  # следующий торговый день после последнего дня с расчётом
+    sessions: dict[date, int] = {}
+    count, current = 0, first
+    while current <= target:
+        if is_trading_day(current, exceptions):
+            count += 1
+            sessions[current] = count
+        current += timedelta(days=1)
+    filtered = kalman_trend(
+        [
+            (Decimal(sessions[d.day]), cast(Decimal, d.unit_price) + cumulative[d.day])
+            for d in observed
+        ],
+        NAV_SETTINGS,
+        [Decimal((settle(d.day) - settle(first)).days) for d in observed],
+    )
+    levels = {d.day: p.level for d, p in zip(observed, filtered.points, strict=True)}
+    smoothed: dict[date, Decimal] = {}
+    level: Decimal | None = None
+    for found in days:
+        level = levels.get(found.day, level)
+        if level is not None:
+            smoothed[found.day] = level - cumulative[found.day]
+    latest = observed[-1].day
+    ahead = filtered.forecast(
+        Decimal(sessions[target] - sessions[latest]),
+        Decimal((settle(target) - settle(latest)).days),
+    )
+    # Комиссии до прогнозного дня — по ставке последнего дня, за каждый календарный день.
+    final = days[-1]
+    per_day = sum(final.fees_today.values(), ZERO) / final.units if final.units else ZERO
+    value = ahead.value - cumulative[last] - per_day * (target - last).days
+    return smoothed, NavForecast(target, value, ahead.std, filtered.points[-1].trend)
+
+
+async def _benchmark(
+    refdata: RefdataClient, marketdata: MarketdataClient, secid: str, days: Sequence[NavDay]
+) -> tuple[dict[date, Decimal], str | None]:
+    """Цены бумаги сравнения за дни графика; нет бумаги или сервиса — пусто."""
+    if not days:
+        return {}, None
+    try:
+        instrument_id = (await refdata.codes()).get(secid.upper())
+        if instrument_id is None:
+            return {}, None
+        marks = await marketdata.marks(instrument_id, days[0].day, days[-1].day)
+    except ServiceUnavailableError:
+        return {}, None
+    return {day: m.price for day, m in marks.items() if m.price is not None}, secid
 
 
 @dataclass(frozen=True, slots=True)

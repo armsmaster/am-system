@@ -1,112 +1,298 @@
-import { fireEvent, screen, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { FEE_RATES, fakeApi, nav, PORTFOLIOS, refused, renderBooking } from '../test/fixtures';
+import { fakeApi, navHistory, refused, renderBooking } from '../test/fixtures';
 
-const PAGE = '/booking/nav?fund=p-fund&from=2026-11-29&till=2026-11-30';
+// График рисует canvas — в jsdom его нет; что именно рисуем, проверяет NavChart.test.
+const charts = vi.hoisted(() => ({ titles: [] as string[] }));
+vi.mock('lightweight-charts', () => ({
+  LineSeries: 'line',
+  CrosshairMode: { Magnet: 1 },
+  LineStyle: { Solid: 0, Dotted: 1, Dashed: 2 },
+  createChart: () => ({
+    addSeries: (_kind: string, options: { title: string }) => {
+      charts.titles.push(options.title);
+      return { setData: () => undefined };
+    },
+    timeScale: () => ({ fitContent: () => undefined }),
+    remove: () => undefined,
+  }),
+}));
 
-describe('NavPage', () => {
-  it('shows NAV, units and unit price by day and the composition', async () => {
-    const fake = fakeApi();
-    fake.feeRates.mockResolvedValue([
-      FEE_RATES[0]!,
-      { ...FEE_RATES[0]!, kind: 'specdep', rate: '0.100000', comment: null },
-    ]);
-    const api = renderBooking(fake, PAGE);
+const PAGE = '/booking/nav?fund=p-fund';
 
-    const rows = within(await screen.findByRole('table', { name: 'СЧА по дням' })).getAllByRole('row');
-    expect(api.nav).toHaveBeenCalledWith('p-fund', '2026-11-29', '2026-11-30');
-    expect(rows[2]).toHaveTextContent('30.11.2026100 045 447,94100 0001 000,454 111,6320 552,06');
-    const composition = screen.getByLabelText('Состав СЧА на 30.11.2026');
-    expect(composition).toHaveTextContent('деньги на счетах71 999 500,00 ₽бумаги по чистой цене15 786 000,00 ₽');
-    expect(composition).toHaveTextContent('− комиссии от СЧА к выплате20 552,06 ₽СЧА на 30.11.2026100 045 447,94 ₽');
-    expect(composition).not.toHaveTextContent('требования');
-    const rates = within(screen.getByRole('table', { name: 'Ставки комиссий' })).getAllByRole('row');
-    expect(rates[1]).toHaveTextContent('вознаграждение УК1,526.11.2026ПДУ п. 92ops');
-    expect(rates[2]).toHaveTextContent('спецдепозитарий0,126.11.2026—ops');
-    // Трейдинг ставки не вводит.
-    expect(screen.queryByRole('form', { name: 'Новая ставка' })).not.toBeInTheDocument();
+function cards(): string[] {
+  return within(screen.getByLabelText('Комиссии и сравнение'))
+    .getAllByRole('term')
+    .map((dt) => `${dt.textContent}: ${dt.nextElementSibling?.textContent}`);
+}
+
+function lastChart(): string[] {
+  return [...charts.titles];
+}
+
+describe('NavPage (decision 168)', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    charts.titles.length = 0;
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-12-03T09:00:00Z'));
   });
 
-  it('sets a new rate', async () => {
-    const user = userEvent.setup();
-    const api = renderBooking(fakeApi(), PAGE, true);
-
-    const form = await screen.findByRole('form', { name: 'Новая ставка' });
-    await user.selectOptions(within(form).getByLabelText('Комиссия'), 'specdep');
-    await user.type(within(form).getByLabelText('Ставка, % годовых'), '0,1');
-    fireEvent.change(within(form).getByLabelText('Действует с'), { target: { value: '2026-12-01' } });
-    await user.type(within(form).getByLabelText('Основание'), ' Договор 7 ');
-    await user.click(within(form).getByRole('button', { name: 'Сохранить ставку' }));
-
-    expect(api.setFeeRate).toHaveBeenCalledWith('p-fund', {
-      kind: 'specdep',
-      rate: '0.1',
-      valid_from: '2026-12-01',
-      comment: 'Договор 7',
-    });
-    expect(api.feeRates).toHaveBeenCalledTimes(2);
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
-  it('shows a refused rate', async () => {
-    const user = userEvent.setup();
-    const api = fakeApi();
-    api.setFeeRate.mockRejectedValue(refused('У фонда OPIF1 не назначен казначейский портфель.'));
-    api.feeRates.mockResolvedValue([]);
-    renderBooking(api, PAGE, true);
-
-    expect(await screen.findByText(/Ставок нет/)).toBeInTheDocument();
-    const form = screen.getByRole('form', { name: 'Новая ставка' });
-    await user.type(within(form).getByLabelText('Ставка, % годовых'), '1.5');
-    await user.click(within(form).getByRole('button', { name: 'Сохранить ставку' }));
-    expect(await within(form).findByRole('alert')).toHaveTextContent('казначейский портфель');
-    expect(api.setFeeRate).toHaveBeenCalledWith('p-fund', expect.objectContaining({ kind: 'management', comment: null }));
-  });
-
-  it('changes the fund and the period', async () => {
+  it('shows the unit price now and the forecast for tomorrow, biggest of all', async () => {
     const api = renderBooking(fakeApi(), PAGE);
 
-    await screen.findByRole('table', { name: 'СЧА по дням' });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Фонд' }), { target: { value: 'p-fund' } });
-    fireEvent.change(screen.getByLabelText('С'), { target: { value: '2026-11-01' } });
-    fireEvent.change(screen.getByLabelText('По'), { target: { value: '2026-11-15' } });
-    fireEvent.change(screen.getByLabelText('По'), { target: { value: '' } });
-    fireEvent.change(screen.getByLabelText('С'), { target: { value: '' } });
-    expect(api.nav).toHaveBeenLastCalledWith('p-fund', '2026-11-01', '2026-11-15');
-    expect(fireEvent.submit(screen.getByRole('form', { name: 'Фонд и период' }))).toBe(false);
+    const now = await screen.findByRole('region', { name: 'Стоимость пая сейчас' });
+    expect(api.navHistory).toHaveBeenCalledWith('p-fund', '2026-11-04', undefined);
+    expect(now).toHaveTextContent('Стоимость пая · 03.12.20261 000,95 ₽−0,06 ₽ за день · СЧА 100,1 млн ₽ · 100 000 паёв');
+    expect(screen.getByRole('region', { name: 'Прогноз на следующий торговый день' })).toHaveTextContent(
+      'Прогноз на 04.12.2026 · фильтр Калмана1 001,12 ₽68%: 1 000,98 – 1 001,26 · тренд 0,1050 ₽ за день начисления · ≈ 3,83% годовых',
+    );
+    expect(cards()).toEqual(['Комиссии от СЧА: 1,50% годовыхуправление 1,5']);
+    expect(lastChart()).toEqual(['Стоимость пая']);
+    expect(screen.queryByRole('table', { name: 'СЧА по дням' })).not.toBeInTheDocument();
   });
 
-  it('marks an incomplete valuation, a pending recalculation and an empty period', async () => {
+  it('adds Kalman and LQDT with their cards and remembers the choice', async () => {
+    const user = userEvent.setup();
+    renderBooking(fakeApi(), PAGE);
+    await screen.findByRole('region', { name: 'Стоимость пая сейчас' });
+
+    const layers = within(screen.getByRole('group', { name: 'Слои графика' }));
+    await user.click(layers.getByRole('button', { name: 'Калман' }));
+    await user.click(layers.getByRole('button', { name: 'LQDT' }));
+    expect(cards()).toEqual([
+      'Комиссии от СЧА: 1,50% годовыхуправление 1,5',
+      'Сглаженная · Калман: 1 001,02 ₽тренд ≈ 3,83% годовых',
+      'LQDT · 1 месяц: +0,11%2,1024 ₽ · ≈ 6,95% годовых',
+    ]);
+    expect(lastChart().slice(-4)).toEqual(['Стоимость пая', 'Калман', 'Прогноз', 'LQDT']);
+    expect([localStorage.getItem('am.booking.nav.kalman'), localStorage.getItem('am.booking.nav.benchmark')]).toEqual([
+      'true',
+      'true',
+    ]);
+
+    // СЧА фонда — одна линия, без сглаживания и сравнения.
+    await user.click(within(screen.getByRole('group', { name: 'Показатель' })).getByRole('button', { name: 'СЧА фонда' }));
+    expect(lastChart().at(-1)).toBe('СЧА фонда');
+    expect(within(screen.getByRole('group', { name: 'Слои графика' })).getAllByRole('button').map((b) => b.textContent)).toEqual([
+      'Таблица',
+    ]);
+    expect(cards()).toEqual(['Комиссии от СЧА: 1,50% годовыхуправление 1,5']);
+    expect(localStorage.getItem('am.booking.nav.metric')).toBe('nav');
+  });
+
+  it('picks the period, a custom one included, and remembers it', async () => {
+    const user = userEvent.setup();
+    const api = renderBooking(fakeApi(), PAGE);
+    await screen.findByRole('region', { name: 'Стоимость пая сейчас' });
+    const periods = within(screen.getByRole('group', { name: 'Период' }));
+
+    await user.click(periods.getByRole('button', { name: '3 месяца' }));
+    await waitFor(() => expect(api.navHistory).toHaveBeenLastCalledWith('p-fund', '2026-09-04', undefined));
+    await user.click(periods.getByRole('button', { name: 'Год' }));
+    await waitFor(() => expect(api.navHistory).toHaveBeenLastCalledWith('p-fund', '2025-12-04', undefined));
+    await user.click(periods.getByRole('button', { name: 'Весь срок' }));
+    await waitFor(() => expect(api.navHistory).toHaveBeenLastCalledWith('p-fund', undefined, undefined));
+    expect(localStorage.getItem('am.booking.nav.period')).toBe('all');
+
+    await user.click(periods.getByRole('button', { name: 'Свой период' }));
+    await waitFor(() => expect(api.navHistory).toHaveBeenLastCalledWith('p-fund', '2026-11-01', '2026-11-30'));
+    fireEvent.change(screen.getByLabelText('Свой период с'), { target: { value: '2026-11-10' } });
+    await waitFor(() => expect(api.navHistory).toHaveBeenLastCalledWith('p-fund', '2026-11-10', '2026-11-30'));
+    fireEvent.change(screen.getByLabelText('Свой период по'), { target: { value: '2026-11-20' } });
+    await waitFor(() => expect(api.navHistory).toHaveBeenLastCalledWith('p-fund', '2026-11-10', '2026-11-20'));
+    fireEvent.change(screen.getByLabelText('Свой период с'), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText('Свой период по'), { target: { value: '' } });
+    expect(api.navHistory).toHaveBeenLastCalledWith('p-fund', '2026-11-10', '2026-11-20');
+    // Свой период запомнен: снова выбрать его — те же даты.
+    await user.click(periods.getByRole('button', { name: '1 месяц' }));
+    await user.click(periods.getByRole('button', { name: 'Свой период' }));
+    await waitFor(() => expect(api.navHistory).toHaveBeenLastCalledWith('p-fund', '2026-11-10', '2026-11-20'));
+  });
+
+  it('shows the days in a table and exports them to Excel', async () => {
+    const created = vi.fn(() => 'blob:nav');
+    URL.createObjectURL = created;
+    URL.revokeObjectURL = vi.fn();
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    const user = userEvent.setup();
     const api = fakeApi();
-    const [first] = nav().days;
-    api.nav.mockResolvedValue(
-      nav({
+    renderBooking(api, PAGE);
+    await screen.findByRole('region', { name: 'Стоимость пая сейчас' });
+
+    await user.click(within(screen.getByRole('group', { name: 'Слои графика' })).getByRole('button', { name: 'Таблица' }));
+    const rows = within(screen.getByRole('table', { name: 'СЧА по дням' })).getAllByRole('row');
+    expect(rows[0]).toHaveTextContent('ДатаСтоимость пая, ₽Сглаженная, ₽За день, ₽СЧА, ₽ПаёвLQDT, ₽');
+    expect(rows[1]).toHaveTextContent('03.12.20261 000,951 001,02−0,06100 095 000,00100 0002,1024');
+    expect(rows[3]).toHaveTextContent('01.12.20261 000,601 000,64−0,06');
+    expect(rows[6]).toHaveTextContent('28.11.20261 000,251 000,260,00');
+    expect(rows[8]).toHaveTextContent('26.11.20261 000,001 000,00—100 000 000,00100 000—');
+    expect(within(rows[2]!).getByText('+0,41')).toHaveClass('up');
+
+    await user.click(screen.getByRole('button', { name: 'Экспортировать в Excel' }));
+    await waitFor(() => expect(click).toHaveBeenCalled());
+    expect(api.navWorkbook).toHaveBeenCalledWith('p-fund', '2026-11-04', undefined);
+    expect(created).toHaveBeenCalled();
+
+    api.navWorkbook.mockRejectedValueOnce(refused('Сервис сделок недоступен.'));
+    await user.click(screen.getByRole('button', { name: 'Экспортировать в Excel' }));
+    expect(await screen.findByText('Сервис сделок недоступен.')).toBeInTheDocument();
+  });
+
+  it('opens the commission rates on the right and lets operations add one', async () => {
+    const user = userEvent.setup();
+    const api = renderBooking(fakeApi(), PAGE, true);
+    await screen.findByRole('region', { name: 'Стоимость пая сейчас' });
+
+    await user.click(screen.getByRole('button', { name: 'Ставки комиссий' }));
+    const panel = within(screen.getByRole('dialog', { name: 'Комиссии от СЧА' }));
+    expect(within(panel.getByRole('table', { name: 'Ставки комиссий' })).getAllByRole('row')[1]).toHaveTextContent(
+      'вознаграждение УК1,526.11.2026ПДУ п. 92ops',
+    );
+    const form = within(panel.getByRole('form', { name: 'Новая ставка' }));
+    await user.selectOptions(form.getByLabelText('Комиссия'), 'specdep');
+    await user.type(form.getByLabelText('Ставка, % годовых'), '0,15');
+    fireEvent.change(form.getByLabelText('Действует с'), { target: { value: '2026-12-01' } });
+    await user.type(form.getByLabelText('Основание'), 'договор');
+    await user.click(form.getByRole('button', { name: 'Сохранить ставку' }));
+    expect(api.setFeeRate).toHaveBeenCalledWith('p-fund', {
+      kind: 'specdep',
+      rate: '0.15',
+      valid_from: '2026-12-01',
+      comment: 'договор',
+    });
+    await waitFor(() => expect(api.feeRates).toHaveBeenCalledTimes(2));
+    await user.click(screen.getByRole('button', { name: 'Закрыть' }));
+    expect(screen.queryByRole('dialog', { name: 'Комиссии от СЧА' })).not.toBeInTheDocument();
+  });
+
+  it('explains what it cannot show', async () => {
+    const user = userEvent.setup();
+    const api = fakeApi();
+    api.feeRates.mockResolvedValue([]);
+    api.navHistory.mockResolvedValue(
+      navHistory({
         waiting_since: '2026-11-30',
-        days: [{ ...first!, flags: ['no_price'], unit_price: null, claims: '1000.00', fees_today: {} }],
+        benchmark: null,
+        forecast: null,
+        points: navHistory().points.slice(0, 1).map((p) => ({ ...p, smoothed: null, benchmark: null })),
       }),
     );
     renderBooking(api, PAGE);
+    await screen.findByRole('region', { name: 'Стоимость пая сейчас' });
 
-    expect(await screen.findByText(/Фонд пересчитывается с 30.11.2026/)).toBeInTheDocument();
-    expect(screen.getByText(/Оценка неполная/)).toHaveTextContent('цены не было');
-    const [, row] = within(screen.getByRole('table', { name: 'СЧА по дням' })).getAllByRole('row');
-    expect(row).toHaveTextContent('100 000—0,00');
-    expect(screen.getByLabelText('Состав СЧА на 29.11.2026')).toHaveTextContent('требования к пайщикам1 000,00 ₽');
-
-    api.nav.mockResolvedValue(nav({ days: [] }));
-    fireEvent.change(screen.getByLabelText('С'), { target: { value: '2026-10-01' } });
-    expect(await screen.findByText('Расчёта за период нет.')).toBeInTheDocument();
+    expect(screen.getByText(/Фонд пересчитывается с 30.11.2026/)).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Стоимость пая сейчас' })).toHaveTextContent(
+      'Стоимость пая · 26.11.20261 000,00 ₽СЧА 100,0 млн ₽ · 100 000 паёв',
+    );
+    expect(screen.getByRole('region', { name: 'Прогноз на следующий торговый день' })).toHaveTextContent(
+      'Прогноз на следующий торговый день · фильтр Калмана—',
+    );
+    const layers = within(screen.getByRole('group', { name: 'Слои графика' }));
+    await user.click(layers.getByRole('button', { name: 'Калман' }));
+    await user.click(layers.getByRole('button', { name: 'LQDT' }));
+    expect(cards()).toEqual([
+      'Комиссии от СЧА: не начисляются',
+      'Сглаженная · Калман: —',
+      'Сравнение: бумаги нет в справочнике',
+    ]);
+    expect(screen.getByText(/Бумаги для сравнения нет в справочнике/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Ставки комиссий' }));
+    expect(screen.getByText(/Ставок нет/)).toBeInTheDocument();
   });
 
-  it('defaults to the first fund and this month; explains when there are no funds', async () => {
-    const api = renderBooking(fakeApi(), '/booking/nav');
-    await screen.findByRole('table', { name: 'СЧА по дням' });
-    const [fund, first] = api.nav.mock.calls[0]!;
-    expect([fund, String(first).slice(8)]).toEqual(['p-fund', '01']);
+  it('shows a fund without a calculation and a benchmark without prices', async () => {
+    const user = userEvent.setup();
+    const api = fakeApi();
+    api.navHistory.mockResolvedValue(navHistory({ points: [], forecast: null, first_day: null }));
+    renderBooking(api, PAGE);
+
+    expect(await screen.findByText('Расчёта за период нет.')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Стоимость пая сейчас' })).toHaveTextContent('Стоимость пая · ——');
+    await user.click(within(screen.getByRole('group', { name: 'Слои графика' })).getByRole('button', { name: 'LQDT' }));
+    expect(cards()[1]).toBe('LQDT · 1 месяц: —цен нет');
+  });
+
+  it('colours a falling or flat benchmark, skips days without a price and waits for the rates', async () => {
+    const user = userEvent.setup();
+    const api = fakeApi();
+    api.feeRates.mockReturnValue(new Promise(() => undefined));
+    const [first, second, third] = navHistory().points;
+    api.navHistory.mockResolvedValue(
+      navHistory({
+        points: [
+          { ...first!, benchmark: '2.1000' },
+          { ...second!, benchmark: '2.0990', unit_price: null },
+          { ...third!, benchmark: '2.0980' },
+        ],
+      }),
+    );
+    renderBooking(api, PAGE);
+    await screen.findByRole('region', { name: 'Стоимость пая сейчас' });
+
+    expect(cards()).toEqual(['Комиссии от СЧА: не начисляются']);
+    const layers = within(screen.getByRole('group', { name: 'Слои графика' }));
+    await user.click(layers.getByRole('button', { name: 'LQDT' }));
+    expect(screen.getByText('−0,10%')).toHaveClass('down');
+    await user.click(layers.getByRole('button', { name: 'Таблица' }));
+    const rows = within(screen.getByRole('table', { name: 'СЧА по дням' })).getAllByRole('row');
+    // День без стоимости пая: ни его изменения, ни изменения следующего дня.
+    expect(rows[1]).toHaveTextContent('28.11.20261 000,251 000,26—');
+    expect(rows[2]).toHaveTextContent('27.11.2026—1 000,25—');
+  });
+
+  it('shows a flat benchmark without a sign', async () => {
+    const user = userEvent.setup();
+    const api = fakeApi();
+    const [first, second] = navHistory().points;
+    api.navHistory.mockResolvedValue(navHistory({ points: [{ ...first!, benchmark: '2.1000' }, { ...second!, benchmark: '2.1000' }] }));
+    renderBooking(api, PAGE);
+    await screen.findByRole('region', { name: 'Стоимость пая сейчас' });
+
+    await user.click(within(screen.getByRole('group', { name: 'Слои графика' })).getByRole('button', { name: 'LQDT' }));
+    const flat = screen.getByText('0,00%');
+    expect(flat).not.toHaveClass('up');
+    expect(flat).not.toHaveClass('down');
+  });
+
+  it('saves a rate without a basis and shows rates without comments', async () => {
+    const user = userEvent.setup();
+    const api = fakeApi();
+    const [rate] = await fakeApi().feeRates();
+    api.feeRates.mockResolvedValue([{ ...rate!, comment: null }]);
+    renderBooking(api, PAGE, true);
+    await screen.findByRole('region', { name: 'Стоимость пая сейчас' });
+
+    await user.click(screen.getByRole('button', { name: 'Ставки комиссий' }));
+    const panel = within(screen.getByRole('dialog', { name: 'Комиссии от СЧА' }));
+    expect(within(panel.getByRole('table', { name: 'Ставки комиссий' })).getAllByRole('row')[1]).toHaveTextContent('—');
+    const form = within(panel.getByRole('form', { name: 'Новая ставка' }));
+    await user.type(form.getByLabelText('Ставка, % годовых'), '1,2');
+    await user.click(form.getByRole('button', { name: 'Сохранить ставку' }));
+    expect(api.setFeeRate).toHaveBeenCalledWith('p-fund', expect.objectContaining({ kind: 'management', rate: '1.2', comment: null }));
+  });
+
+  it('switches the fund and explains when there are no funds', async () => {
+    const user = userEvent.setup();
+    const api = fakeApi();
+    api.portfolios.mockResolvedValue([
+      ...(await fakeApi().portfolios()),
+      { id: 'p-fund-2', code: 'OPIF2', name: 'ОПИФ 2', kind: 'compound', is_fund: true, parent_ids: [], fund_id: null },
+    ]);
+    renderBooking(api, PAGE);
+    await screen.findByRole('region', { name: 'Стоимость пая сейчас' });
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Фонд' }), 'p-fund-2');
+    await waitFor(() => expect(api.navHistory).toHaveBeenLastCalledWith('p-fund-2', '2026-11-04', undefined));
 
     const none = fakeApi();
-    none.portfolios.mockResolvedValue(PORTFOLIOS.filter((p) => !p.is_fund));
+    none.portfolios.mockResolvedValue([]);
     renderBooking(none, '/booking/nav');
     expect(await screen.findByText(/Нет доступных фондов/)).toBeInTheDocument();
   });

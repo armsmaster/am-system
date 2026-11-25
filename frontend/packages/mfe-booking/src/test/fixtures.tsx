@@ -15,6 +15,7 @@ import type {
   Ladder,
   Nav,
   NavDay,
+  NavHistory,
   Operation,
   Portfolio,
   Positions,
@@ -719,6 +720,41 @@ export function resultSummary(fields: Partial<ResultSummary> = {}): ResultSummar
         totals: { day: '0.00', week: '0.00', days30: '0.00', quarter: '0.00', year: '4484.00', all: '4484.00' },
       },
     ],
+    expenses_owed: '0.00',
+    fees_owed: '0.00',
+    ...fields,
+  };
+}
+
+/** СЧА фонда за неделю методики (решение 168): 100 000 паёв, LQDT с 27.11, прогноз на 04.12. */
+export function navHistory(fields: Partial<NavHistory> = {}): NavHistory {
+  const point = (date: string, unit: string, smoothed: string, benchmark: string | null) => ({
+    date,
+    nav: (Number(unit) * 100000).toFixed(2),
+    units: '100000.00000',
+    unit_price: unit,
+    smoothed,
+    benchmark,
+  });
+  return {
+    fund_id: 'p-fund',
+    code: 'OPIF1',
+    name: 'ОПИФ 1',
+    first_day: '2026-11-26',
+    today: '2026-12-03',
+    waiting_since: null,
+    benchmark: 'LQDT',
+    points: [
+      point('2026-11-26', '1000.00', '1000.00', null),
+      point('2026-11-27', '1000.25', '1000.25', '2.1000'),
+      point('2026-11-28', '1000.25', '1000.26', '2.1000'),
+      point('2026-11-29', '1000.25', '1000.27', '2.1000'),
+      point('2026-11-30', '1000.66', '1000.53', '2.1004'),
+      point('2026-12-01', '1000.60', '1000.64', '2.1008'),
+      point('2026-12-02', '1001.01', '1000.90', '2.1020'),
+      point('2026-12-03', '1000.95', '1001.02', '2.1024'),
+    ],
+    forecast: { date: '2026-12-04', value: '1001.12', low: '1000.98', high: '1001.26', trend: '0.1050', trend_percent: '3.83' },
     ...fields,
   };
 }
@@ -754,6 +790,8 @@ export function fakeApi() {
     ratingScale: answer<RatingScale>(SCALE),
     results: answer<Results>(results()),
     resultSummary: answer<ResultSummary>(resultSummary()),
+    navHistory: answer<NavHistory>(navHistory()),
+    navWorkbook: answer<Blob>(new Blob(['xlsx'])),
     nav: answer<Nav>(nav()),
     feeRates: answer<FeeRate[]>(FEE_RATES),
     setFeeRate: answer<FeeRate[]>(FEE_RATES),

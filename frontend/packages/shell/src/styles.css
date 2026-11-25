@@ -3661,3 +3661,157 @@ table.data.statement tr.statement-bond-group td {
   background: none;
   color: var(--muted);
 }
+
+/* --- СЧА (решение 168): стоимость пая и прогноз — крупно, график, комиссии ----------- */
+
+.nav-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 12px;
+  margin: 4px 0 12px;
+}
+
+.nav-hero section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 18px;
+  border-radius: 12px;
+}
+
+.nav-hero-label {
+  font-size: 13px;
+}
+
+.nav-hero-value {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 36px;
+  font-variant-numeric: tabular-nums lining-nums;
+  line-height: 1.15;
+}
+
+.nav-hero-note {
+  font-size: 13px;
+}
+
+/* Сейчас — сплошная акцентная карточка; прогноз — пунктирная фиолетовая: не спутать. */
+.nav-now {
+  background: var(--accent);
+  color: #fff;
+}
+
+.nav-now .nav-hero-label,
+.nav-now .nav-hero-note {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.nav-forecast {
+  border: 2px dashed var(--accent-alt);
+  background: var(--accent-alt-soft);
+  color: var(--accent-alt);
+}
+
+.nav-forecast .nav-hero-value {
+  font-size: 32px;
+}
+
+.nav-forecast .nav-hero-note {
+  color: var(--muted);
+}
+
+.nav-cards {
+  margin: 0 0 12px;
+}
+
+.nav-card {
+  position: relative;
+}
+
+.nav-card-gear {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  font-size: 15px;
+}
+
+.nav-toolbar {
+  margin-bottom: 8px;
+}
+
+.nav-chart {
+  margin-bottom: 14px;
+  padding: 12px 14px 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.nav-chart-head,
+.nav-table-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin-bottom: 6px;
+}
+
+.nav-chart-head h3,
+.nav-table-head h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.nav-chart-plot {
+  height: 280px;
+}
+
+.nav-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0;
+  padding: 0;
+  color: var(--muted);
+  font-size: 12px;
+  list-style: none;
+}
+
+.nav-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.nav-swatch {
+  display: inline-block;
+  width: 16px;
+  height: 0;
+  border-top: 2px solid #2a78d6;
+}
+
+.nav-swatch-smoothed {
+  border-top: 2px dashed #7c3aed;
+}
+
+.nav-swatch-forecast {
+  border-top: 2px dotted #7c3aed;
+}
+
+.nav-swatch-benchmark {
+  border-top-color: #1baf7a;
+}
+
+@media (max-width: 640px) {
+  .nav-hero {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .nav-hero-value {
+    font-size: 30px;
+  }
+}

@@ -20,6 +20,7 @@ from pydantic import (
     StringConstraints,
     model_validator,
 )
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from am_common.app import AppResources, DbSession
 from am_common.auth import Principal, Role, require_any_role
@@ -39,9 +40,12 @@ from booking.clients import (
 from booking.closing import ClosingDesk, ClosingState
 from booking.imports import ImportItem, Result, TradeImport
 from booking.ladder import MAX_PAST_DAYS, Ladder, ladder
+from booking.nav_workbook import filename as workbook_name
+from booking.nav_workbook import nav_workbook
 from booking.operations import OperationDesk, OperationInput, OperationView
 from booking.queries import (
     NavDay,
+    NavHistory,
     PeriodResult,
     PeriodTotal,
     PortfolioState,
@@ -49,6 +53,7 @@ from booking.queries import (
     ResultDay,
     ResultLine,
     nav,
+    nav_history,
     positions,
     previous_trading_day,
     result_summary,
@@ -96,6 +101,7 @@ OptionalComment = Annotated[str, StringConstraints(strip_whitespace=True, max_le
 # Результат за период — не больше трёх лет за запрос.
 MAX_RESULT_DAYS = 1100
 CENT = Decimal("0.01")
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 Money = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=2)]
 Price = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)]
 Kopecks = Annotated[Decimal, Field(ge=0, max_digits=18, decimal_places=2)]
@@ -112,6 +118,7 @@ class Clients:
         self.refdata = RefdataClient(resources.http, settings.refdata_url, token)
         self.marketdata = MarketdataClient(resources.http, settings.marketdata_url, token)
         self.portfolios = PortfolioClient(resources.http, settings.portfolio_url)
+        self.benchmark = settings.benchmark_secid
 
 
 def get_clients(request: Request, resources: AppResources) -> Clients:
@@ -501,6 +508,41 @@ class ResultSummaryOut(BaseModel):
     waiting_since: dt.date | None
     periods: list[PeriodResultOut]
     lines: list[SummaryLineOut]
+    # Начислено и не оплачено на дату отчёта (решение 168): расходы и комиссии от СЧА.
+    expenses_owed: Decimal = Decimal(0)
+    fees_owed: Decimal = Decimal(0)
+
+
+class NavPointOut(BaseModel):
+    date: dt.date
+    nav: Decimal
+    units: Decimal
+    unit_price: Decimal | None
+    smoothed: Decimal | None  # уровень фильтра Калмана, до копейки
+    benchmark: Decimal | None  # цена бумаги сравнения (LQDT)
+
+
+class NavForecastOut(BaseModel):
+    """Прогноз стоимости пая на следующий день по фильтру Калмана (решение 168)."""
+
+    date: dt.date
+    value: Decimal
+    low: Decimal | None  # ± одно стандартное отклонение: 68%
+    high: Decimal | None
+    trend: Decimal  # прирост стоимости пая за день
+    trend_percent: Decimal  # тот же прирост, % годовых
+
+
+class NavHistoryOut(BaseModel):
+    fund_id: UUID
+    code: str
+    name: str
+    first_day: dt.date | None
+    today: dt.date
+    waiting_since: dt.date | None
+    benchmark: str | None
+    points: list[NavPointOut]
+    forecast: NavForecastOut | None
 
 
 class _OperationBase(BaseModel):
@@ -1346,6 +1388,8 @@ async def get_result_summary(
         portfolios=[p.code for p in view.portfolios],
         waiting_since=view.waiting_since,
         periods=[_period_result_out(p) for p in view.periods],
+        expenses_owed=view.expenses_owed.quantize(CENT),
+        fees_owed=view.fees_owed.quantize(CENT),
         lines=[
             SummaryLineOut(
                 instrument_id=line.instrument_id,
@@ -1538,6 +1582,114 @@ async def get_nav(
         last=view.last,
         waiting_since=view.waiting_since,
         days=[_nav_day_out(d) for d in view.days],
+    )
+
+
+@router.get("/nav/history", tags=["nav"])
+async def get_nav_history(
+    _user: Viewer,
+    *,
+    session: DbSession,
+    authorization: Authorization,
+    services: Services,
+    now: Now,
+    fund_id: UUID,
+    since: Annotated[date | None, Query(alias="from")] = None,
+    till: Annotated[date | None, Query(alias="till")] = None,
+) -> NavHistoryOut:
+    """Стоимость пая и СЧА с ``from`` по ``till`` (по умолчанию — вся история по сегодня),
+    сглаженная фильтром Калмана, прогноз на завтра и цена бумаги сравнения (решение 168)."""
+    return _nav_history_out(
+        await _nav_history(
+            session, authorization, services, now=now, fund_id=fund_id, period=(since, till)
+        )
+    )
+
+
+@router.get(
+    "/nav/history.xlsx",
+    tags=["nav"],
+    response_class=Response,
+    responses={200: {"content": {XLSX: {}}, "description": "СЧА и стоимость пая по дням"}},
+)
+async def get_nav_workbook(
+    _user: Viewer,
+    *,
+    session: DbSession,
+    authorization: Authorization,
+    services: Services,
+    now: Now,
+    fund_id: UUID,
+    since: Annotated[date | None, Query(alias="from")] = None,
+    till: Annotated[date | None, Query(alias="till")] = None,
+) -> Response:
+    """Те же дни в Excel."""
+    history = await _nav_history(
+        session, authorization, services, now=now, fund_id=fund_id, period=(since, till)
+    )
+    return Response(
+        nav_workbook(history),
+        media_type=XLSX,
+        headers={"Content-Disposition": f'attachment; filename="{workbook_name(history)}"'},
+    )
+
+
+async def _nav_history(
+    session: AsyncSession,
+    authorization: str,
+    services: Clients,
+    *,
+    now: datetime,
+    fund_id: UUID,
+    period: tuple[date | None, date | None],
+) -> NavHistory:
+    visible = await services.portfolios.visible(authorization)
+    history = await nav_history(
+        session,
+        visible,
+        fund_id,
+        period,
+        now=now,
+        marketdata=services.marketdata,
+        refdata=services.refdata,
+        benchmark=services.benchmark,
+    )
+    if history is None:
+        raise NotFoundError("fund", fund_id)
+    return history
+
+
+def _nav_history_out(history: NavHistory) -> NavHistoryOut:
+    forecast = history.forecast
+    return NavHistoryOut(
+        fund_id=history.fund.id,
+        code=history.fund.code,
+        name=history.fund.name,
+        first_day=history.first_day,
+        today=history.today,
+        waiting_since=history.waiting_since,
+        benchmark=history.benchmark,
+        points=[
+            NavPointOut(
+                date=p.day,
+                nav=p.nav,
+                units=p.units,
+                unit_price=p.unit_price,
+                smoothed=None if p.smoothed is None else p.smoothed.quantize(CENT),
+                benchmark=p.benchmark,
+            )
+            for p in history.points
+        ],
+        forecast=None
+        if forecast is None
+        else NavForecastOut(
+            date=forecast.day,
+            value=forecast.value.quantize(CENT),
+            low=None if forecast.std is None else (forecast.value - forecast.std).quantize(CENT),
+            high=None if forecast.std is None else (forecast.value + forecast.std).quantize(CENT),
+            trend=forecast.trend.quantize(Decimal("0.0001")),
+            trend_percent=(forecast.trend * 365 / forecast.value * 100).quantize(Decimal("0.01")),
+        ),
     )
 
 

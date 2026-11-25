@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
 import type { RepoLine } from '../api';
-import { dayResult, fakeApi, ladder, nav, operation, positions, refused, renderBooking, repoTrade } from '../test/fixtures';
+import { dayResult, fakeApi, ladder, operation, positions, refused, renderBooking, repoTrade } from '../test/fixtures';
 
 /** Сделка Б из методики шага 7 на 01.12: прямое РЕПО, проценты за одну ночь. */
 const BORROWED: RepoLine = {
@@ -149,7 +149,7 @@ describe('REPO in positions, ladder, NAV and operations (design/07)', () => {
     expect(screen.getByRole('table', { name: 'Движения дня' })).toHaveTextContent('купон: передача дохода по РЕПО');
   });
 
-  it('shows REPO legs in the ladder and REPO lines in the NAV', async () => {
+  it('shows REPO legs in the ladder', async () => {
     const api = fakeApi();
     const base = ladder();
     api.ladder.mockResolvedValue(
@@ -169,14 +169,7 @@ describe('REPO in positions, ladder, NAV and operations (design/07)', () => {
     const rows = within(await screen.findByRole('table', { name: 'План по расчётам' })).getAllByRole('row');
     expect(rows[1]).toHaveTextContent('РЕПО3 дня · вторая часть5 616 786,01');
     expect(screen.getByText('ОФЗ 26238 +10 000 → 50 000 шт.')).toHaveClass('mv-security');
-
-    const fund = fakeApi();
-    const [first] = nav().days;
-    fund.nav.mockResolvedValue(nav({ days: [{ ...first!, repo_placed: '30023342.47', repo_borrowed: '5612328.67' }] }));
-    renderBooking(fund, '/booking/nav?fund=p-fund&from=2026-11-29&till=2026-11-29');
-    const composition = await screen.findByLabelText('Состав СЧА на 29.11.2026');
-    expect(composition).toHaveTextContent('размещено в обратное РЕПО, с процентами30 023 342,47 ₽');
-    expect(composition).toHaveTextContent('− привлечено в прямое РЕПО, с процентами5 612 328,67 ₽');
+    // Состав СЧА (РЕПО в нём) раздел «СЧА» больше не показывает (решение 168): его видно в API /nav.
   });
 
   it('names a contribution in the operations list', async () => {

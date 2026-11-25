@@ -21,6 +21,7 @@ describe('bookingApi', () => {
     put: vi.fn((..._args: unknown[]) => Promise.resolve(null)),
     patch: vi.fn((..._args: unknown[]) => Promise.resolve(null)),
     delete: vi.fn((..._args: unknown[]) => Promise.resolve(null)),
+    blob: vi.fn((..._args: unknown[]) => Promise.resolve(new Blob())),
   };
   const api = bookingApi(client as unknown as ApiClient);
   const body = { portfolio_id: 'p' } as unknown as TradeInput;
@@ -83,6 +84,9 @@ describe('bookingApi', () => {
       ['/api/booking/results/summary?portfolio_id=p-1&date=2026-12-03&from=2026-10-01&till=2026-10-31'],
     ],
     ['feeRates', () => api.feeRates('f-1'), 'get', ['/api/booking/funds/f-1/fee-rates']],
+    ['navHistory', () => api.navHistory('f-1', undefined, undefined), 'get', ['/api/booking/nav/history?fund_id=f-1']],
+    ['navHistory from a date', () => api.navHistory('f-1', '2026-11-01', '2026-11-30'), 'get', ['/api/booking/nav/history?fund_id=f-1&from=2026-11-01&till=2026-11-30']],
+    ['navWorkbook', () => api.navWorkbook('f-1', '2026-11-01', undefined), 'blob', ['/api/booking/nav/history.xlsx?fund_id=f-1&from=2026-11-01']],
     ['setFeeRate', () => api.setFeeRate('f-1', rate), 'post', ['/api/booking/funds/f-1/fee-rates', rate]],
     [
       'results',

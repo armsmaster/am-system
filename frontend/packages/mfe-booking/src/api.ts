@@ -409,6 +409,45 @@ export interface ResultSummary {
   readonly waiting_since: string | null;
   readonly periods: readonly PeriodResult[];
   readonly lines: readonly SummaryLine[];
+  /** Начислено и не оплачено на дату отчёта: расходы фонда и комиссии от СЧА (решение 168). */
+  readonly expenses_owed: Decimal;
+  readonly fees_owed: Decimal;
+}
+
+/** День графика СЧА (решение 168). */
+export interface NavPoint {
+  readonly date: string;
+  readonly nav: Decimal;
+  readonly units: Decimal;
+  readonly unit_price: Decimal | null;
+  /** Стоимость пая, сглаженная фильтром Калмана. */
+  readonly smoothed: Decimal | null;
+  /** Цена бумаги сравнения (LQDT). */
+  readonly benchmark: Decimal | null;
+}
+
+/** Прогноз стоимости пая на следующий торговый день по фильтру Калмана (решение 169). */
+export interface NavForecast {
+  readonly date: string;
+  readonly value: Decimal;
+  /** ± одно стандартное отклонение: 68%; мало истории — null. */
+  readonly low: Decimal | null;
+  readonly high: Decimal | null;
+  /** Прирост за день начисления по дате расчётов T+1; в % годовых — ниже. */
+  readonly trend: Decimal;
+  readonly trend_percent: Decimal;
+}
+
+export interface NavHistory {
+  readonly fund_id: string;
+  readonly code: string;
+  readonly name: string;
+  readonly first_day: string | null;
+  readonly today: string;
+  readonly waiting_since: string | null;
+  readonly benchmark: string | null;
+  readonly points: readonly NavPoint[];
+  readonly forecast: NavForecast | null;
 }
 
 export type OperationKind =
@@ -818,6 +857,11 @@ export function bookingApi(client: ApiClient) {
       ),
     nav: (fundId: string, first: string, last: string) =>
       client.get<Nav>(`${BASE}/nav${query({ fund_id: fundId, from: first, till: last })}`),
+    /** Стоимость пая и СЧА с ``from`` по ``till`` (без них — вся история), Калман и LQDT (решение 168). */
+    navHistory: (fundId: string, from: string | undefined, till: string | undefined) =>
+      client.get<NavHistory>(`${BASE}/nav/history${query({ fund_id: fundId, from, till })}`),
+    navWorkbook: (fundId: string, from: string | undefined, till: string | undefined) =>
+      client.blob(`${BASE}/nav/history.xlsx${query({ fund_id: fundId, from, till })}`),
     feeRates: (fundId: string) => client.get<FeeRate[]>(`${BASE}/funds/${fundId}/fee-rates`),
     setFeeRate: (fundId: string, body: FeeRateInput) =>
       client.post<FeeRate[]>(`${BASE}/funds/${fundId}/fee-rates`, body),

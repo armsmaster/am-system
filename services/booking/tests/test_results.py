@@ -5,9 +5,11 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from io import BytesIO
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
+import openpyxl
 import pytest
 from fastapi.testclient import TestClient
 from httpx2 import Response
@@ -15,7 +17,9 @@ from httpx2 import Response
 from am_common.app import Resources
 from am_common.clock import MOSCOW
 from am_common.testing import TokenFactory
+from am_quant.kalman import NAV_SETTINGS, kalman_trend
 from booking.queries import (
+    NavDay,
     PeriodResult,
     PositionLine,
     ResultDay,
@@ -23,6 +27,7 @@ from booking.queries import (
     _spread_periods,
     period_results,
     period_starts,
+    smooth_unit_price,
 )
 from booking.recalc import marketdata_client, recalc_once, refdata_client
 from booking.repository import Repository, Snapshot
@@ -1003,3 +1008,246 @@ def test_return_base_counts_unit_issues_and_redemptions() -> None:
     # 100 млн − 20 млн × 6/10 + 5 млн × 3/10: приток работает с дня поступления.
     assert period.invested == Decimal(89_500_000)
     assert period.rate == Decimal(100_000) / Decimal(89_500_000)
+
+
+# --- СЧА: история, фильтр Калмана, сравнение с LQDT (решение 168) ---------------------
+
+
+@pytest.mark.usefixtures("week")
+def test_nav_history_with_kalman_forecast_and_benchmark(trader: Api, world: World) -> None:
+    world.prices |= {(LQDT, "2026-11-27"): "2.1000", (LQDT, "2026-12-02"): "2.1020"}
+
+    found = trader.ok("GET", "/nav/history", fund_id=str(FUND))
+
+    points = found["points"]
+    # Паёв 100 000; стоимость пая — до копейки (решение 104).
+    assert [(p["date"], p["unit_price"]) for p in points] == [
+        ("2026-11-26", "1000.00"),
+        ("2026-11-27", "1000.25"),
+        ("2026-11-28", "1000.25"),
+        ("2026-11-29", "1000.25"),
+        ("2026-11-30", "1000.66"),
+        ("2026-12-01", "1000.60"),
+        ("2026-12-02", "1001.01"),
+        ("2026-12-03", "1000.95"),
+    ]
+    assert (found["first_day"], found["today"], found["benchmark"]) == (
+        "2026-11-26",
+        "2026-12-03",
+        "LQDT",
+    )
+    assert [p["benchmark"] for p in points][:2] == [None, "2.1000"]
+    assert points[-1]["benchmark"] == "2.1020"
+    # Фильтр — только по торговым дням (решение 169): время — сессии с 26.11, начисление —
+    # дни от первой даты расчётов 27.11. В пятницу расчёты 30.11 — сразу +3 дня.
+    trading = [p for p in points if p["date"] not in ("2026-11-28", "2026-11-29")]
+    filtered = kalman_trend(
+        [(Decimal(n + 1), Decimal(p["unit_price"])) for n, p in enumerate(trading)],
+        NAV_SETTINGS,
+        [Decimal(a) for a in (0, 3, 4, 5, 6, 7)],
+    )
+    levels = [str(x.level.quantize(Decimal("0.01"))) for x in filtered.points]
+    # В выходные — уровень пятницы: комиссий в этом примере нет.
+    assert [p["smoothed"] for p in points] == [*levels[:2], levels[1], levels[1], *levels[2:]]
+    # Прогноз — на следующий торговый день, пятницу 04.12: одна сессия, три дня начисления.
+    ahead = filtered.forecast(Decimal(1), Decimal(3))
+    assert ahead.std is not None
+    forecast = found["forecast"]
+    assert (forecast["date"], forecast["value"]) == (
+        "2026-12-04",
+        str(ahead.value.quantize(Decimal("0.01"))),
+    )
+    assert (forecast["low"], forecast["high"]) == (
+        str((ahead.value - ahead.std).quantize(Decimal("0.01"))),
+        str((ahead.value + ahead.std).quantize(Decimal("0.01"))),
+    )
+    trend = filtered.points[-1].trend
+    assert forecast["trend"] == str(trend.quantize(Decimal("0.0001")))
+    assert forecast["trend_percent"] == str(
+        (trend * 365 / ahead.value * 100).quantize(Decimal("0.01"))
+    )
+
+    # С даты — только её дни, но прогноз — по всей истории.
+    recent = trader.ok("GET", "/nav/history", fund_id=str(FUND), **{"from": "2026-12-02"})
+    assert [p["date"] for p in recent["points"]] == ["2026-12-02", "2026-12-03"]
+    assert recent["forecast"] == forecast
+    # Свой период: по дату включительно.
+    window = trader.ok(
+        "GET", "/nav/history", fund_id=str(FUND), **{"from": "2026-11-27", "till": "2026-11-28"}
+    )
+    assert [p["date"] for p in window["points"]] == ["2026-11-27", "2026-11-28"]
+
+
+@pytest.mark.usefixtures("week")
+def test_nav_history_without_benchmark(trader: Api, world: World) -> None:
+    # Справочник недоступен: бумаги сравнения нет, но сглаженная и прогноз на следующий
+    # торговый день есть — календарь у сервиса уже в памяти с ввода сделок.
+    world.down.add("refdata")
+    blind = trader.ok("GET", "/nav/history", fund_id=str(FUND), **{"from": "2026-12-03"})
+    assert (blind["benchmark"], blind["forecast"]["date"]) == (None, "2026-12-04")
+    world.down.discard("refdata")
+    del world.instruments[LQDT]
+    assert trader.ok("GET", "/nav/history", fund_id=str(FUND))["benchmark"] is None
+
+
+def test_nav_history_of_a_fund_without_calculation(trader: Api, world: World) -> None:
+    # Календаря ещё нет в памяти, справочник недоступен — считаем только с выходными.
+    world.down.add("refdata")
+    found = trader.ok("GET", "/nav/history", fund_id=str(FUND))
+    assert (found["first_day"], found["points"], found["forecast"], found["benchmark"]) == (
+        None,
+        [],
+        None,
+        None,
+    )
+    assert trader.call("GET", "/nav/history", fund_id=str(BONDS)).status_code == 404
+
+
+@pytest.mark.usefixtures("week")
+def test_nav_history_in_excel(trader: Api, world: World) -> None:
+    world.prices |= {(LQDT, "2026-11-27"): "2.1000"}
+
+    response = trader.call("GET", "/nav/history.xlsx", fund_id=str(FUND), **{"from": "2026-12-01"})
+
+    assert response.status_code == 200
+    assert (
+        response.headers["content-disposition"]
+        == 'attachment; filename="nav-OPIF1-2026-12-03.xlsx"'
+    )
+    sheet = openpyxl.load_workbook(BytesIO(response.content))["СЧА"]
+    assert [c.value for c in sheet[4]] == [
+        "Дата",
+        "Стоимость пая, ₽",
+        "Сглаженная (Калман), ₽",
+        "Изменение за день, ₽",
+        "СЧА, ₽",
+        "Паёв",
+        "LQDT, ₽",
+    ]
+    first, second = sheet[5], sheet[6]
+    assert (first[0].value.date(), first[1].value, first[3].value, first[6].value) == (
+        date(2026, 12, 1),
+        1000.6,
+        None,
+        2.1,
+    )
+    assert (second[1].value, second[3].value) == (1001.01, "=B6-B5")
+    assert sheet.max_row == 7
+
+    # С первого дня: LQDT ещё не было — ячейка пустая; без LQDT в справочнике — нет и колонки.
+    whole = trader.call("GET", "/nav/history.xlsx", fund_id=str(FUND))
+    first_day = openpyxl.load_workbook(BytesIO(whole.content))["СЧА"][5]
+    assert (first_day[1].value, first_day[6].value) == (1000.0, None)
+    del world.instruments[LQDT]
+    bare = openpyxl.load_workbook(
+        BytesIO(trader.call("GET", "/nav/history.xlsx", fund_id=str(FUND)).content)
+    )
+    assert bare["СЧА"].max_column == 6
+
+
+@pytest.mark.usefixtures("week")
+async def test_result_summary_shows_what_is_owed(
+    trader: Api, ops: Api, resources: Resources
+) -> None:
+    ops.ok(
+        "POST",
+        "/operations",
+        {
+            "kind": "expense_accrual",
+            "fund_id": str(FUND),
+            "op_date": "2026-12-01",
+            "expense_kind": "specdep",
+            "amount": "20000",
+        },
+    )
+    management(ops)
+    await recalc(resources)
+
+    found = trader.ok("GET", "/results/summary", portfolio_id=str(FUND), date="2026-12-03")
+
+    # Начислено и не оплачено — для карточек «Результата» (решение 168): то же, что в СЧА.
+    [day] = nav_of(trader, "2026-12-03", "2026-12-03")["days"]
+    assert (found["expenses_owed"], found["fees_owed"]) == ("20000.00", day["fees_owed"])
+    assert Decimal(day["fees_owed"]) > 0
+
+
+def test_smoothing_follows_settlement_dates_and_removes_fees() -> None:
+    """Решение 169: праздник 04.11 и выходные — не в фильтре; комиссии вычтены отдельно."""
+    holiday = {date(2026, 11, 4): False}
+    fee = Decimal("0.1")  # 100 ₽ комиссий в день на 1 000 паёв
+
+    def day(on: date, unit_price: str, units: int = 1000) -> NavDay:
+        zero = Decimal(0)
+        return NavDay(
+            day=on,
+            nav=Decimal(unit_price) * units,
+            units=Decimal(units),
+            cash=zero,
+            clean=zero,
+            accrued=zero,
+            principal_due=zero,
+            receivable=zero,
+            payable=zero,
+            claims=zero,
+            obligations=zero,
+            expenses=zero,
+            fees_owed=zero,
+            fees_today={"management": Decimal(100)},
+            flags=[],
+        )
+
+    prices = {
+        2: "1000.00",
+        3: "1000.05",
+        4: "999.95",  # праздник: цены те же, минус комиссия
+        5: "1000.13",
+        6: "1000.25",  # пятница: расчёты в понедельник — три дня начисления
+        7: "1000.15",
+        8: "1000.05",
+        9: "1000.29",
+    }
+    # 01.11 паёв ещё нет: ни стоимости пая, ни комиссий на пай, ни сглаженной.
+    days = [day(date(2026, 11, 1), "0", units=0)] + [
+        day(date(2026, 11, n), price) for n, price in prices.items()
+    ]
+
+    smoothed, forecast = smooth_unit_price(days, holiday)
+    assert date(2026, 11, 1) not in smoothed
+
+    # Торговые дни 02, 03, 05, 06, 09; к цене прибавлены накопленные комиссии 0,1 в день.
+    trading = [(2, "1000.00"), (3, "1000.05"), (5, "1000.13"), (6, "1000.25"), (9, "1000.29")]
+    cumulative = {n: fee * (n - 1) for n in prices}
+    filtered = kalman_trend(
+        [(Decimal(i + 1), Decimal(p) + cumulative[n]) for i, (n, p) in enumerate(trading)],
+        NAV_SETTINGS,
+        # Даты расчётов: 03, 05 (среда — праздник), 06, 09, 10 — от 03.11.
+        [Decimal(a) for a in (0, 2, 3, 6, 7)],
+    )
+    level = {n: p.level for (n, _), p in zip(trading, filtered.points, strict=True)}
+    assert smoothed[date(2026, 11, 3)] == level[3] - cumulative[3]
+    # Праздник и выходные — уровень последнего торгового дня минус комиссии за прошедшие дни.
+    assert smoothed[date(2026, 11, 4)] == level[3] - cumulative[4]
+    assert smoothed[date(2026, 11, 8)] == level[6] - cumulative[8]
+    # Прогноз на вторник 10.11: одна сессия, один день начисления, комиссия за один день.
+    ahead = filtered.forecast(Decimal(1), Decimal(1))
+    assert forecast is not None
+    assert (forecast.day, forecast.value, forecast.std) == (
+        date(2026, 11, 10),
+        ahead.value - cumulative[9] - fee,
+        ahead.std,
+    )
+    assert forecast.trend == filtered.points[-1].trend
+
+    # Последний день с расчётом — воскресенье: прогноз на понедельник от пятницы.
+    _, monday = smooth_unit_price(days[:-1], holiday)
+    weekend = kalman_trend(
+        [(Decimal(i + 1), Decimal(p) + cumulative[n]) for i, (n, p) in enumerate(trading[:-1])],
+        NAV_SETTINGS,
+        [Decimal(a) for a in (0, 2, 3, 6)],
+    ).forecast(Decimal(1), Decimal(1))
+    assert monday is not None
+    assert (monday.day, monday.value) == (date(2026, 11, 9), weekend.value - cumulative[8] - fee)
+
+    # Ни одного торгового дня со стоимостью пая — ни сглаженной, ни прогноза.
+    assert smooth_unit_price(days[6:8], holiday) == ({}, None)
+    assert smooth_unit_price([], holiday) == ({}, None)

@@ -340,6 +340,19 @@ function Tiles({ summary }: { readonly summary: ResultSummary }) {
           <Percent value={year.annual_percent} />
         </dd>
       </div>
+      {/* Начислено и не оплачено (решение 168): видно, сколько фонд должен. */}
+      {Number(summary.expenses_owed) !== 0 && (
+        <div className="tile">
+          <dt>Расходы к оплате</dt>
+          <dd>{shortMoney(summary.expenses_owed)}</dd>
+        </div>
+      )}
+      {Number(summary.fees_owed) !== 0 && (
+        <div className="tile">
+          <dt>Комиссии от СЧА к выплате</dt>
+          <dd>{shortMoney(summary.fees_owed)}</dd>
+        </div>
+      )}
     </dl>
   );
 }
