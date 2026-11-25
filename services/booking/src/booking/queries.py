@@ -439,17 +439,7 @@ async def results(
     first, last = period
     physical = physical_under(portfolio_id, visible)
     repo = Repository(session)
-    snapshots = await repo.snapshots_between([p.id for p in physical], first, last)
-    today = now.astimezone(MOSCOW).date()
-    states = [(s, from_json(s.state)) for s in snapshots]
-    if marketdata is not None and any(s.day == today for s, _ in states):
-        refs = {p.id: p for p in physical}
-        remarked = await _remarked(
-            [(refs[s.portfolio_id], state) for s, state in states], marketdata, today
-        )
-        states = [
-            (s, cast(State, state)) for (s, _), (_, state) in zip(states, remarked, strict=True)
-        ]
+    states = await _states(repo, physical, (first, last), now, marketdata)
     lines: dict[UUID, ResultLine] = {}
     for _, state in states:
         for v in state.valuations.values():
@@ -471,6 +461,190 @@ async def results(
         days=_days(states),
         lines=sorted(lines.values(), key=lambda line: line.secid),
     )
+
+
+async def _states(
+    repo: Repository,
+    physical: list[PortfolioRef],
+    period: tuple[date, date],
+    now: datetime,
+    marketdata: MarketdataClient | None,
+) -> list[tuple[Snapshot, State]]:
+    """Снапшоты портфелей за период; сегодняшние — по текущим ценам."""
+    snapshots = await repo.snapshots_between([p.id for p in physical], *period)
+    today = now.astimezone(MOSCOW).date()
+    states = [(s, from_json(s.state)) for s in snapshots]
+    if marketdata is not None and any(s.day == today for s, _ in states):
+        refs = {p.id: p for p in physical}
+        remarked = await _remarked(
+            [(refs[s.portfolio_id], state) for s, state in states], marketdata, today
+        )
+        states = [
+            (s, cast(State, state)) for (s, _), (_, state) in zip(states, remarked, strict=True)
+        ]
+    return states
+
+
+# --- отчёт о финансовом результате (решение 167) -------------------------------------
+
+# Части результата в порядке отчёта: бумаги, РЕПО, расходы фонда.
+RESULT_PARTS = (
+    "revaluation",
+    "realized",
+    "coupon",
+    "fees",
+    "repo",
+    "expenses",
+    "charges",
+    "correction",
+)
+SUMMARY_PERIODS = ("day", "week", "days30", "quarter", "year", "all")
+
+
+def summary_periods(
+    day: date, first_day: date, custom: tuple[date, date] | None
+) -> list[tuple[str, date, date]]:
+    """Периоды отчёта, которые заканчиваются ``day``, и свой период, если задан."""
+    found = [
+        ("day", day, day),
+        ("week", day - timedelta(days=6), day),
+        ("days30", day - timedelta(days=29), day),
+        ("quarter", date(day.year, 3 * ((day.month - 1) // 3) + 1, 1), day),
+        ("year", date(day.year, 1, 1), day),
+        ("all", min(first_day, day), day),
+    ]
+    return found if custom is None else [*found, ("custom", *custom)]
+
+
+@dataclass(slots=True)
+class PeriodResult:
+    """Результат за период по частям, стоимость, приток и база доходности."""
+
+    key: str
+    first: date
+    last: date
+    parts: dict[str, Decimal] = field(default_factory=lambda: dict.fromkeys(RESULT_PARTS, ZERO))
+    flows: Decimal = ZERO
+    start_value: Decimal = ZERO
+    end_value: Decimal = ZERO
+    # Средневзвешенные вложения (Модифицированный Дитц): стоимость на начало и приток,
+    # каждый — на долю периода, которую он работал.
+    invested: Decimal = ZERO
+    flags: set[Flag] = field(default_factory=set)
+    lines: dict[UUID, Decimal] = field(default_factory=dict)
+
+    @property
+    def total(self) -> Decimal:
+        return sum(self.parts.values(), ZERO)
+
+    @property
+    def days(self) -> int:
+        return (self.last - self.first).days + 1
+
+    @property
+    def rate(self) -> Decimal | None:
+        """Доля от вложений; вложений нет — None."""
+        return self.total / self.invested if self.invested > 0 else None
+
+
+@dataclass(frozen=True, slots=True)
+class SummaryLine:
+    instrument_id: UUID
+    secid: str
+    short_name: str
+    held: bool  # в позиции на дату отчёта; нет — продана или погашена
+
+
+@dataclass(frozen=True, slots=True)
+class ResultSummary:
+    portfolio: PortfolioRef
+    day: date
+    first_day: date
+    portfolios: list[PortfolioRef]
+    waiting_since: date | None
+    periods: list[PeriodResult]
+    lines: list[SummaryLine]
+
+
+async def result_summary(
+    session: AsyncSession,
+    visible: Mapping[UUID, PortfolioRef],
+    portfolio_id: UUID,
+    day: date,
+    *,
+    custom: tuple[date, date] | None = None,
+    now: datetime,
+    marketdata: MarketdataClient | None = None,
+) -> ResultSummary | None:
+    """Финансовый результат за день, неделю, 30 дней, с начала квартала и года, за всё
+    время и за свой период — по частям и по бумагам; compound — сумма по physical."""
+    portfolio = visible.get(portfolio_id)
+    if portfolio is None:
+        return None
+    physical = physical_under(portfolio_id, visible)
+    repo = Repository(session)
+    starts = [await repo.first_day(f) for f in sorted({p.fund_id for p in physical if p.fund_id})]
+    first_day = min((s for s in starts if s is not None), default=day)
+    periods = [
+        PeriodResult(key, first, last)
+        for key, first, last in summary_periods(day, first_day, custom)
+    ]
+    low = min(p.first for p in periods) - timedelta(days=1)
+    states = await _states(repo, physical, (low, max(p.last for p in periods)), now, marketdata)
+    daily = {d.day: d for d in _days(states)}
+    by_instrument: dict[date, dict[UUID, Decimal]] = defaultdict(lambda: defaultdict(lambda: ZERO))
+    for snapshot, state in states:
+        for v in state.valuations.values():
+            by_instrument[snapshot.day][v.instrument_id] += (
+                v.revaluation + v.realized + v.coupon + v.fees
+            )
+    for period in periods:
+        _fill(period, daily, by_instrument)
+    held = {
+        holding.instrument_id
+        for snapshot, state in states
+        if snapshot.day == day
+        for holding in state.holdings.values()
+        if holding.trade_quantity
+    }
+    instruments = {i for p in periods for i in p.lines}
+    names = await repo.instruments_named(instruments)
+    waiting = await repo.waiting(p.fund_id for p in physical)
+    return ResultSummary(
+        portfolio=portfolio,
+        day=day,
+        first_day=first_day,
+        portfolios=physical,
+        waiting_since=min(waiting.values(), default=None),
+        periods=periods,
+        lines=sorted(
+            (SummaryLine(i, names[i].secid, names[i].short_name, i in held) for i in instruments),
+            key=lambda line: line.secid,
+        ),
+    )
+
+
+def _fill(
+    period: PeriodResult,
+    daily: Mapping[date, ResultDay],
+    by_instrument: Mapping[date, Mapping[UUID, Decimal]],
+) -> None:
+    """Сумма дней периода; стоимость на начало — на конец дня перед ним."""
+    inside = [d for d in daily.values() if period.first <= d.day <= period.last]
+    for found in inside:
+        for name in RESULT_PARTS:
+            period.parts[name] += getattr(found, name)
+        period.flows += found.flows
+        period.flags |= set(found.flags)
+        # Приток работает с дня поступления до конца периода включительно.
+        weight = Decimal((period.last - found.day).days + 1) / period.days
+        period.invested += found.flows * weight
+        for instrument_id, result in by_instrument.get(found.day, {}).items():
+            period.lines[instrument_id] = period.lines.get(instrument_id, ZERO) + result
+    before = daily.get(period.first - timedelta(days=1))
+    period.start_value = ZERO if before is None else before.value
+    period.invested += period.start_value
+    period.end_value = inside[-1].value if inside else period.start_value
 
 
 def _days(states: Iterable[tuple[Snapshot, State]]) -> list[ResultDay]:

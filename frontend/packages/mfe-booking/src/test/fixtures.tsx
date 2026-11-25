@@ -19,8 +19,10 @@ import type {
   Portfolio,
   Positions,
   QuikLine,
+  PeriodResult,
   QuikReport,
   RatingScale,
+  ResultSummary,
   Results,
   Trade,
   WhatIf,
@@ -642,6 +644,85 @@ export function quikReport(fields: Partial<QuikReport> = {}): QuikReport {
   };
 }
 
+/** Период отчёта: по умолчанию — неделя фонда из методики (27.11–03.12). */
+export function period(fields: Partial<PeriodResult> = {}): PeriodResult {
+  return {
+    key: 'week',
+    first: '2026-11-27',
+    last: '2026-12-03',
+    days: 7,
+    revaluation: '48000.00',
+    realized: '20000.00',
+    coupon: '27400.00',
+    fees: '0.00',
+    repo: '0.00',
+    expenses: '0.00',
+    charges: '0.00',
+    correction: '0.00',
+    total: '95400.00',
+    flows: '0.00',
+    start_value: '100000000.00',
+    end_value: '100095400.00',
+    invested: '100000000.00',
+    return_percent: '0.0954',
+    annual_percent: '4.9744',
+    flags: [],
+    ...fields,
+  };
+}
+
+/** Отчёт о результате фонда на 03.12 (решение 167): неделя методики и проданная бумага. */
+export function resultSummary(fields: Partial<ResultSummary> = {}): ResultSummary {
+  const longer = { flows: '100000000.00', start_value: '0.00', annual_percent: '4.3526' };
+  const year = { realized: '24484.00', total: '99884.00' };
+  return {
+    portfolio_id: 'p-fund',
+    code: 'OPIF1',
+    name: 'ОПИФ 1',
+    date: '2026-12-03',
+    first_day: '2026-11-26',
+    portfolios: ['OPIF1-BONDS', 'OPIF1-TREASURY'],
+    waiting_since: null,
+    periods: [
+      period({
+        key: 'day',
+        first: '2026-12-03',
+        days: 1,
+        revaluation: '-6000.00',
+        realized: '0.00',
+        coupon: '0.00',
+        total: '-6000.00',
+        start_value: '100101400.00',
+        invested: '100101400.00',
+        return_percent: '-0.0060',
+        annual_percent: '-2.1878',
+      }),
+      period(),
+      period({ key: 'days30', first: '2026-11-04', days: 30, invested: '26666666.67', return_percent: '0.3578', ...longer }),
+      period({ key: 'quarter', first: '2026-10-01', days: 64, invested: '12500000.00', return_percent: '0.7632', ...longer }),
+      period({ key: 'year', first: '2026-01-01', days: 337, invested: '2373887.24', return_percent: '4.2076', ...longer, ...year }),
+      period({ key: 'all', first: '2026-11-26', days: 8, invested: '100000000.00', ...longer, ...year }),
+    ],
+    lines: [
+      {
+        instrument_id: 'i-ofz',
+        secid: 'SU26238RMFS4',
+        short_name: 'ОФЗ 26238',
+        held: true,
+        totals: { day: '-6000.00', week: '95400.00', days30: '95400.00', quarter: '95400.00', year: '95400.00', all: '95400.00' },
+      },
+      {
+        instrument_id: 'i-old',
+        secid: 'RU000A10OLD1',
+        short_name: 'Старый выпуск',
+        held: false,
+        totals: { day: '0.00', week: '0.00', days30: '0.00', quarter: '0.00', year: '4484.00', all: '4484.00' },
+      },
+    ],
+    ...fields,
+  };
+}
+
 /** Подменный API: отвечает фиксированными данными, вызовы запоминает. */
 export function fakeApi() {
   const answer = <T,>(value: T) => vi.fn((..._args: unknown[]) => Promise.resolve(value));
@@ -672,6 +753,7 @@ export function fakeApi() {
     attributes: answer<Attributes>(ATTRIBUTES),
     ratingScale: answer<RatingScale>(SCALE),
     results: answer<Results>(results()),
+    resultSummary: answer<ResultSummary>(resultSummary()),
     nav: answer<Nav>(nav()),
     feeRates: answer<FeeRate[]>(FEE_RATES),
     setFeeRate: answer<FeeRate[]>(FEE_RATES),

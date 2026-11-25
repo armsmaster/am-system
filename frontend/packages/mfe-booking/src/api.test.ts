@@ -75,6 +75,13 @@ describe('bookingApi', () => {
     ['attributes', () => api.attributes('2026-12-02'), 'get', ['/api/refdata/attributes?date=2026-12-02']],
     ['ratingScale', () => api.ratingScale(), 'get', ['/api/refdata/ratings/scale']],
     ['nav', () => api.nav('f-1', '2026-11-01', '2026-11-30'), 'get', ['/api/booking/nav?fund_id=f-1&from=2026-11-01&till=2026-11-30']],
+    ['resultSummary', () => api.resultSummary('p-1', '2026-12-03', null), 'get', ['/api/booking/results/summary?portfolio_id=p-1&date=2026-12-03']],
+    [
+      'resultSummary with a period',
+      () => api.resultSummary('p-1', '2026-12-03', { from: '2026-10-01', till: '2026-10-31' }),
+      'get',
+      ['/api/booking/results/summary?portfolio_id=p-1&date=2026-12-03&from=2026-10-01&till=2026-10-31'],
+    ],
     ['feeRates', () => api.feeRates('f-1'), 'get', ['/api/booking/funds/f-1/fee-rates']],
     ['setFeeRate', () => api.setFeeRate('f-1', rate), 'post', ['/api/booking/funds/f-1/fee-rates', rate]],
     [

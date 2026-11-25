@@ -42,6 +42,7 @@ from booking.ladder import MAX_PAST_DAYS, Ladder, ladder
 from booking.operations import OperationDesk, OperationInput, OperationView
 from booking.queries import (
     NavDay,
+    PeriodResult,
     PeriodTotal,
     PortfolioState,
     PositionLine,
@@ -50,6 +51,7 @@ from booking.queries import (
     nav,
     positions,
     previous_trading_day,
+    result_summary,
     results,
 )
 from booking.quik import QuikFormatError, QuikImport, QuikLine, Rates
@@ -93,6 +95,7 @@ Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max
 OptionalComment = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] | None
 # Результат за период — не больше трёх лет за запрос.
 MAX_RESULT_DAYS = 1100
+CENT = Decimal("0.01")
 Money = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=2)]
 Price = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)]
 Kopecks = Annotated[Decimal, Field(ge=0, max_digits=18, decimal_places=2)]
@@ -453,6 +456,51 @@ class ResultsOut(BaseModel):
     waiting_since: date | None
     days: list[ResultDayOut]
     lines: list[ResultLineOut]
+
+
+class PeriodResultOut(BaseModel):
+    """Результат за период отчёта (решение 167): части, стоимость, приток, доходность."""
+
+    key: str  # day | week | days30 | quarter | year | all | custom
+    first: date
+    last: date
+    days: int
+    revaluation: Decimal
+    realized: Decimal
+    coupon: Decimal
+    fees: Decimal
+    repo: Decimal
+    expenses: Decimal
+    charges: Decimal
+    correction: Decimal
+    total: Decimal
+    flows: Decimal
+    start_value: Decimal
+    end_value: Decimal
+    invested: Decimal  # средневзвешенные вложения — база доходности
+    return_percent: Decimal | None  # % от вложений; вложений нет — None
+    annual_percent: Decimal | None  # % годовых: × 365 / дней периода
+    flags: list[str]
+
+
+class SummaryLineOut(BaseModel):
+    instrument_id: UUID
+    secid: str
+    short_name: str
+    held: bool  # в позиции на дату отчёта; нет — продана или погашена
+    totals: dict[str, Decimal]  # период → результат бумаги
+
+
+class ResultSummaryOut(BaseModel):
+    portfolio_id: UUID
+    code: str
+    name: str
+    date: dt.date
+    first_day: dt.date  # начало «за всё время»
+    portfolios: list[str]
+    waiting_since: dt.date | None
+    periods: list[PeriodResultOut]
+    lines: list[SummaryLineOut]
 
 
 class _OperationBase(BaseModel):
@@ -1254,6 +1302,84 @@ async def get_results(
         waiting_since=view.waiting_since,
         days=[_result_day_out(d) for d in view.days],
         lines=[_result_line_out(line) for line in view.lines],
+    )
+
+
+@router.get("/results/summary", tags=["positions"])
+async def get_result_summary(
+    _user: Staff,
+    *,
+    session: DbSession,
+    authorization: Authorization,
+    services: Services,
+    now: Now,
+    portfolio_id: UUID,
+    on: Annotated[date | None, Query(alias="date")] = None,
+    custom_from: Annotated[date | None, Query(alias="from")] = None,
+    custom_till: Annotated[date | None, Query(alias="till")] = None,
+) -> ResultSummaryOut:
+    """Отчёт о финансовом результате на дату (решение 167): день, неделя, 30 дней,
+    с начала квартала и года, всё время и свой период ``from``–``till``."""
+    if (custom_from is None) != (custom_till is None) or (
+        custom_from is not None and custom_till is not None and custom_till < custom_from
+    ):
+        raise RuleViolationError("bad_period", "Свой период — обе даты, конец не раньше начала.")
+    custom = None if custom_from is None or custom_till is None else (custom_from, custom_till)
+    visible = await services.portfolios.visible(authorization)
+    view = await result_summary(
+        session,
+        visible,
+        portfolio_id,
+        on or now.astimezone(MOSCOW).date(),
+        custom=custom,
+        now=now,
+        marketdata=services.marketdata,
+    )
+    if view is None:
+        raise NotFoundError("portfolio", portfolio_id)
+    return ResultSummaryOut(
+        portfolio_id=view.portfolio.id,
+        code=view.portfolio.code,
+        name=view.portfolio.name,
+        date=view.day,
+        first_day=view.first_day,
+        portfolios=[p.code for p in view.portfolios],
+        waiting_since=view.waiting_since,
+        periods=[_period_result_out(p) for p in view.periods],
+        lines=[
+            SummaryLineOut(
+                instrument_id=line.instrument_id,
+                secid=line.secid,
+                short_name=line.short_name,
+                held=line.held,
+                totals={
+                    p.key: p.lines.get(line.instrument_id, Decimal(0)).quantize(CENT)
+                    for p in view.periods
+                },
+            )
+            for line in view.lines
+        ],
+    )
+
+
+def _period_result_out(period: PeriodResult) -> PeriodResultOut:
+    rate = period.rate
+    percent = None if rate is None else (rate * 100).quantize(Decimal("0.0001"))
+    annual = None if rate is None else (rate * 100 * 365 / period.days).quantize(Decimal("0.0001"))
+    return PeriodResultOut(
+        key=period.key,
+        first=period.first,
+        last=period.last,
+        days=period.days,
+        **{name: value.quantize(CENT) for name, value in period.parts.items()},
+        total=period.total.quantize(CENT),
+        flows=period.flows.quantize(CENT),
+        start_value=period.start_value.quantize(CENT),
+        end_value=period.end_value.quantize(CENT),
+        invested=period.invested.quantize(CENT),
+        return_percent=percent,
+        annual_percent=annual,
+        flags=sorted(f.value for f in period.flags),
     )
 
 

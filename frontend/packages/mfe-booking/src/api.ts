@@ -360,6 +360,57 @@ export interface Results {
   readonly lines: readonly ResultLine[];
 }
 
+/** Периоды отчёта о финансовом результате (решение 167); custom — свой период. */
+export type SummaryKey = 'day' | 'week' | 'days30' | 'quarter' | 'year' | 'all' | 'custom';
+
+export interface PeriodResult {
+  readonly key: SummaryKey;
+  readonly first: string;
+  readonly last: string;
+  readonly days: number;
+  readonly revaluation: Decimal;
+  readonly realized: Decimal;
+  readonly coupon: Decimal;
+  readonly fees: Decimal;
+  readonly repo: Decimal;
+  readonly expenses: Decimal;
+  readonly charges: Decimal;
+  readonly correction: Decimal;
+  readonly total: Decimal;
+  /** Приток: паи и переводы из других портфелей фонда. */
+  readonly flows: Decimal;
+  readonly start_value: Decimal;
+  readonly end_value: Decimal;
+  /** Средневзвешенные вложения — база доходности. */
+  readonly invested: Decimal;
+  /** % от вложений и % годовых; вложений нет — null. */
+  readonly return_percent: Decimal | null;
+  readonly annual_percent: Decimal | null;
+  readonly flags: readonly ValuationFlag[];
+}
+
+export interface SummaryLine {
+  readonly instrument_id: string;
+  readonly secid: string;
+  readonly short_name: string;
+  /** В позиции на дату отчёта; нет — продана или погашена. */
+  readonly held: boolean;
+  readonly totals: Readonly<Partial<Record<SummaryKey, Decimal>>>;
+}
+
+/** Отчёт о финансовом результате на дату: периоды колонками, бумаги отдельно. */
+export interface ResultSummary {
+  readonly portfolio_id: string;
+  readonly code: string;
+  readonly name: string;
+  readonly date: string;
+  readonly first_day: string;
+  readonly portfolios: readonly string[];
+  readonly waiting_since: string | null;
+  readonly periods: readonly PeriodResult[];
+  readonly lines: readonly SummaryLine[];
+}
+
 export type OperationKind =
   | 'unit_issue'
   | 'unit_redemption'
@@ -760,6 +811,11 @@ export function bookingApi(client: ApiClient) {
       client.get<Positions>(`${BASE}/positions${query({ portfolio_id: portfolioId, date })}`),
     results: (portfolioId: string, first: string, last: string) =>
       client.get<Results>(`${BASE}/results${query({ portfolio_id: portfolioId, from: first, till: last })}`),
+    /** Отчёт о результате на дату: периоды до неё и свой период ``from``–``till`` (решение 167). */
+    resultSummary: (portfolioId: string, date: string, custom: { from: string; till: string } | null) =>
+      client.get<ResultSummary>(
+        `${BASE}/results/summary${query({ portfolio_id: portfolioId, date, from: custom?.from, till: custom?.till })}`,
+      ),
     nav: (fundId: string, first: string, last: string) =>
       client.get<Nav>(`${BASE}/nav${query({ fund_id: fundId, from: first, till: last })}`),
     feeRates: (fundId: string) => client.get<FeeRate[]>(`${BASE}/funds/${fundId}/fee-rates`),

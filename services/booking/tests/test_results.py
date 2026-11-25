@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, cast
@@ -14,7 +15,15 @@ from httpx2 import Response
 from am_common.app import Resources
 from am_common.clock import MOSCOW
 from am_common.testing import TokenFactory
-from booking.queries import PositionLine, _spread_periods, period_results, period_starts
+from booking.queries import (
+    PeriodResult,
+    PositionLine,
+    ResultDay,
+    _fill,
+    _spread_periods,
+    period_results,
+    period_starts,
+)
 from booking.recalc import marketdata_client, recalc_once, refdata_client
 from booking.repository import Repository, Snapshot
 
@@ -848,3 +857,149 @@ async def test_floater_coupon_forecast_in_the_ladder(
     ]
     assert "payment_unknown" in kinds
     assert plain["forecasts"] == []
+
+
+# --- отчёт о финансовом результате (решение 167) ----------------------------------------
+
+
+@pytest.mark.usefixtures("week")
+def test_result_summary_by_period(trader: Api) -> None:
+    found = trader.ok(
+        "GET",
+        "/results/summary",
+        portfolio_id=str(FUND),
+        date="2026-12-03",
+        **{"from": "2026-11-30", "till": "2026-12-01"},
+    )
+
+    periods = {p["key"]: p for p in found["periods"]}
+    assert list(periods) == ["day", "week", "days30", "quarter", "year", "all", "custom"]
+    assert (found["date"], found["first_day"]) == ("2026-12-03", periods["all"]["first"])
+    # Результат дня фонда из таблицы методики: за неделю 25 000 + 41 000 − 6 300 + 41 700 − 6 000.
+    assert {key: p["total"] for key, p in periods.items()} == {
+        "day": "-6000.00",
+        "week": "95400.00",
+        "days30": "95400.00",
+        "quarter": "95400.00",
+        "year": "95400.00",
+        "all": "95400.00",
+        "custom": "34700.00",
+    }
+    week = periods["week"]
+    assert numbers(week, "revaluation", "realized", "coupon", "fees") == money(
+        48_000, 20_000, 27_400, 0
+    )
+    assert (week["first"], week["last"], week["days"]) == ("2026-11-27", "2026-12-03", 7)
+    # Неделя началась с 100 млн ₽ без притока: доходность — от них.
+    assert numbers(week, "start_value", "end_value", "flows", "invested") == money(
+        "100000000.00", "100095400.00", 0, "100000000.00"
+    )
+    assert (week["return_percent"], week["annual_percent"]) == ("0.0954", "4.9744")
+    # 30 дней: паи пришли 26.11 и работали 8 дней из 30 — вложено 100 млн × 8 / 30.
+    days30 = periods["days30"]
+    assert (days30["start_value"], days30["flows"], days30["invested"]) == (
+        "0.00",
+        "100000000.00",
+        "26666666.67",
+    )
+    assert (days30["return_percent"], days30["annual_percent"]) == ("0.3578", "4.3526")
+    day = periods["day"]
+    assert (day["start_value"], day["return_percent"], day["annual_percent"]) == (
+        "100101400.00",
+        "-0.0060",
+        "-2.1878",
+    )
+    custom = periods["custom"]
+    assert (custom["first"], custom["last"], custom["start_value"]) == (
+        "2026-11-30",
+        "2026-12-01",
+        "100025000.00",
+    )
+    [ofz] = found["lines"]
+    assert (ofz["secid"], ofz["held"]) == ("SU26238RMFS4", True)
+    assert (ofz["totals"]["day"], ofz["totals"]["week"], ofz["totals"]["custom"]) == (
+        "-6000.00",
+        "95400.00",
+        "34700.00",
+    )
+
+
+@pytest.mark.usefixtures("week")
+async def test_result_summary_marks_a_sold_bond(trader: Api, resources: Resources) -> None:
+    trader.ok(
+        "POST",
+        "/trades",
+        trade(
+            side="sell",
+            quantity=30_000,
+            price="52.70",
+            trade_at="2026-12-02T12:00:00+03:00",
+            settle_date="2026-12-03",
+            accrued="5.00",
+        ),
+    )
+    await recalc(resources)
+
+    found = trader.ok("GET", "/results/summary", portfolio_id=str(BONDS), date="2026-12-03")
+    [ofz] = found["lines"]
+    assert ofz["held"] is False
+    # Без притока и без стоимости до начала — доходности нет.
+    empty = trader.ok("GET", "/results/summary", portfolio_id=str(BONDS), date="2026-11-20")
+    day = empty["periods"][0]
+    assert (day["total"], day["invested"], day["return_percent"]) == ("0.00", "0.00", None)
+
+
+@pytest.mark.parametrize(
+    "params",
+    [{"from": "2026-12-01"}, {"from": "2026-12-03", "till": "2026-12-01"}],
+)
+def test_result_summary_bad_custom_period(trader: Api, params: dict[str, str]) -> None:
+    response = trader.call("GET", "/results/summary", portfolio_id=str(FUND), **params)
+    assert (response.status_code, response.json()["detail"]["code"]) == (422, "bad_period")
+
+
+def test_result_summary_unknown_portfolio(trader: Api) -> None:
+    response = trader.call("GET", "/results/summary", portfolio_id=str(UUID(int=9)))
+    assert response.status_code == 404
+
+
+def test_return_base_counts_unit_issues_and_redemptions() -> None:
+    """База доходности (решение 167): погашение паёв уменьшает её со дня погашения,
+    выдача — увеличивает; приток не входит в результат."""
+
+    def day(on: date, value: int, flows: int) -> ResultDay:
+        zero = Decimal(0)
+        return ResultDay(
+            day=on,
+            value=Decimal(value),
+            flows=Decimal(flows),
+            revaluation=Decimal(10_000),
+            realized=zero,
+            coupon=zero,
+            fees=zero,
+            expenses=zero,
+            charges=zero,
+            correction=zero,
+            flags=[],
+        )
+
+    # 30.11 — 100 млн; каждый день +10 000; 05.12 — погашение на 20 млн, 08.12 — выдача на 5 млн.
+    first, last = date(2026, 12, 1), date(2026, 12, 10)
+    flows = {date(2026, 12, 5): -20_000_000, date(2026, 12, 8): 5_000_000}
+    daily = {
+        date(2026, 11, 30): replace(day(date(2026, 11, 30), 100_000_000, 0), revaluation=Decimal(0))
+    }
+    value = 100_000_000
+    for n in range(10):
+        on = first + timedelta(days=n)
+        value += flows.get(on, 0) + 10_000
+        daily[on] = day(on, value, flows.get(on, 0))
+
+    period = PeriodResult("custom", first, last)
+    _fill(period, daily, {})
+
+    assert (period.total, period.flows) == (Decimal(100_000), Decimal(-15_000_000))
+    assert period.end_value - period.start_value - period.flows == period.total
+    # 100 млн − 20 млн × 6/10 + 5 млн × 3/10: приток работает с дня поступления.
+    assert period.invested == Decimal(89_500_000)
+    assert period.rate == Decimal(100_000) / Decimal(89_500_000)

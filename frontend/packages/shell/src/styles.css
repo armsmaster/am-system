@@ -3555,3 +3555,109 @@ table.data tr.plan-quiet td {
     min-width: 200px;
   }
 }
+
+/* --- Финансовый результат (решение 167): отчёт, статьи строками ---------------------- */
+
+.results-tiles {
+  margin: 4px 0 12px;
+}
+
+.statement th,
+.statement td.num {
+  white-space: nowrap;
+}
+
+/* Как в отчёте: строки разделены едва заметно, структуру держат отступы и итоги. */
+table.data.statement td {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  border-bottom-color: color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+.statement td:first-child,
+.statement thead th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  min-width: 230px;
+  background: var(--surface);
+}
+
+.statement thead th:first-child {
+  z-index: 2;
+  background: var(--bg);
+}
+
+/* Раздел — подписью над своими строками, без полосы. */
+table.data.statement tr.statement-section td {
+  padding-top: 14px;
+  padding-bottom: 4px;
+  border-bottom: none;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.statement tr.statement-part td:first-child,
+.statement tr.statement-percent td:first-child {
+  padding-left: 26px;
+}
+
+.statement tr.statement-subtotal td {
+  border-top: 1px solid var(--border);
+  font-weight: 600;
+}
+
+/* Итог — мягкой подложкой акцентного цвета, а не жирной линией. */
+table.data.statement tr.statement-total td {
+  padding-top: 10px;
+  padding-bottom: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  background: var(--accent-soft);
+  font-size: 1.04em;
+  font-weight: 700;
+}
+
+.statement tr.statement-percent td {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.statement tr.statement-reference td {
+  color: var(--muted);
+}
+
+.statement tr.statement-bond td {
+  font-size: 13px;
+}
+
+.statement tr.statement-bond td:first-child {
+  padding-left: 46px;
+}
+
+table.data.statement tr.statement-bond-group td {
+  padding-left: 46px;
+  border-bottom: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.statement-expand {
+  width: 20px;
+  height: 20px;
+  margin: 0 6px 0 -26px;
+  padding: 0;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.statement-drop {
+  margin-left: 4px;
+  padding: 0 4px;
+  border: none;
+  background: none;
+  color: var(--muted);
+}
