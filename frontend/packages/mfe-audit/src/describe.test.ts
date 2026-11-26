@@ -509,6 +509,7 @@ describe('user events', () => {
     expect(objectLabel(event('user.password_changed', { user: { subject: 'u-ivan' } }))).toBe('u-ivan');
     expect(objectLabel(event('user.password_changed', { user: {} }, 'u-x'))).toBe('u-x');
     expect(actionLabel('user.blocked')).toBe('Пользователь заблокирован');
+    expect(actionLabel('operation.amended')).toBe('Исправлена операция фонда');
   });
 
   it('describes a new user, roles, blocking, links and logins', () => {

@@ -31,6 +31,7 @@ const ACTIONS: Readonly<Record<string, string>> = {
   'operation.entered': 'Проведена операция фонда',
   'operation.settled': 'Отмечен расчёт по паям',
   'operation.cancelled': 'Отменена операция фонда',
+  'operation.amended': 'Исправлена операция фонда',
   'fee_rate.set': 'Изменена ставка комиссии от СЧА',
   'broker_tariff.set': 'Изменён тариф брокера',
   'statement.received': 'Получена выписка по счёту',

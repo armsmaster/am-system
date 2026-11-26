@@ -1,7 +1,7 @@
 """Операции фонда и переводы (design/05, «Операции фонда и переводы»).
 
-Операция, как и сделка, не меняется и не удаляется: отметка расчёта по паям
-и отмена — новые версии. Компенсационный взнос по РЕПО (решение 113) —
+Операция, как и сделка, не меняется и не удаляется: исправление, отметка расчёта
+по паям и отмена — новые версии (решение 175). Компенсационный взнос по РЕПО (решение 113) —
 операция портфеля сделки: деньги или бумаги между частями РЕПО; фонд
 пересчитывается с первой части, потому что проценты делятся по всему сроку.
 Паи и вознаграждение проводятся в казначейский портфель фонда (решение 35),
@@ -36,13 +36,15 @@ from booking.trades import SERVICE, RuleViolationError
 
 ACTIVE = "active"
 # Что нельзя в закрытом дне — для сообщения об отказе (design/08).
-CHANGE = "Провести, отметить или отменить операцию"
+CHANGE = "Провести, исправить, отметить или отменить операцию"
 UNITS = frozenset({OperationKind.UNIT_ISSUE, OperationKind.UNIT_REDEMPTION})
 EXPENSES = frozenset({OperationKind.EXPENSE_ACCRUAL, OperationKind.EXPENSE_PAYMENT})
 # Операции уровня фонда — в казначейский портфель (решение 35).
 FUND_LEVEL = UNITS | EXPENSES | {OperationKind.FEE_PAYMENT}
 # Виды комиссий от СЧА (решение 21).
 FEE_KINDS: Sequence[str] = ("management", "specdep", "registrar", "other")
+# Причина исправления — не короче трёх знаков, как у отмены.
+MIN_REASON = 3
 # Виды расходов — короткий список (вопрос 94).
 EXPENSE_KINDS: Sequence[str] = ("specdep", "registrar", "auditor", "exchange_broker", "other")
 
@@ -122,6 +124,64 @@ class OperationDesk:
                 after=version,
                 visible=visible,
                 comment=entry.comment,
+            )
+            versions = await self._repo.operation_versions(operation_id)
+        return OperationView(versions, visible, warnings)
+
+    async def amend(self, operation_id: UUID, entry: OperationInput) -> OperationView:
+        """Исправление — новая версия той же операции: номер и история остаются (решение 175).
+
+        Вид и фонд не меняются — для этого операцию отменяют и проводят новую. Отметка
+        расчёта по паям сохраняется. Причина обязательна: она идёт в журнал. Фонд
+        пересчитывается с ранней из двух дат — прежней и новой.
+        """
+        reason = (entry.comment or "").strip()
+        if len(reason) < MIN_REASON:
+            raise RuleViolationError("reason_required", "Напишите, почему исправляете операцию.")
+        if entry.kind is OperationKind.REPO_CONTRIBUTION:
+            raise RuleViolationError(
+                "contribution_amend",
+                "Взнос по РЕПО не исправляют: отмените его и введите заново в карточке сделки.",
+            )
+        visible = await self._portfolios.visible(self._authorization)
+        values, warnings = await self._prepare(entry, visible)
+        now = self._clock()
+        async with self._session.begin():
+            before = await self._latest(operation_id, visible)
+            if before.kind != entry.kind.value:
+                raise RuleViolationError(
+                    "kind_change", "Вид операции не меняется: отмените её и проведите новую."
+                )
+            if values["fund_id"] != before.fund_id:
+                raise RuleViolationError(
+                    "fund_change", "Фонд операции не меняется: отмените её и проведите новую."
+                )
+            previous = _values(before)
+            after = dict.fromkeys(previous) | values
+            if before.settled_date is not None:
+                if values["op_date"] > before.settled_date:
+                    raise RuleViolationError(
+                        "date_after_settlement",
+                        f"Расчёт по паям отмечен {before.settled_date:%d.%m.%Y} — дата операции "
+                        "не может быть позже.",
+                    )
+                after["settled_date"] = before.settled_date
+            if after == previous:
+                raise RuleViolationError("nothing_changed", "Ничего не изменилось.")
+            since = min(await self._since(previous), await self._since(after))
+            await self._repo.ensure_open(before.fund_id, since, CHANGE)
+            version = self._version(
+                operation_id,
+                before.number + 1,
+                status=ACTIVE,
+                values=after,
+                comment=reason,
+                now=now,
+            )
+            await self._repo.add_operation_version(version)
+            await self._repo.mark_dirty(before.fund_id, since, now)
+            await self._emit(
+                "operation.amended", before=before, after=version, visible=visible, comment=reason
             )
             versions = await self._repo.operation_versions(operation_id)
         return OperationView(versions, visible, warnings)

@@ -58,6 +58,8 @@ describe('bookingApi', () => {
     ['accounts', () => api.accounts(), 'get', ['/api/portfolio/accounts']],
     ['operations', () => api.operations('p-1'), 'get', ['/api/booking/operations?portfolio_id=p-1']],
     ['enterOperation', () => api.enterOperation(operation), 'post', ['/api/booking/operations', operation]],
+    ['operation', () => api.operation('o-1'), 'get', ['/api/booking/operations/o-1']],
+    ['amendOperation', () => api.amendOperation('o-1', operation), 'post', ['/api/booking/operations/o-1/amend', operation]],
     [
       'settleOperation',
       () => api.settleOperation('o-1', '2026-11-27'),

@@ -1286,6 +1286,12 @@ async def test_result_summary_shows_what_is_owed(
     [day] = nav_of(trader, "2026-12-03", "2026-12-03")["days"]
     assert (found["expenses_owed"], found["fees_owed"]) == ("20000.00", day["fees_owed"])
     assert Decimal(day["fees_owed"]) > 0
+    # По видам и месяцам — для подсказки при выплате вознаграждения (решение 175).
+    assert list(day["fees_due"]) == ["management"]
+    assert sorted(day["fees_due"]["management"]) == ["2026-11", "2026-12"]
+    assert sum(Decimal(v) for v in day["fees_due"]["management"].values()) == Decimal(
+        day["fees_owed"]
+    )
 
 
 def test_smoothing_removes_one_off_charges() -> None:

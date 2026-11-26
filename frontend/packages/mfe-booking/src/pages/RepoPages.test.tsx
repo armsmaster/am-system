@@ -185,9 +185,9 @@ describe('REPO in positions, ladder, NAV and operations (design/07)', () => {
       }),
       operation({ id: 'o-2', kind: 'repo_contribution', trade_id: 't-repo', direction: 'in', quantity: 5, units: null }),
     ]);
-    renderBooking(api, '/booking/operations?portfolio=p-bonds');
-    const [, paid, received] = within(await screen.findByRole('table', { name: 'Операции' })).getAllByRole('row');
-    expect(paid).toHaveTextContent('компенсационный взнос по РЕПО, фонд — НКЦ, SU26238RMFS4');
-    expect(received).toHaveTextContent('компенсационный взнос по РЕПО, НКЦ — фонду');
+    renderBooking(api, '/booking/operations?portfolio=p-bonds&from=2026-11-01&till=2026-11-30');
+    const [, , paid, received] = within(await screen.findByRole('table', { name: 'Операции' })).getAllByRole('row');
+    expect(paid).toHaveTextContent('компенсационный взнос по РЕПОфонд — НКЦ · SU26238RMFS4');
+    expect(received).toHaveTextContent('компенсационный взнос по РЕПОНКЦ — фонду');
   });
 });

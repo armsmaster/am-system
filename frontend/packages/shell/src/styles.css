@@ -4093,3 +4093,105 @@ button.primary.danger-button {
 .nav-own-filter {
   color: var(--accent-alt);
 }
+
+/* --- Операции фонда (решение 175). --- */
+
+.pill.op-issue {
+  background: var(--ok-bg);
+  color: var(--ok-text);
+}
+
+.pill.op-redeem {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+.pill.op-expenses,
+.pill.op-fees,
+.pill.op-transfers {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.pill.op-repo {
+  background: var(--accent-alt-soft);
+  color: var(--accent-alt);
+}
+
+.pill.settle-waiting {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+}
+
+.pill.settle-overdue {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  font-weight: 500;
+}
+
+.pill.settle-done {
+  background: var(--ok-bg);
+  color: var(--ok-text);
+}
+
+.operations-table td .pill + .pill {
+  margin-left: 6px;
+}
+
+.tile.tile-warning dd {
+  color: var(--warning-text);
+}
+
+.operation-groups {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.operation-hints {
+  margin: 0 0 14px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--hover);
+  font-size: 13px;
+}
+
+.operation-hints p {
+  margin: 0;
+}
+
+.operation-hints p + p {
+  margin-top: 2px;
+}
+
+.operation-hints .hint-warn {
+  color: var(--warning-text);
+  font-weight: 500;
+}
+
+.form-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.operation-card .trade-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.operation-card .drawer-form {
+  margin-bottom: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.bulk-ok {
+  color: var(--ok-text);
+}
+
+.bulk-error {
+  color: var(--danger-text);
+}
+
+.operation-card .facts {
+  margin-bottom: 14px;
+}

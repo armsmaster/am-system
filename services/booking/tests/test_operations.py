@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -222,6 +223,70 @@ async def test_units_settle_by_the_mark(trader: Api, ops: Api, resources: Resour
     entered = journal[0]["data"]
     assert entered["operation"] == {"kind": "unit_issue", "portfolio": "OPIF1-TREASURY"}
     assert (entered["after"]["units"], entered["after"]["receiver"]) == ("100000", None)
+
+
+async def test_amend_keeps_the_operation_and_its_history(
+    trader: Api, ops: Api, resources: Resources, world: World
+) -> None:
+    """Решение 175: исправление — новая версия той же операции; вид и фонд прежние."""
+    issued = ops.ok("POST", "/operations", units())
+    path = f"/operations/{issued['id']}/amend"
+    fixed = units(amount="100500000", comment="Сумма по реестру")
+
+    assert trader.problem("POST", path, fixed) == (403, "invalid")
+    assert ops.problem("POST", path, units(amount="100500000")) == (422, "reason_required")
+    amended = ops.ok("POST", path, fixed)
+    assert (amended["id"], amended["number"]) == (issued["id"], 2)
+    assert Decimal(amended["amount"]) == Decimal(100_500_000)
+    assert (amended["versions"][-1]["changed"], amended["versions"][-1]["comment"]) == (
+        ["amount"],
+        "Сумма по реестру",
+    )
+    assert ops.problem("POST", path, fixed | {"comment": "Ещё раз"}) == (422, "nothing_changed")
+    assert ops.problem("POST", path, fixed | {"kind": "unit_redemption"}) == (422, "kind_change")
+    other = next(p for p in world.portfolios if p["id"] == str(OTHER_FUND))
+    other["treasury_id"] = str(OTHER_BONDS)
+    assert ops.problem("POST", path, fixed | {"fund_id": str(OTHER_FUND)}) == (422, "fund_change")
+    contribution = {
+        "kind": "repo_contribution",
+        "trade_id": str(UUID(int=7)),
+        "op_date": "2026-11-26",
+        "direction": "in",
+        "amount": "1000",
+        "comment": "Взнос",
+    }
+    assert ops.problem("POST", path, contribution) == (422, "contribution_amend")
+
+    # Отметка расчёта сохраняется; операция — не позже расчёта.
+    ops.ok("POST", f"/operations/{issued['id']}/settle", {"settled_date": "2026-11-27"})
+    earlier = fixed | {"op_date": "2026-11-25", "planned_date": "2026-11-26", "comment": "Дата"}
+    moved = ops.ok("POST", path, earlier)
+    assert (moved["number"], moved["settled_date"]) == (4, "2026-11-27")
+    assert moved["versions"][-1]["changed"] == ["op_date", "planned_date"]
+    late = earlier | {"op_date": "2026-11-30", "planned_date": "2026-11-30", "comment": "Поздно"}
+    assert ops.problem("POST", path, late) == (422, "date_after_settlement")
+
+    await recalc(resources)
+    # Фонд пересчитан с ранней даты: паи — уже 25.11.
+    assert positions(trader, TREASURY, "2026-11-25")["units"] == "100000.00000"
+
+    ops.ok("POST", f"/operations/{issued['id']}/cancel", {"comment": "Заявка отозвана"})
+    assert ops.problem("POST", path, earlier | {"amount": "1"}) == (422, "operation_cancelled")
+    journal = [e for e in await events(resources) if e["type"] == "operation.amended"]
+    first = journal[0]["data"]
+    assert (first["before"]["amount"], first["after"]["amount"]) == ("100000000.00", "100500000")
+    assert journal[0]["comment"] == "Сумма по реестру"
+
+
+async def test_amend_a_transfer(ops: Api, resources: Resources) -> None:
+    moved = ops.ok("POST", "/operations", transfer())
+    amended = ops.ok(
+        "POST",
+        f"/operations/{moved['id']}/amend",
+        transfer(amount="55000000", op_date="2026-11-27", comment="Платёжка на 55 млн"),
+    )
+    assert amended["versions"][-1]["changed"] == ["op_date", "amount"]
+    assert await recalc(resources) == [FUND]
 
 
 async def test_redemption_and_expenses(trader: Api, ops: Api, resources: Resources) -> None:

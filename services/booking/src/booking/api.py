@@ -678,6 +678,8 @@ class NavDayOut(BaseModel):
     expenses: Decimal
     fees_owed: Decimal
     fees_today: dict[str, Decimal]
+    # Начислено и не выплачено: вид комиссии → месяц («2026-10») → сумма (решение 175).
+    fees_due: dict[str, dict[str, Decimal]]
     repo_placed: Decimal  # размещено в обратное РЕПО, с процентами
     repo_borrowed: Decimal  # привлечено в прямое РЕПО, с процентами
     flags: list[str]
@@ -1520,6 +1522,26 @@ async def settle_operation(
     return _operation_out(await desk_.settle(operation_id, body.settled_date, body.comment))
 
 
+@router.post("/operations/{operation_id}/amend", tags=["operations"])
+async def amend_operation(
+    operation_id: UUID,
+    body: OperationIn,
+    *,
+    user: Operations,
+    session: DbSession,
+    authorization: Authorization,
+    services: Services,
+    now: Now,
+) -> OperationOut:
+    """Исправление — новая версия операции: вид и фонд прежние, ``comment`` — причина,
+    обязательна (решение 175)."""
+    entry = OperationInput(**(body.model_dump() | {"kind": OperationKind(body.kind)}))
+    view = await operation_desk(session, user, authorization, services, now).amend(
+        operation_id, entry
+    )
+    return _operation_out(view)
+
+
 @router.post("/operations/{operation_id}/cancel", tags=["operations"])
 async def cancel_operation(
     operation_id: UUID,
@@ -2098,6 +2120,7 @@ def _nav_day_out(day: NavDay) -> NavDayOut:
         repo_placed=day.repo_placed,
         repo_borrowed=day.repo_borrowed,
         fees_today=day.fees_today,
+        fees_due=day.fees_due,
         flags=[f.value for f in day.flags],
     )
 
@@ -2133,7 +2156,22 @@ def _result_line_out(line: ResultLine) -> ResultLineOut:
     )
 
 
-OPERATION_TRACKED = ("status", "settled_date")
+# Поля, по которым версия операции отличается от прежней, — в карточке «что изменилось».
+OPERATION_TRACKED = (
+    "status",
+    "op_date",
+    "portfolio_id",
+    "receiver_id",
+    "units",
+    "amount",
+    "planned_date",
+    "settled_date",
+    "expense_kind",
+    "fee_kind",
+    "period_end",
+    "instrument_id",
+    "quantity",
+)
 
 
 def _operation_row_out(row: Any, visible: Mapping[UUID, PortfolioRef]) -> OperationOut:

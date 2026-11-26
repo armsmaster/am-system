@@ -520,6 +520,8 @@ export interface NavDay {
   readonly expenses: Decimal;
   readonly fees_owed: Decimal;
   readonly fees_today: Readonly<Partial<Record<FeeKind, Decimal>>>;
+  /** Начислено и не выплачено: вид комиссии → месяц («2026-10») → сумма (решение 175). */
+  readonly fees_due: Readonly<Partial<Record<FeeKind, Readonly<Record<string, Decimal>>>>>;
   /** Размещено в обратное РЕПО и привлечено в прямое — с процентами. */
   readonly repo_placed: Decimal;
   readonly repo_borrowed: Decimal;
@@ -889,7 +891,11 @@ export function bookingApi(client: ApiClient) {
       client.post<FeeRate[]>(`${BASE}/funds/${fundId}/fee-rates`, body),
     operations: (portfolioId: string) =>
       client.get<Operation[]>(`${BASE}/operations${query({ portfolio_id: portfolioId })}`),
+    operation: (id: string) => client.get<Operation>(`${BASE}/operations/${id}`),
     enterOperation: (body: OperationInput) => client.post<Operation>(`${BASE}/operations`, body),
+    /** Исправление — новая версия: вид и фонд прежние, ``comment`` — причина (решение 175). */
+    amendOperation: (id: string, body: OperationInput) =>
+      client.post<Operation>(`${BASE}/operations/${id}/amend`, body),
     settleOperation: (id: string, settledDate: string) =>
       client.post<Operation>(`${BASE}/operations/${id}/settle`, { settled_date: settledDate }),
     cancelOperation: (id: string, comment: string) =>

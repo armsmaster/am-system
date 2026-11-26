@@ -888,6 +888,9 @@ class NavDay:
     # при выплате вознаграждения сверх начисленного (решение 172). Меньше начисленного —
     # со знаком минус.
     charges_today: Decimal = ZERO
+    # Начислено и не выплачено по видам комиссий и месяцам («2026-10»): сколько закроет
+    # выплата вознаграждения за период (решение 106) — для подсказки при вводе.
+    fees_due: dict[str, dict[str, Decimal]] = field(default_factory=dict)
 
     @property
     def unit_price(self) -> Decimal | None:
@@ -949,9 +952,14 @@ def _nav_day(day: date, states: list[State]) -> NavDay:
     results = [cast(DayResult, s.result) for s in states]
     values = [v for s in states for v in s.valuations.values()]
     fees_today: dict[str, Decimal] = {}
+    fees_due: dict[str, dict[str, Decimal]] = {}
     for state in states:
         for kind, amount in state.fees_today.items():
             fees_today[kind] = fees_today.get(kind, ZERO) + amount
+        for kind, months in state.fees_due.items():
+            due = fees_due.setdefault(kind, {})
+            for month, amount in months.items():
+                due[month] = due.get(month, ZERO) + amount
     return NavDay(
         day=day,
         nav=sum((r.value for r in results), ZERO),
@@ -971,6 +979,7 @@ def _nav_day(day: date, states: list[State]) -> NavDay:
         repo_placed=sum((r.value for s in states for r in s.repos if not r.direct), ZERO),
         repo_borrowed=sum((-r.value for s in states for r in s.repos if r.direct), ZERO),
         charges_today=-sum((r.expenses + r.correction for r in results), ZERO),
+        fees_due=fees_due,
     )
 
 
