@@ -177,13 +177,9 @@ describe('NavPage (decision 168)', () => {
     const user = userEvent.setup();
     const api = fakeApi();
     api.feeRates.mockResolvedValue([]);
+    const only = navHistory().points.slice(0, 1).map((p) => ({ ...p, smoothed: null, benchmark: null }));
     api.navHistory.mockResolvedValue(
-      navHistory({
-        waiting_since: '2026-11-30',
-        benchmark: null,
-        forecast: null,
-        points: navHistory().points.slice(0, 1).map((p) => ({ ...p, smoothed: null, benchmark: null })),
-      }),
+      navHistory({ waiting_since: '2026-11-30', benchmark: null, forecast: null, points: only, latest: only }),
     );
     renderBooking(api, PAGE);
     await screen.findByRole('region', { name: 'Стоимость пая сейчас' });
@@ -208,10 +204,22 @@ describe('NavPage (decision 168)', () => {
     expect(screen.getByText(/Ставок нет/)).toBeInTheDocument();
   });
 
+  it('shows the latest calculation on top even when the own period ended earlier', async () => {
+    localStorage.setItem('am.booking.nav.period', 'custom');
+    localStorage.setItem('am.booking.nav.custom', JSON.stringify({ from: '2026-11-26', till: '2026-11-28' }));
+    const api = fakeApi();
+    api.navHistory.mockResolvedValue(navHistory({ points: navHistory().points.slice(0, 3) }));
+    renderBooking(api, PAGE);
+
+    const now = await screen.findByRole('region', { name: 'Стоимость пая сейчас' });
+    expect(api.navHistory).toHaveBeenCalledWith('p-fund', '2026-11-26', '2026-11-28', null);
+    expect(now).toHaveTextContent('Стоимость пая · 03.12.20261 000,95 ₽−0,06 ₽ за день');
+  });
+
   it('shows a fund without a calculation and a benchmark without prices', async () => {
     const user = userEvent.setup();
     const api = fakeApi();
-    api.navHistory.mockResolvedValue(navHistory({ points: [], forecast: null, first_day: null }));
+    api.navHistory.mockResolvedValue(navHistory({ points: [], latest: [], forecast: null, first_day: null }));
     renderBooking(api, PAGE);
 
     expect(await screen.findByText('Расчёта за период нет.')).toBeInTheDocument();

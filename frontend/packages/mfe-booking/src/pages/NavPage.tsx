@@ -208,14 +208,13 @@ export function NavPage({ context }: { readonly context: Context }) {
   );
 }
 
-function lastPriced(points: readonly NavPoint[]): [NavPoint | undefined, NavPoint | undefined] {
-  const priced = points.filter((p) => p.unit_price !== null);
-  return [priced.at(-1), priced.at(-2)];
-}
-
-/** Самое важное — крупно: стоимость пая сейчас и прогноз на завтра. */
+/**
+ * Самое важное — крупно: стоимость пая сейчас и прогноз на завтра. «Сейчас» — последний
+ * расчёт, а не последний день периода графика: свой период мог закончиться вчера.
+ */
 function Hero({ history }: { readonly history: NavHistory }) {
-  const [last, previous] = lastPriced(history.points);
+  const last = history.latest.at(-1);
+  const previous = history.latest.at(-2);
   const { forecast } = history;
   const change = last && previous ? dayChange(last, previous) : null;
   return (
@@ -278,13 +277,13 @@ function FeesCard({
 }
 
 function KalmanCard({ history, onOpen }: { readonly history: NavHistory; readonly onOpen: () => void }) {
-  const last = history.points.filter((p) => p.smoothed !== null).at(-1);
+  const smoothed = history.latest.at(-1)?.smoothed ?? null;
   const { filter } = history;
   return (
     <div className="tile nav-card">
       <dt>Сглаженная · Калман</dt>
       <dd>
-        {last ? `${formatMoney(last.smoothed)} ₽` : '—'}
+        {smoothed ? `${formatMoney(smoothed)} ₽` : '—'}
         {history.forecast && (
           <div className="subline">≈ {fixed(history.forecast.trend_percent, 2)}% годовых после комиссий</div>
         )}

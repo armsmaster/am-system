@@ -767,6 +767,7 @@ export function navHistory(fields: Partial<NavHistory> = {}): NavHistory {
     ],
     forecast: { date: '2026-12-04', value: '1001.12', low: '1000.98', high: '1001.26', trend: '0.1050', trend_percent: '3.83' },
     filter: STANDARD_FILTER,
+    latest: [point('2026-12-02', '1001.01', '1000.90', null), point('2026-12-03', '1000.95', '1001.02', null)],
     ...fields,
   };
 }

@@ -48,6 +48,7 @@ from booking.operations import OperationDesk, OperationInput, OperationView
 from booking.queries import (
     NavDay,
     NavHistory,
+    NavPoint,
     PeriodResult,
     PeriodTotal,
     PortfolioState,
@@ -565,6 +566,9 @@ class NavHistoryOut(BaseModel):
     points: list[NavPointOut]
     forecast: NavForecastOut | None
     filter: NavFilterOut
+    # Два последних дня со стоимостью пая по всей истории — для карточек «сейчас»,
+    # что бы ни было выбрано для графика.
+    latest: list[NavPointOut]
 
 
 class _OperationBase(BaseModel):
@@ -1727,6 +1731,17 @@ def _nav_filter(
         raise RuleViolationError(exc.code, exc.message) from exc
 
 
+def _nav_point_out(point: NavPoint) -> NavPointOut:
+    return NavPointOut(
+        date=point.day,
+        nav=point.nav,
+        units=point.units,
+        unit_price=point.unit_price,
+        smoothed=None if point.smoothed is None else point.smoothed.quantize(CENT),
+        benchmark=point.benchmark,
+    )
+
+
 def _nav_history_out(history: NavHistory, nav_filter: NavFilterOut) -> NavHistoryOut:
     forecast = history.forecast
     return NavHistoryOut(
@@ -1737,17 +1752,8 @@ def _nav_history_out(history: NavHistory, nav_filter: NavFilterOut) -> NavHistor
         today=history.today,
         waiting_since=history.waiting_since,
         benchmark=history.benchmark,
-        points=[
-            NavPointOut(
-                date=p.day,
-                nav=p.nav,
-                units=p.units,
-                unit_price=p.unit_price,
-                smoothed=None if p.smoothed is None else p.smoothed.quantize(CENT),
-                benchmark=p.benchmark,
-            )
-            for p in history.points
-        ],
+        points=[_nav_point_out(p) for p in history.points],
+        latest=[_nav_point_out(p) for p in history.latest],
         forecast=None
         if forecast is None
         else NavForecastOut(

@@ -719,6 +719,9 @@ class NavHistory:
     benchmark: str | None  # код бумаги сравнения; нет в справочнике — None
     points: list[NavPoint]
     forecast: NavForecast | None
+    # Два последних дня со стоимостью пая по всей истории — для карточек «сейчас»:
+    # они не зависят от периода графика (свой период мог закончиться вчера).
+    latest: list[NavPoint] = field(default_factory=list)
 
 
 async def nav_history(
@@ -773,6 +776,10 @@ async def nav_history(
             for d in shown
         ],
         forecast=forecast,
+        latest=[
+            NavPoint(d.day, d.nav, d.units, d.unit_price, smoothed.get(d.day), None)
+            for d in [d for d in days if d.unit_price is not None][-2:]
+        ],
     )
 
 

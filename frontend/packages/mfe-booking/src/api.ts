@@ -468,6 +468,8 @@ export interface NavHistory {
   readonly points: readonly NavPoint[];
   readonly forecast: NavForecast | null;
   readonly filter: NavFilter;
+  /** Два последних дня со стоимостью пая по всей истории — для карточек «сейчас», что бы ни выбрали для графика. */
+  readonly latest: readonly NavPoint[];
 }
 
 export type OperationKind =

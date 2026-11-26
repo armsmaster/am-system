@@ -1077,6 +1077,9 @@ def test_nav_history_with_kalman_forecast_and_benchmark(trader: Api, world: Worl
         "GET", "/nav/history", fund_id=str(FUND), **{"from": "2026-11-27", "till": "2026-11-28"}
     )
     assert [p["date"] for p in window["points"]] == ["2026-11-27", "2026-11-28"]
+    # Карточки «сейчас» — по последнему расчёту, что бы ни было выбрано для графика.
+    assert window["latest"] == [{**p, "benchmark": None} for p in found["points"][-2:]]
+    assert [p["date"] for p in window["latest"]] == ["2026-12-02", "2026-12-03"]
 
 
 @pytest.mark.usefixtures("week")
