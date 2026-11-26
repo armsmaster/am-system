@@ -56,9 +56,9 @@ export const SECTIONS: readonly Section[] = [
   },
   {
     path: '/booking',
-    label: 'Сделки',
-    description: 'Ввод, позиции, результат, СЧА',
-    icon: 'exchange',
+    label: 'Книга',
+    description: 'Сделки, позиции, результат, СЧА',
+    icon: 'ledger',
     group: 'portfolios',
     visible: (a) => a.books,
   },

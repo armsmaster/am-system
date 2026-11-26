@@ -42,7 +42,7 @@ describe('Layout', () => {
 
   it.each([
     ['/', 'Главная'],
-    ['/booking/trades/t-1', 'Портфели/Сделки'],
+    ['/booking/trades/t-1', 'Портфели/Книга'],
     ['/audit', 'Управление/Журнал'],
     ['/nowhere', ''],
   ])('says where the user is: %s', (path, where) => {
@@ -59,14 +59,14 @@ describe('Layout', () => {
     expect(layout).toHaveClass('collapsed');
     expect(window.localStorage.getItem(COLLAPSED_KEY)).toBe('true');
     // Подпись — в подсказке: в полосе иконок её не видно.
-    expect(screen.getByRole('link', { name: 'Сделки' })).toHaveAttribute('title', 'Сделки');
+    expect(screen.getByRole('link', { name: 'Книга' })).toHaveAttribute('title', 'Книга');
     unmount();
 
     const again = renderLayout();
     expect(again.layout).toHaveClass('collapsed');
     await userEvent.click(screen.getByRole('button', { name: 'Развернуть панель' }));
     expect(again.layout).not.toHaveClass('collapsed');
-    expect(screen.getByRole('link', { name: 'Сделки' })).not.toHaveAttribute('title');
+    expect(screen.getByRole('link', { name: 'Книга' })).not.toHaveAttribute('title');
   });
 
   it('switches the theme and remembers it', async () => {

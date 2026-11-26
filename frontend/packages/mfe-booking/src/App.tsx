@@ -58,8 +58,8 @@ export function Booking({
 
   return (
     <section>
-      <h1>Сделки</h1>
-      <nav className="tabs" aria-label="Разделы сделок">
+      <h1>Книга</h1>
+      <nav className="tabs" aria-label="Разделы книги">
         <NavLink to={basePath} end className={({ isActive }) => (isActive || onTrades ? 'active' : undefined)}>
           Сделки
         </NavLink>

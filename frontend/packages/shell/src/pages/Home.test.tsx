@@ -45,7 +45,7 @@ describe('Home', () => {
       '/reconciliation',
       '/limits',
     ]);
-    expect(cards[2]).toHaveTextContent('СделкиВвод, позиции, результат, СЧА');
+    expect(cards[2]).toHaveTextContent('КнигаСделки, позиции, результат, СЧА');
     expect(screen.getByText('Проверяем связь с сервисами…')).toBeInTheDocument();
     expect(await screen.findByText('Сервисы на связи')).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith('/api/portfolio/me', expect.anything());

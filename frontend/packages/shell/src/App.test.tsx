@@ -102,7 +102,7 @@ describe('App', () => {
       renderAt('/booking/trades/t-1', fakeSession(...roles));
 
       expect(await screen.findByText('booking remote at /booking')).toBeInTheDocument();
-      expect(screen.getByRole('link', { name: 'Сделки' })).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: 'Книга' })).toBeInTheDocument();
     },
   );
 
@@ -143,7 +143,7 @@ describe('App', () => {
   it('hides trades from a user without a role', () => {
     renderAt('/booking', fakeSession());
 
-    expect(screen.queryByRole('link', { name: 'Сделки' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Книга' })).not.toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent('трейдингу и сопровождению');
   });
 
