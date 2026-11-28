@@ -20,6 +20,15 @@ x-service-depends: &service-depends
   db-setup:
     condition: service_completed_successfully
 
+# Логи контейнеров (решение 176): Docker режет их по размеру, а не по дням. Наши сервисы
+# пишут около 1 МБ в сутки — три файла по 5 МБ хранят примерно две недели, и диск
+# не переполнится, даже если сервис начнёт сыпать ошибками.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 5m
+    max-file: "3"
+
 x-service-healthcheck: &service-healthcheck
   test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready')"]
   interval: 10s
@@ -40,6 +49,7 @@ services:
     ports:
       - "127.0.0.1:5432:5432"
     restart: unless-stopped
+    logging: *logging
     healthcheck:
       # По TCP: во время первичной инициализации Postgres слушает только
       # unix-сокет, и проверка через сокет сказала бы «готов» слишком рано.
@@ -64,9 +74,11 @@ services:
       postgres:
         condition: service_healthy
     restart: "no"
+    logging: *logging
 
   redis:
     restart: unless-stopped
+    logging: *logging
     image: redis:7.4.11-alpine
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
@@ -81,6 +93,7 @@ services:
 
   keycloak:
     restart: unless-stopped
+    logging: *logging
     image: quay.io/keycloak/keycloak:26.7.5
     # Разработка — start-dev; на ВМ — start: рабочий режим Keycloak.
     command: ${KEYCLOAK_MODE:-start-dev} --import-realm
@@ -97,6 +110,10 @@ services:
       KC_HEALTH_ENABLED: "true"
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:-kcadmin}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-kcadmin-dev}
+      # Куча Java (решение 176): без этого Keycloak берёт 70% памяти машины.
+      JAVA_OPTS_KC_HEAP: -Xms256m -Xmx512m
+    # Потолок всего контейнера: куча, классы, потоки и код вне кучи.
+    mem_limit: 1g
     volumes:
       # На ВМ — realm, собранный scripts/vm_config.py: свои секреты, без пользователей
       # разработки. Keycloak импортирует его только в пустую базу.
@@ -118,6 +135,7 @@ services:
 
   gateway:
     restart: unless-stopped
+    logging: *logging
     image: traefik:v3.7.16
     command: ["--configFile=/etc/traefik/traefik.yml"]
     volumes:
@@ -135,6 +153,7 @@ services:
 
   portfolio:
     restart: unless-stopped
+    logging: *logging
     build:
       context: .
       dockerfile: services/Dockerfile
@@ -151,6 +170,7 @@ services:
   # Сервис входа (решение 170): своя страница входа поверх Keycloak, пользователи, приглашения.
   identity:
     restart: unless-stopped
+    logging: *logging
     build:
       context: .
       dockerfile: services/Dockerfile
@@ -166,6 +186,7 @@ services:
 
   refdata:
     restart: unless-stopped
+    logging: *logging
     build:
       context: .
       dockerfile: services/Dockerfile
@@ -179,6 +200,7 @@ services:
 
   marketdata:
     restart: unless-stopped
+    logging: *logging
     build:
       context: .
       dockerfile: services/Dockerfile
@@ -195,6 +217,7 @@ services:
 
   booking:
     restart: unless-stopped
+    logging: *logging
     build:
       context: .
       dockerfile: services/Dockerfile
@@ -211,6 +234,7 @@ services:
 
   reconciliation:
     restart: unless-stopped
+    logging: *logging
     build:
       context: .
       dockerfile: services/Dockerfile
@@ -227,6 +251,7 @@ services:
 
   limits:
     restart: unless-stopped
+    logging: *logging
     build:
       context: .
       dockerfile: services/Dockerfile
@@ -243,6 +268,7 @@ services:
 
   audit:
     restart: unless-stopped
+    logging: *logging
     build:
       context: .
       dockerfile: services/Dockerfile
@@ -256,48 +282,56 @@ services:
 
   shell:
     restart: unless-stopped
+    logging: *logging
     build:
       context: frontend
       dockerfile: packages/shell/Dockerfile
 
   mfe-admin:
     restart: unless-stopped
+    logging: *logging
     build:
       context: frontend
       dockerfile: packages/mfe-admin/Dockerfile
 
   mfe-audit:
     restart: unless-stopped
+    logging: *logging
     build:
       context: frontend
       dockerfile: packages/mfe-audit/Dockerfile
 
   mfe-refdata:
     restart: unless-stopped
+    logging: *logging
     build:
       context: frontend
       dockerfile: packages/mfe-refdata/Dockerfile
 
   mfe-marketdata:
     restart: unless-stopped
+    logging: *logging
     build:
       context: frontend
       dockerfile: packages/mfe-marketdata/Dockerfile
 
   mfe-booking:
     restart: unless-stopped
+    logging: *logging
     build:
       context: frontend
       dockerfile: packages/mfe-booking/Dockerfile
 
   mfe-reconciliation:
     restart: unless-stopped
+    logging: *logging
     build:
       context: frontend
       dockerfile: packages/mfe-reconciliation/Dockerfile
 
   mfe-limits:
     restart: unless-stopped
+    logging: *logging
     build:
       context: frontend
       dockerfile: packages/mfe-limits/Dockerfile
@@ -306,6 +340,7 @@ services:
   # на шлюз. Включается профилем tls (COMPOSE_PROFILES=tls в .env).
   tls:
     restart: unless-stopped
+    logging: *logging
     image: caddy:2.10.2-alpine
     profiles: [tls]
     environment:
